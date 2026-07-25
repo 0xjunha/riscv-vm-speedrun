@@ -1,0 +1,357 @@
+# Reading the Sail RISC-V specification
+
+This RISC-V specification is written in the Sail language. Although
+specifications in Sail are quite readable as pseudocode, it would help
+to have the [Sail manual](https://alasdair.github.io/manual.html)
+handy.
+
+## Structure of the specification
+
+The Sail files in the [model](../model/) subdirectory have a
+modular structure that is best understood by looking at the
+[riscv.sail_project](../model/riscv.sail_project) file. This file
+describes the various modules in the Sail model, the files that
+constitute them, and their inter-dependencies. More information on
+Sail modules is present in the
+[Sail language manual](https://alasdair.github.io/manual.html#_modular_sail_specifications).
+
+A Sail module typically consists of a group of closely related Sail
+source files, and a declaration of their dependencies on other
+modules. The RISC-V specification consists of a few core modules and
+several extension modules. Within a module, the later files in the
+module usually depend on the earlier ones.
+
+The `core`, `sys` and `postlude` modules are the primary
+modules, with most of the other modules being submodules of the
+`extensions` module.
+
+### The `prelude` module
+
+[prelude.sail](../model/prelude/prelude.sail) contains key type
+definitions and useful Sail library functions.
+[errors.sail](../model/prelude/errors.sail) defines model-internal
+errors and exceptions.
+
+### The `core` module
+
+This module provide the types and functions that the rest of the
+modules depend on.
+
+[xlen.sail](../model/core/xlen.sail),
+[flen.sail](../model/core/flen.sail) and
+[vlen.sail](../model/core/vlen.sail) define the types and
+widths used in the model for the base ISA (e.g. `xlen`,
+`physaddr_bits`), the floating point extensions (`flen`) and the
+vector extensions (`vlen`) respectively. These widths are specified
+as `config` values, which means their value is derived from the
+configuration file for the model.
+
+The lowest level memory access primitives are defined in
+[phys_mem_interface.sail](../model/core/phys_mem_interface.sail) and are
+implemented by the various Sail backends.
+[mem_addrtype.sail](../model/core/mem_addrtype.sail) and
+[mem_metadata.sail](../model/core/mem_metadata.sail)
+contain other low-level definitions related to memory.
+
+Functions that implement some more complex arithmetic operations used
+in several instructions are implemented in
+[arithmetic.sail](../model/core/arithmetic.sail), and utilities to
+deal with address ranges are in
+[range_util.sail](../model/core/range_util.sail).
+[float_classify.sail](../model/core/float_classify.sail) contains a
+classifier for the floating-point format.
+
+[platform_config.sail](../model/core/platform_config.sail) contains
+various configuration parameters for the platform, some of which can
+affect which extensions can be supported on the platform.
+
+[extensions.sail](../model/core/extensions.sail) sets up the
+basic infrastructure for the definition of modules implementing RISC-V
+extensions. The `hartSupports` function determines whether an
+extension is supported by the model configuration, while the
+`currentlyEnabled` function determines whether the extension is usable given
+the current dynamic state of the hart.
+
+`rvfi_dii*.sail` implement functionality for [RISC-V Formal
+Interface - Direct Instruction Injection
+(RVFI-DII)](https://github.com/CTSRD-CHERI/TestRIG/blob/master/RVFI-DII.md),
+allowing the model to be used with testing tools such as
+[TestRIG](https://github.com/CTSRD-CHERI/TestRIG). These files can be
+ignored on a first reading.
+
+`types_*.sail` and `*_types.sail` contain important types
+that are used in the rest of the specification.
+[types.sail](../model/core/types.sail) contains some basic
+RISC-V definitions. This file should be read early since these
+definitions are used throughout the specification for privilege
+levels, register indices, interrupt and exception definitions and
+enumerations, and types used to define memory accesses.
+
+[mem_type_utils.sail](../model/core/mem_type_utils.sail) contains
+helper functions to map memory access types to the corresponding
+memory exceptions that can be generated from those accesses.
+
+[regs.sail](../model/core/regs.sail) contains the base
+register file, where each register is defined as having the `regtype`
+type defined in [reg_type.sail](../model/core/reg_type.sail)
+and indexed by the indices defined in
+[types.sail](../model/core/types.sail).
+
+[csr_begin.sail](../model/core/csr_begin.sail) sets up the
+infrastructure for the scattered definitions of CSRs and their access
+for read and write operations.
+
+[callbacks.sail](../model/core/callbacks.sail) contains
+definitions for callbacks that inform an external harness (such as the
+C++ emulator) about state-changing events.
+
+[pc_access.sail](../model/core/pc_access.sail) defines
+functions to access and modify the program counter.
+
+[sys_regs.sail](../model/core/sys_regs.sail) describes the
+privileged architectural state, viz. M-mode and S-mode CSRs, and
+contains helpers to interpret their content, such as WLRL and WARL
+fields. CSRs dealing with interrupts are in
+[interrupt_regs.sail](../model/core/interrupt_regs.sail).
+
+[addr_checks_common.sail](../model/core/addr_checks_common.sail)
+and [addr_checks.sail](../model/core/addr_checks.sail)
+contain extension hooks to support the checking and transformation of
+memory addresses during the execution of an instruction. The
+transformed addresses are used for any address translation; however,
+any memory access exceptions are reported in terms of the original
+memory address (i.e. the one generated by the instruction, not the
+hook).
+
+The floating point arithmetic in the model is implemented by a wrapper
+around the Berkeley Softfloat library; this wrapper is implemented in
+[softfloat_interface.sail](../model/core/softfloat_interface.sail).
+
+### The `exceptions` and `pmp` modules
+
+The handling of the addresses involved in exception handling are
+specified by the functions in
+[sys_exceptions.sail](../model/exceptions/sys_exceptions.sail)
+while
+[sync_exception.sail](../model/exceptions/sync_exception.sail)
+defines a structure that is used to capture the architectural
+information for an exception. These files constitute the
+`exceptions` module.
+
+The `pmp` module implements physical memory protection
+(PMP). [pmp_regs.sail](../model/pmp/pmp_regs.sail) defines
+the PMP registers and their read and write accessors while
+[pmp_control.sail](../model/pmp/pmp_control.sail)
+implements the PMP permission checks and matching priority.
+
+### The `sys` module
+
+This core module deals with the hart's reservation state, physical and
+virtual memory, the platform memory map, and interrupt and exception
+handling.
+
+The reservation state is maintained external to the model and is
+accessed through the functions in
+[sys_reservation.sail](../model/sys/sys_reservation.sail).
+
+[sys_control.sail](../model/sys/sys_control.sail) describes
+interrupt and exception delegation and dispatch, the handling of
+privilege transitions and access control for CSRs.
+
+[platform.sail](../model/sys/platform.sail) implements
+platform-specific functionality for the model. It contains the CLINT
+local interrupt controller, and the MMIO interfaces to the clock,
+timer and terminal devices.
+
+A simple model of an MMIO-based external interrupt controller is
+implemented in [simple_interrupt_generator.sail](../model/sys/simple_interrupt_generator.sail)
+and [simple_interrupt_generator_regs.sail](../model/sys/simple_interrupt_generator_regs.sail).
+This enables testing the model with external interrupts, as described in
+its [documentation](SimpleInterruptGenerator.md).
+
+[pma.sail](../model/sys/pma.sail) implements Physical Memory Attributes
+(PMAs), in terms of which the physical memory layout is configured in
+the configuration file.
+
+[mem.sail](../model/sys/mem.sail) contains the functions
+that convert accesses to physical addresses into accesses to physical
+memory, or MMIO accesses to the devices provided by the platform, or
+into the appropriate access fault. This file also contains definitions
+that are used in the weak memory concurrency model.
+
+The `vmem_{types,pte,ptw,tlb}.sail` and
+[vmem.sail](../model/sys/vmem.sail) files describe the
+S-mode address translation. More details are in
+[Virtual Memory Notes](./VirtualMemory.md).
+
+Callbacks to track page table walks are in
+[callbacks.sail](../model/sys/callbacks.sail), while callbacks to
+track operations on the TLB are in
+[vmem_tlb.sail](../model/sys/vmem_tlb.sail).
+
+[vmem_utils.sail](../model/sys/vmem_utils.sail) provides a
+higher level interface to virtual memory for load/store style
+instructions that handles address translation and accesses to
+misaligned addresses taking platform configuration options into
+account.
+
+[insts_begin.sail](../model/sys/insts_begin.sail) sets up
+the infrastructure for the definition of instructions in the rest of
+the model. Files matching `<ext_name>_insts.sail` capture the
+instruction definitions and their assembly language formats. Each file
+contains the instructions for an extension. Each instruction is
+represented as a variant clause of the `instruction` type, and its
+execution semantics are represented as a clause of the `execute`
+function. `mapping` clauses specify the encoding and decoding of each
+instruction to and from their binary representations and assembly
+language formats. Though the assembly mappings are defined
+bidirectionally, only the disassembler direction (i.e., binary
+encoding to assembler) is used.
+
+### Extensions
+
+The `extensions` module contains a sequence of submodules, each
+typically implementing an ISA extension. In some cases, submodules
+implementing related extensions (e.g. `Zaamo` and `Zalrsc`) may be
+grouped together and nested within another submodule (e.g. `A`) under
+the `extensions` module. This nested structure helps to organize the
+files implementing large related extensions such as those in the
+Vector (`V`) and cryptography (`Zk*`) extensions.
+
+### The `mops` module
+
+The `mops` module is a module containing the `Zimop` and `Zcmop`
+extensions. It is included after the `extensions` module containing
+all the other extensions, since those other extensions could
+potentially override the maybe-operations (MOPs) that are defined by
+`Zimop` and `Zcmop`.
+
+### The `postlude` module
+
+This module essentially completes the specification by providing
+implementations of the instruction fetcher and the driving function
+for the fetch-decode-execute cycle.
+
+[insts_end.sail](../model/postlude/insts_end.sail) and
+[csr_end.sail](../model/postlude/csr_end.sail) terminate the
+scattered definitions begun in the
+[insts_begin.sail](../model/sys/insts_begin.sail) file in
+the `sys` module and the [csr_begin.sail](../model/core/csr_begin.sail)
+file in the `core` module respectively.
+
+Definitions for the instruction stepper are in
+[step_common.sail](../model/postlude/step_common.sail), while
+some hooks to customize the stepper and the instruction decode are in
+[step_ext.sail](../model/postlude/step_ext.sail) and
+[decode_ext.sail](../model/postlude/decode_ext.sail)
+respectively. The instruction fetch is implemented in
+[fetch.sail](../model/postlude/fetch.sail), where the `fetch` is
+done in 16-bit granules to handle RVC instructions.
+
+The top-level fetch-decode-execute driver is in
+[step.sail](../model/postlude/step.sail) The `try_step` function
+performs the instruction fetch, handles any fetch errors, decodes the
+fetched value, dispatches the execution of the decoded instruction,
+checks for any pending interrupts that may need to be handled, and
+maintains the current state of the model. The `try_step` function is
+the primary interface to the external C++ simulator harness.
+
+A `loop` function in [step.sail](../model/postlude/step.sail) implements the standalone
+version of the fetch-decode-execute loop, and uses the same HTIF
+(host-target interface) mechanism as the Spike emulator to detect
+termination of execution. This function can be used to drive the
+model without the use of the C++ simulator.
+
+The configuration for the model is validated in
+[validate_config.sail](../model/postlude/validate_config.sail).
+A device tree and ISA string for the configuration is generated using
+functions in
+[device_tree.sail](../model/postlude/device_tree.sail).
+Model initialization and reset are implemented in
+[model.sail](../model/postlude/model.sail).
+
+[fetch_rvfi.sail](../model/postlude/fetch_rvfi.sail) provides the fetch function when the model
+is used for RVFI, and complements the `rvfi_dii*.sail` files mentioned
+above.
+
+### Other modules
+
+The `unit_tests` module collects Sail unit tests for the specification.
+The `main` module provides a [`main()`](../model/main/main.sail)
+function that is used in other Sail backends.
+
+### Miscellaneous notes
+
+When implementing atomic accesses (e.g. for AMOs and instructions
+fetches in Ziccif), there are two approaches that can be taken in the
+Sail model. One approach is to implement an atomic memory access
+using a single memory operation at the lowest level (i.e. in
+[phys_mem_interface.sail](../model/core/phys_mem_interface.sail); this
+is the approach taken in this model. The second approach splits an
+atomic access into multiple smaller intra-instruction memory
+operations at the level of
+[phys_mem_interface.sail](../model/core/phys_mem_interface.sail);
+however, these would have to be accompanied by additional rules in the
+RVWMO memory model specifying that no other memory accesses can
+intervene in between these operations. Both approaches are
+observationally equivalent for the C++ emulator since it currently
+implements a single-hart system, but the first approach is preferred
+to simplify the rules in the memory model.
+
+## Structure of the C++ emulator
+
+The diagram below illustrates how the C++ emulator is built from the
+Sail model.
+
+![](./figs/riscvcsimdeps.svg)
+
+The nodes that are not colored are the handwritten files for the C++
+emulator. The black arrows indicate dependency relationships, while
+the blue arrow indicates a file generated by the Sail compiler from
+Sail source files. A box with a double border indicates a
+user-provided configuration file. A purple arrow indicates a
+validation step.
+
+[riscv_sim.cpp](../c_emulator/riscv_sim.cpp) is the top level file
+for the emulator: it processes command line options, initializes the
+platform model with any ISA implementation choices if specified,
+loads the ELF program or OS image into raw memory, including any ROM
+firmware and DeviceTree binary blobs, and initializes the memory map.
+
+The generated C++ model (`build/sail_riscv_model.{cpp,h}`) is built from the Sail sources
+by the Sail compiler. It contains a class called `hart::Model` which is derived
+from the `PlatformInterface` class in [riscv_platform_if.h](../c_emulator/riscv_platform_if.h).
+`PlatformInterface` contains virtual methods that are called by `hart::Model`.
+These methods provide platform functions (e.g. `load_reservation`), as well as
+informative state change callbacks (e.g. `freg_write_callback`) for logging.
+
+The actual implementation of the platform methods are in the `ModelImpl` class
+in [riscv_model_impl.h](../c_emulator/riscv_model_impl.h), so the callback flow
+is like this:
+
+![](./figs/class_structure.svg)
+
+The primary reason for this convoluted structure is to allow the callback
+implementations to access `hart::Model`.
+
+All of these callbacks are declared in the Sail model in
+[platform.sail](../model/sys/platform.sail),
+[sys_reservation.sail](../model/sys/sys_reservation.sail) and
+[callbacks.sail](../model/core/callbacks.sail).
+
+The Sail run-time system provides a C library for use with its C backend, which
+provides the low-level details of the implementation of raw memory and
+bitvectors (typically optimized to use the native machine word
+representation).
+
+The model is configured by a file in JSON format that specifies
+various ISA options (e.g. RV32 or RV64, number of PMP entries), the
+memory map and whether various extensions are enabled. Users of the
+model can provide their own configuration file based on the [sample
+template](../config/config.json.in) or on the configurations generated
+during the build process under the `config` subdirectory of the build
+directory.
+
+The Sail compiler generates a JSON schema for the configuration in
+`sail_riscv_config_schema.json`; this schema file is used to validate
+the user-provided configuration (as indicated by the purple arrow).

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "name": "riscv-isa-manual",
+      "repository": "https://github.com/riscv/riscv-isa-manual.git",
+      "tag": "riscv-isa-release-971bc71-2026-07-22",
+      "commit": "971bc71be1429c97a6d3cc0c66a2bb2e6d5472ff",
+      "tree": "798ec179363ed9fc9704e787c72623915227380c",
+      "document_version": "20260120",
+      "license": "CC-BY-4.0",
+      "destination": "specifications/riscv-isa-manual-v20260120",
+      "imported_paths": [
+        "LICENSE",
+        "README.md",
+        "src/unpriv/preface.adoc",
+        "src/unpriv/rv32.adoc",
+        "src/unpriv/m-st-ext.adoc",
+        "src/unpriv/images"
+      ],
+      "contents_modified": false
+    },
+    {
+      "name": "sail-riscv",
+      "repository": "https://github.com/riscv/sail-riscv.git",
+      "tag": "0.12",
+      "commit": "65ddde80ee2b131bf46c20e6e748343c336c4071",
+      "tree": "51c4d481d9e9ccf87aa98897cbad3c237efeb4e3",
+      "model_version": "0.12",
+      "license": "BSD-2-Clause",
+      "destination": "specifications/sail-riscv-0.12",
+      "imported_paths": [
+        "LICENCE",
+        "README.md",
+        "doc/ReadingGuide.md",
+        "model"
+      ],
+      "contents_modified": false
+    }
+  ]
+}

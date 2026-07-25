@@ -1,0 +1,277 @@
+// =======================================================================================
+// This Sail RISC-V architecture model, comprising all files and
+// directories except where otherwise noted is subject the BSD
+// two-clause license in the LICENSE file.
+//
+// SPDX-License-Identifier: BSD-2-Clause
+// =======================================================================================
+
+// This file implements utility functions for accessing memory that
+// can be used by instruction definitions.
+//
+// These memory accessors performs address translation and return a
+// Retire_Failure on error.  In order to support RVWMO memory model,
+// address and when possible data arguments are passed as their source
+// registers.
+//
+// All addresses are provided in integer source register arguments.
+// For write accessors, there are functions for each kind of source
+// data register type (integer, floating point, vector).
+//
+// The external API of this module is:
+//
+//   vmem_read        - reads data of the specified width
+//   vmem_write       - writes a specified data payload
+
+// This is a external option that controls the order in which the model
+// performs misaligned accesses.
+let sys_misaligned_order_decreasing : bool = config memory.misaligned.order_decreasing
+
+// This is an external option that, when true, causes misaligned load/store accesses
+// to be split into single byte operations.  Otherwise, such misaligned accesses
+// are split into multiple accesses of smaller widths such that each of the latter
+// accesses is aligned.
+let sys_misaligned_byte_by_byte : bool = config memory.misaligned.byte_by_byte
+
+// This is an external option that returns an integer N, such that
+// when N is greater than zero, misaligned load/store accesses to physical memory
+// (as atomic events) are allowed provided the access occurs within a
+// naturally aligned 2^N byte region. If the access spans more than one of these
+// regions it will be split into multiple memory operations.
+// For the current implementation this region must not be more than the page
+// size (i.e. 2^12 = 4096 bytes) so that accesses that span discontiguously
+// mapped pages work correctly.
+//
+// This is an over-constraint: it isn't necessary when virtual memory isn't
+// enabled, or for contiguously mapped pages, and in fact a memory operation
+// itself can be discontiguous, so even an access spanning discontiguously
+// mapped pages could still result in one memory operation.
+// However limiting this to 2^12 is an easy way to ensure that accesses
+// spanning pages always work.
+let sys_misaligned_allowed_within_exp : range(0, 12) = config memory.misaligned.allowed_within_exp
+
+private val split_misaligned : forall 'width, is_mem_width('width).
+  (virtaddr, int('width)) -> {'n 'bytes, 'width == 'n * 'bytes & 'bytes > 0. (int('n), int('bytes))}
+
+function split_misaligned(vaddr, width) = {
+  let vaddr_bits = bits_of(vaddr);
+  if is_aligned_addr(vaddr, width) | allowed_misaligned(vaddr_bits, width, sys_misaligned_allowed_within_exp) then (1, width)
+  else if sys_misaligned_byte_by_byte then (width, 1)
+  else {
+    let bytes_per_access = 2 ^ count_trailing_zeros(vaddr_bits);
+    let num_accesses = width / bytes_per_access;
+    assert(width == num_accesses * bytes_per_access);
+    (num_accesses, bytes_per_access)
+  }
+}
+
+type valid_misaligned_order('n, 'first, 'last, 'step) -> Bool =
+    ('first == 0 & 'last == 'n - 1 & 'step == 1)
+  | ('first == 'n - 1 & 'last == 0 & 'step == -1)
+
+private val misaligned_order : forall 'n.
+  int('n) -> {'first 'last 'step, valid_misaligned_order('n, 'first, 'last, 'step). (int('first), int('last), int('step))}
+
+function misaligned_order(n) = {
+  if sys_misaligned_order_decreasing then {
+    (n - 1, 0, -1)
+  } else {
+    (0, n - 1, 1)
+  }
+}
+
+private function plat_misaligned_exception(access : MemoryAccessType(mem_payload), res : bool) -> option(misaligned_exception) = {
+  // AMOs should not be calling these utilities.
+  assert(not(is_amo_access(access)));
+  if res then Some(plat_misaligned_access.lrsc)
+  else if is_vector_access(access) then plat_misaligned_access.vector
+  else plat_misaligned_access.load_store
+}
+
+// External API
+
+// Transforms the effective address based on PMM settings and the current translation mode.
+function transform_effective_address(vaddr : virtaddr, access : MemoryAccessType(mem_payload)) -> virtaddr = {
+  let eff_privilege = effectivePrivilege(access, mstatus, cur_privilege);
+  let pmlen = get_pmlen(access, eff_privilege);
+  let mode = translationMode(eff_privilege);
+  if mode == Bare then pm_transform_PA(vaddr, pmlen) else pm_transform_VA(vaddr, pmlen)
+}
+
+val vmem_read_addr : forall 'width, is_mem_width('width).
+  (virtaddr, int('width), MemoryAccessType(mem_payload), bool, bool, bool)
+  -> result(bits(8 * 'width), ExecutionResult)
+
+function vmem_read_addr(vaddr, width, access, aq, rl, res) = {
+  // "LR faults like a normal load, even though it's in the AMO major opcode space."
+  // - Andrew Waterman, isa-dev, 10 Jul 2018.
+  if not(is_aligned_addr(vaddr, width)) then {
+    match plat_misaligned_exception(access, res) {
+      Some(AccessFault)        => return Err(memory_exception(vaddr, E_Load_Access_Fault())),
+      Some(AlignmentException) => return Err(memory_exception(vaddr, E_Load_Addr_Align())),
+      // Even if the CPU does support misaligned accesses, it might be
+      // that the PMA doesn't support misaligned accesses so you can
+      // still get a fault later, but this will be after address
+      // translation below.
+      None()                   => (),
+    };
+  };
+
+  // If the load is misaligned or an allowed misaligned access, split into `n`
+  // (single-copy-atomic) memory operations, each of `bytes` width. If the load is
+  // aligned, then `n` = 1 and bytes will remain unchanged.
+  let ('n, 'bytes) = split_misaligned(vaddr, width);
+  var data = zeros(8 * n * bytes);
+
+  let (first, last, step) = misaligned_order(n);
+  var i : range(0, 'n - 1) = first;
+  var finished : bool = false;
+
+  let vaddr = bits_of(vaddr);
+  repeat {
+    let offset = i;
+    let vaddr = vaddr + (offset * bytes);
+    match translateAddr(Virtaddr(vaddr), access) {
+      Err(e, _) => return Err(memory_exception(Virtaddr(vaddr), e)),
+
+      Ok(paddr, pbmt, _) => match mem_read(access, pbmt, paddr, bytes, aq, rl, res) {
+        Err(e) => return Err(memory_exception(Virtaddr(vaddr), e)),
+        Ok(v) => {
+          if res then {
+            load_reservation(bits_of(paddr), width)
+          };
+
+          data[(8 * (offset + 1) * bytes) - 1 .. 8 * offset * bytes] = v
+        },
+      }
+    };
+
+    if offset == last then {
+      finished = true
+    } else {
+      i = offset + step
+    }
+  } until finished;
+
+  Ok(data)
+}
+
+// This lets the Rocq extraction know why the repeat loop above terminates
+termination_measure vmem_read_addr repeat n
+
+val vmem_write_addr : forall 'width, is_mem_width('width).
+  (virtaddr, int('width), bits(8 * 'width), MemoryAccessType(mem_payload), bool, bool, bool)
+  -> result(bool, ExecutionResult)
+
+function vmem_write_addr(vaddr, width, data, access, aq, rl, res) = {
+  // See comments in vmem_read_addr for an explanation of this check.
+  if not(is_aligned_addr(vaddr, width)) then {
+    match plat_misaligned_exception(access, res) {
+      Some(AccessFault)        => return Err(memory_exception(vaddr, E_SAMO_Access_Fault())),
+      Some(AlignmentException) => return Err(memory_exception(vaddr, E_SAMO_Addr_Align())),
+      None()                   => (),
+    };
+  };
+
+  // If the store is misaligned or an allowed misaligned access, split into `n`
+  // (single-copy-atomic) memory operations, each of `bytes` width. If the store is
+  // aligned, then `n` = 1 and bytes will remain unchanged.
+  let ('n, 'bytes) = split_misaligned(vaddr, width);
+
+  let (first, last, step) = misaligned_order(n);
+  var i : range(0, 'n - 1) = first;
+  var finished : bool = false;
+
+  var write_success : bool = true;
+  let vaddr = bits_of(vaddr);
+  repeat {
+    let offset = i;
+    let vaddr = vaddr + (offset * bytes);
+    match translateAddr(Virtaddr(vaddr), access) {
+      Err(e, _) => return Err(memory_exception(Virtaddr(vaddr), e)),
+
+      // NOTE: Currently, we only announce the effective address if address translation is successful.
+      // This may need revisiting, particularly in the misaligned case.
+      Ok(paddr, pbmt, _) => {
+        // If res is true, the load should be aligned, and this loop should only execute once.
+        assert(res == is_store_conditional(access));
+        if res & not(match_reservation(bits_of(paddr))) then {
+          // Check PMA and PMP access controls before reporting the
+          // cancelled reservation.
+          // "Attempting to execute a store, store-conditional, or AMO
+          // instruction which accesses a physical address within a
+          // PMP region without write permissions raises a store
+          // access-fault exception."
+          let effPriv = effectivePrivilege(access, mstatus, cur_privilege);
+          match phys_access_check(access, pbmt, effPriv, paddr, bytes, true) {
+            Some(e) => return Err(memory_exception(Virtaddr(vaddr), e)),
+            None()  => write_success = false,
+          }
+        } else match mem_write_ea(paddr, bytes, aq, rl, res) {
+          Err(e) => return Err(memory_exception(Virtaddr(vaddr), e)),
+
+          Ok(()) => {
+            let write_value = data[(8 * (offset + 1) * bytes) - 1 .. 8 * offset * bytes];
+            match mem_write_value(paddr, bytes, write_value, access, pbmt, aq, rl, res) {
+              Err(e) => return Err(memory_exception(Virtaddr(vaddr), e)),
+              Ok(s)  => write_success = write_success & s,
+            }
+          }
+        }
+      }
+    };
+
+    if offset == last then {
+      finished = true
+    } else {
+      i = offset + step
+    }
+  } until finished;
+
+  Ok(write_success)
+}
+
+// This lets the Rocq extraction know why the repeat loop above terminates
+termination_measure vmem_write_addr repeat n
+
+// Compute effective address with extension checks and apply pointer masking.
+function get_transformed_data_addr(base : regidx, offset : xlenbits, acc : MemoryAccessType(mem_payload), width : mem_access_width)
+         -> Ext_DataAddr_Check(ext_data_addr_error) = {
+  match ext_data_get_addr(base, offset, acc, width) {
+    Ext_DataAddr_Error(e) => Ext_DataAddr_Error(e),
+    Ext_DataAddr_OK(vaddr) => {
+      let vaddr = transform_effective_address(vaddr, acc);
+      Ext_DataAddr_OK(vaddr)
+    }
+  }
+}
+
+val vmem_read : forall 'width, is_mem_width('width).
+  (regidx, xlenbits, int('width), MemoryAccessType(mem_payload), bool, bool, bool)
+  -> result(bits(8 * 'width), ExecutionResult)
+
+function vmem_read(rs, offset, width, access, aq, rl, res) = {
+  // Get the address, X(rs1) + offset.
+  // Extensions might perform additional checks on address validity.
+  let vaddr : virtaddr = match get_transformed_data_addr(rs, offset, access, width) {
+    Ext_DataAddr_OK(vaddr) => vaddr,
+    Ext_DataAddr_Error(e)  => return Err(Ext_DataAddr_Check_Failure(e)),
+  };
+
+  vmem_read_addr(vaddr, width, access, aq, rl, res)
+}
+
+val vmem_write : forall 'width, is_mem_width('width).
+  (regidx, xlenbits, int('width), bits(8 * 'width), MemoryAccessType(mem_payload), bool, bool, bool)
+  -> result(bool, ExecutionResult)
+
+function vmem_write(rs_addr, offset, width, data, access, aq, rl, res) = {
+  // Get the address, X(rs_addr) + offset.
+  // Extensions might perform additional checks on address validity.
+  let vaddr : virtaddr = match get_transformed_data_addr(rs_addr, offset, access, width) {
+    Ext_DataAddr_OK(vaddr) => vaddr,
+    Ext_DataAddr_Error(e)  => return Err(Ext_DataAddr_Check_Failure(e)),
+  };
+
+  vmem_write_addr(vaddr, width, data, access, aq, rl, res)
+}

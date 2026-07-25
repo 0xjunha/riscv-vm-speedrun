@@ -1,0 +1,260 @@
+// =======================================================================================
+// This Sail RISC-V architecture model, comprising all files and
+// directories except where otherwise noted is subject the BSD
+// two-clause license in the LICENSE file.
+//
+// SPDX-License-Identifier: BSD-2-Clause
+// =======================================================================================
+
+default Order dec
+
+$include <smt.sail>
+$include <option.sail>
+$include <arith.sail>
+$include <string.sail>
+$include <mapping.sail>
+$include <vector_dec.sail>
+$include <generic_equality.sail>
+$include <hex_bits.sail>
+$include <hex_bits_signed.sail>
+$include <dec_bits.sail>
+$include <float/interface.sail>
+
+function not_bit(b : bits(1)) -> bits(1) = if b == 0b1 then 0b0 else 0b1
+
+overload ~ = {not_bool, not_vec, not_bit}
+
+// not_bool alias.
+val not : forall ('p : Bool). bool('p) -> bool(not('p))
+function not(b) = not_bool(b)
+
+overload operator & = {and_vec}
+
+overload operator | = {or_vec}
+
+overload operator ^ = {xor_vec, concat_str}
+
+val sub_vec = pure {c: "sub_bits", cpp: "sub_bits", lean: "_lean_sub", _: "sub_vec"} : forall 'n. (bits('n), bits('n)) -> bits('n)
+
+val sub_vec_int = pure {c: "sub_bits_int", cpp: "sub_bits_int", lean: "BitVec.subInt", _: "sub_vec_int"} : forall 'n. (bits('n), int) -> bits('n)
+
+overload operator - = {sub_vec, sub_vec_int}
+
+val quot_positive_round_zero = pure {interpreter: "quot_round_zero", lem: "hardware_quot", lean: "Int.tdiv", c: "tdiv_int", cpp: "tdiv_int", coq: "Z.quot"} : forall 'n 'm, 'n >= 0 & 'm > 0. (int('n), int('m)) -> int(div('n, 'm))
+val quot_round_zero = pure {interpreter: "quot_round_zero", lem: "hardware_quot", c: "tdiv_int", cpp: "tdiv_int", coq: "Z.quot", lean: "Int.tdiv"} : forall 'm, 'm != 0 . (int, int('m)) -> int
+
+val rem_positive_round_zero = pure {interpreter: "rem_round_zero", lem: "hardware_mod", c: "tmod_int", cpp: "tmod_int", coq: "Z.rem", lean: "Int.tmod"} : forall 'n 'm, 'n >= 0 & 'm > 0. (int('n), int('m)) -> int(mod('n, 'm))
+val rem_round_zero = pure {interpreter: "rem_round_zero", lem: "hardware_mod", c: "tmod_int", cpp: "tmod_int", coq: "Z.rem", lean: "Int.tmod"} : forall 'm, 'm != 0 . (int, int('m)) -> int
+
+// For working with division / modulus we require the divisor to be >= 1.
+// This type describes that.
+type nat1 = {'n, 'n > 0. int('n)}
+
+overload min = {min_int}
+overload max = {max_int}
+
+val print_string = pure "print_string" : (string, string) -> unit
+
+// Print to the --trace log file.
+val print_log = pure {interpreter: "print_endline", cpp: "print_log", lem: "print_dbg", _: "print_endline"} : string -> unit
+// Print an instruction to the --trace log file. The second argument is PC which can be used for
+// symbolization. This is only supported by the C backend so other backends just do a normal print.
+val print_log_instr = pure {cpp: "print_log_instr"} : (string, bits(64)) -> unit
+function print_log_instr(message, _pc) = print_log(message)
+
+val print_step = pure {cpp: "print_step"} : unit -> unit
+function print_step() = ()
+
+val get_config_print_instr = pure {cpp:"get_config_print_instr"} : unit -> bool
+val get_config_print_clint = pure {cpp:"get_config_print_clint"} : unit -> bool
+val get_config_print_exception = pure {cpp:"get_config_print_exception"} : unit -> bool
+val get_config_print_interrupt = pure {cpp:"get_config_print_interrupt"} : unit -> bool
+val get_config_print_htif = pure {cpp:"get_config_print_htif"} : unit -> bool
+val get_config_print_pma = pure {cpp:"get_config_print_pma"} : unit -> bool
+val get_config_rvfi = pure {cpp:"get_config_rvfi"} : unit -> bool
+val get_config_use_abi_names = pure {cpp:"get_config_use_abi_names"} : unit -> bool
+// defaults for other backends
+function get_config_print_instr () = false
+function get_config_print_clint () = false
+function get_config_print_exception () = false
+function get_config_print_interrupt () = false
+function get_config_print_htif () = false
+function get_config_print_pma () = false
+function get_config_rvfi () = false
+function get_config_use_abi_names () = false
+
+val sign_extend : forall 'n 'm, 'm >= 'n. (implicit('m), bits('n)) -> bits('m)
+val zero_extend : forall 'n 'm, 'm >= 'n. (implicit('m), bits('n)) -> bits('m)
+
+function sign_extend(m, v) = sail_sign_extend(v, m)
+function zero_extend(m, v) = sail_zero_extend(v, m)
+
+val zeros : forall 'n, 'n >= 0 . implicit('n) -> bits('n)
+function zeros (n) = sail_zeros(n)
+
+val ones : forall 'n, 'n >= 0 . implicit('n) -> bits('n)
+function ones (n) = sail_ones(n)
+
+// Implicit version of truncate. Unfortunately the non-implicit version
+// isn't called `sail_truncate()` by Sail so we can't name this `truncate()`.
+val trunc : forall 'm 'n, 'm >= 0 & 'm <= 'n. (implicit('m), bits('n)) -> bits('m)
+function trunc(m, v) = truncate(v, m)
+
+mapping bool_bit : bool <-> bits(1) = {
+  true   <-> 0b1,
+  false  <-> 0b0,
+}
+
+// Useful for some proofs where you want to assert that exactly one bool is true.
+mapping bool_int : bool <-> {0, 1} = {
+  false <-> 0,
+  true <-> 1,
+}
+
+// These aliases make the conversion direction a bit clearer.
+function bool_to_bit(x : bool) -> bits(1) = bool_bit(x)
+function bit_to_bool(x : bits(1)) -> bool = bool_bit(x)
+
+// Convert an integer to bits. This requires that the integer is known to fit
+// inside the resulting bit vector. Note this only admits non-negative numbers.
+val to_bits : forall 'l 'x, 'l >= 0 & 0 <= 'x < 2 ^ 'l . (implicit('l), int('x)) -> bits('l)
+function to_bits(l, n) = get_slice_int(l, n, 0)
+
+// The same as to_bits() but the value is checked at runtime since we can't check
+// it at compile-time. The number is assumed to be unsigned.
+val to_bits_checked : forall 'l, 'l >= 0 . (implicit('l), int) -> bits('l)
+function to_bits_checked(l, n) = {
+  let bv = get_slice_int(l, n, 0);
+  assert(unsigned(bv) == n, "Couldn't convert integer " ^ dec_str(n) ^ " to " ^ dec_str(l) ^ " bits without overflow.");
+  bv
+}
+
+// This version allows any integer as input (including negative) but it will truncate the result.
+val to_bits_truncate : forall 'l, 'l >= 0 . (implicit('l), int) -> bits('l)
+function to_bits_truncate(l, n) = get_slice_int(l, n, 0)
+
+// This version should never be used. It is only for migrating code from
+// when there was no distinction between checked and truncating to_bits.
+val to_bits_unsafe : forall 'l, 'l >= 0 . (implicit('l), int) -> bits('l)
+function to_bits_unsafe(l, n) = get_slice_int(l, n, 0)
+
+enum Signedness = { Signed, Unsigned }
+enum VectorHalf = { High, Low }
+
+infix 4 <_s
+infix 4 >_s
+infix 4 <=_s
+infix 4 >=_s
+infix 4 <_u
+infix 4 >_u
+infix 4 <=_u
+infix 4 >=_u
+
+val operator <_s  : forall 'n, 'n > 0. (bits('n), bits('n)) -> bool
+val operator >_s  : forall 'n, 'n > 0. (bits('n), bits('n)) -> bool
+val operator <=_s : forall 'n, 'n > 0. (bits('n), bits('n)) -> bool
+val operator >=_s : forall 'n, 'n > 0. (bits('n), bits('n)) -> bool
+val operator <_u  : forall 'n. (bits('n), bits('n)) -> bool
+val operator >_u  : forall 'n. (bits('n), bits('n)) -> bool
+val operator <=_u : forall 'n. (bits('n), bits('n)) -> bool
+val operator >=_u : forall 'n. (bits('n), bits('n)) -> bool
+
+function operator <_s  (x, y) = signed(x) < signed(y)
+function operator >_s  (x, y) = signed(x) > signed(y)
+function operator <=_s (x, y) = signed(x) <= signed(y)
+function operator >=_s (x, y) = signed(x) >= signed(y)
+function operator <_u  (x, y) = unsigned(x) < unsigned(y)
+function operator >_u  (x, y) = unsigned(x) > unsigned(y)
+function operator <=_u (x, y) = unsigned(x) <= unsigned(y)
+function operator >=_u (x, y) = unsigned(x) >= unsigned(y)
+
+// Implication. This has the lowest precedence.
+infix 1 ==>
+function operator ==> (x : bool, y : bool) -> bool = not(x) | y
+
+infix 7 >>
+infix 7 <<
+
+val "shift_bits_right" : forall 'n 'm. (bits('n), bits('m)) -> bits('n)
+val "shift_bits_left"  : forall 'n 'm. (bits('n), bits('m)) -> bits('n)
+
+overload operator >> = {shift_bits_right, sail_shiftright}
+overload operator << = {shift_bits_left, sail_shiftleft}
+
+val shift_bits_right_arith : forall 'm 'n, 'n >= 1 . (bits('n), bits('m)) -> bits('n)
+function shift_bits_right_arith(value, shift) =
+  sail_arith_shiftright(value, unsigned(shift))
+
+infix 7 >>>
+infix 7 <<<
+
+val rotater : forall 'm 'n, 'm >= 'n >= 0. (bits('m), int('n)) -> bits('m)
+function rotater(value, shift) =
+  (value >> shift) | (value << ('m - shift))
+
+val rotatel : forall 'm 'n, 'm >= 'n >= 0. (bits('m), int('n)) -> bits('m)
+function rotatel(value, shift) =
+  (value << shift) | (value >> ('m - shift))
+
+val rotate_bits_right : forall 'm 'n, 'n >= 0 & 'm >= 2 ^ 'n . (bits('m), bits('n)) -> bits('m)
+function rotate_bits_right(value, shift) = rotater(value, unsigned(shift))
+
+val rotate_bits_left : forall 'm 'n, 'n >= 0 & 'm >= 2 ^ 'n . (bits('m), bits('n)) -> bits('m)
+function rotate_bits_left (value, shift) = rotatel(value, unsigned(shift))
+
+overload operator >>> = {rotate_bits_right, rotater}
+overload operator <<< = {rotate_bits_left, rotatel}
+
+val reverse_bits : forall 'n, 'n > 0. bits('n) -> bits('n)
+function reverse_bits (xs)  = {
+  var ys : bits('n) = zeros();
+  foreach (i from 0 to ('n - 1))
+    ys[i] = xs['n - 1 - i];
+  ys
+}
+
+overload operator * = {mult_atom, mult_int}
+// quot_round_zero and rem_round_zero are deliberately not
+// added to these overloads to avoid accidentally doing
+// division or modulo with negative numbers which is almost
+// always a mistake in this context.
+overload operator / = {quot_positive_round_zero}
+overload operator % = {rem_positive_round_zero}
+
+// This is a slightly arbitrary limit on the maximum number of bytes
+// in a memory access.  It helps to generate slightly better C code
+// because it means width argument can be fast native integer. It
+// would be even better if it could be <= 8 bytes so that data can
+// also be a 64-bit int but CHERI needs 128-bit accesses for
+// capabilities and SIMD / vector instructions will also need more.
+//
+// The specific value does not matter (if it is >8) since anything up
+// to 2^64-1 will result in a native int being used for the width type.
+//
+// 4096 was chosen because it is a page size, and a reasonable maximum
+// for cbo.zero.
+type max_mem_access : Int = 4096
+
+// Type used for memory access widths. Zero byte accesses are not allowed.
+type mem_access_width = range(1, max_mem_access)
+
+// Enable unratified extensions
+val sys_enable_experimental_extensions = pure "sys_enable_experimental_extensions" : unit -> bool
+
+// Print a bit vector in hex. If it is not a multiple of 4
+// bits in length zero extend it so it is (bits_str() prints
+// bit vectors that aren't a multiple of 4 bits in binary).
+function hex_bits_str forall 'n, 'n >= 0 . (x : bits('n)) -> string =
+  bits_str(zero_extend((3 - (('n + 3) % 4)) + 'n, x))
+
+// This can be called to type check that a boolean will always be true.
+// This can be used to verify a fact that the type checker already knows
+// to be true, so in a sense it is redundant. However it is useful for
+// documentation purposes, checking assumptions, and providing nicer errors
+// when editing.
+//
+// It can also be used to narrow down "could not resolve quantifiers" error
+// messages - if you get a list of properties, Sail is saying that *one*
+// of them can't be proven but it doesn't say which. If that happens you can
+// add static_assert() calls for each property to find out which one it is.
+function static_assert forall ('b : Bool), 'b . (_ : bool('b)) -> unit = ()
