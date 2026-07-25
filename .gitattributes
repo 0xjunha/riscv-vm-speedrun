@@ -1,0 +1,15 @@
+# Preserve exact upstream bytes while keeping specification sources reviewable.
+third_party/riscv/specifications/** -text
+
+# Conformance snapshots are sealed upstream inputs; suppress noisy bulk diffs.
+third_party/riscv/conformance/upstream/** -text -diff
+
+# Treat imported executable artifacts as binary data.
+third_party/riscv/**/*.elf -text -diff
+third_party/riscv/**/*.bin -text -diff
+
+# Keep project-owned import tooling and provenance metadata portable.
+.gitattributes text eol=lf
+scripts/*.sh text eol=lf
+third_party/riscv/manifests/** text eol=lf
+third_party/riscv/THIRD_PARTY_NOTICES.md text eol=lf
