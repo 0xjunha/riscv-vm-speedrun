@@ -1,5 +1,6 @@
 # Preserve exact upstream bytes while keeping specification sources reviewable.
 third_party/riscv/specifications/** -text
+third_party/riscv/specifications/README.md text eol=lf
 
 # Conformance snapshots are sealed upstream inputs; suppress noisy bulk diffs.
 third_party/riscv/conformance/upstream/** -text -diff

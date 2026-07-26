@@ -93,6 +93,9 @@ assert_inventory_path() {
     esac
 
     case "$relative_path" in
+        specifications/README.md)
+            die "project-owned README must not appear in the upstream inventory"
+            ;;
         specifications/* | manifests/specifications.lock.json)
             ;;
         *)
@@ -162,6 +165,14 @@ LOCK_FILE="$DESTINATION/manifests/specifications.lock.json"
     die "specification directory not found: $DESTINATION/specifications"
 [ ! -L "$DESTINATION/specifications" ] ||
     die "specification directory must not be a symbolic link"
+
+SPECIFICATIONS_README="$DESTINATION/specifications/README.md"
+if [ -e "$SPECIFICATIONS_README" ] || [ -L "$SPECIFICATIONS_README" ]; then
+    [ -f "$SPECIFICATIONS_README" ] && [ ! -L "$SPECIFICATIONS_README" ] ||
+        die "project-owned specification README must be a regular file"
+    [ ! -x "$SPECIFICATIONS_README" ] ||
+        die "project-owned specification README must not be executable"
+fi
 
 TEMPORARY_PARENT=${TMPDIR:-/tmp}
 [ -d "$TEMPORARY_PARENT" ] ||
@@ -240,7 +251,10 @@ fi
 
 (
     cd "$DESTINATION"
-    find specifications \( -type f -o -type l \) -print
+    find specifications \
+        \( -type f -o -type l \) \
+        ! -path "specifications/README.md" \
+        -print
     printf '%s\n' "manifests/specifications.lock.json"
 ) >"$ACTUAL_PATHS"
 LC_ALL=C sort "$ACTUAL_PATHS" >"$ACTUAL_PATHS_SORTED"
