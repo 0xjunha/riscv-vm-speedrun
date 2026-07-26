@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "name": "riscv-arch-test",
+      "suite": "ACT4",
+      "suite_kind": "architectural-certification-tests",
+      "repository": "https://github.com/riscv/riscv-arch-test.git",
+      "branch_at_selection": "act4",
+      "commit": "619aa16960e69ac29e9b558fb907babfb937a090",
+      "tree": "21abb5f6d10914892fc9af62cde555a01fd91d7a",
+      "commit_timestamp": "2026-07-22T04:43:39Z",
+      "release_baseline": "4.0.0",
+      "destination": "conformance/upstream/riscv-arch-test-act4-619aa169",
+      "imported_paths": [
+        "COPYING.APACHE",
+        "COPYING.BSD",
+        "COPYING.CC",
+        "README.md",
+        "framework/pyproject.toml",
+        "framework/src/act",
+        "generators/testgen/pyproject.toml",
+        "generators/testgen/src/testgen",
+        "testplans/I.csv",
+        "testplans/M.csv",
+        "tests/env",
+        "tests/rv32i/I",
+        "tests/rv32i/M"
+      ],
+      "expected_entry_count": 316,
+      "omitted_gitlinks": [
+        {
+          "path": "docs/docs-resources",
+          "commit": "50d4c15c33e8e769c5291f36ab299d2b3aa019f4",
+          "reason": "Documentation build dependency; not part of the RV32I/M test corpus."
+        }
+      ],
+      "validated_downstream_generation": {
+        "command": "testgen testplans -o generated --extensions I,M --jobs 1",
+        "uv": "0.11.28",
+        "sail_riscv": "0.12",
+        "riscv_gnu_toolchain": "2026.07.15",
+        "upstream_frozen_workspace_imported": false,
+        "project_integration_required": true
+      },
+      "licenses": [
+        "Apache-2.0",
+        "BSD-3-Clause",
+        "CC-BY-4.0"
+      ],
+      "contents_modified": false
+    },
+    {
+      "name": "riscv-tests",
+      "suite_kind": "legacy-isa-smoke-tests",
+      "repository": "https://github.com/riscv-software-src/riscv-tests.git",
+      "branch_at_selection": "master",
+      "commit": "34e6b6d1e7936b526075432fb730d89148623484",
+      "tree": "0bea492c255802d4c43da82b17a0043a4a1a256d",
+      "commit_timestamp": "2026-06-03T16:03:02+08:00",
+      "destination": "conformance/upstream/riscv-tests-34e6b6d1",
+      "imported_paths": [
+        ".gitmodules",
+        "LICENSE",
+        "README.md",
+        "isa/macros/scalar/test_macros.h",
+        "isa/rv32ui",
+        "isa/rv32um",
+        "isa/rv64ui"
+      ],
+      "expected_entry_count": 111,
+      "omitted_gitlinks": [
+        {
+          "path": "env",
+          "commit": "6de71edb142be36319e380ce782c3d1830c65d68",
+          "reason": "Privileged test environment; the benchmark supplies its own EEI adapter."
+        }
+      ],
+      "license": "BSD-3-Clause",
+      "contents_modified": false
+    }
+  ]
+}
