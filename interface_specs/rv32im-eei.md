@@ -4,9 +4,9 @@ This document defines the guest-visible behavior of the RV32IM virtual machine.
 It is independent of any implementation, host operating system, or host tooling.
 
 Instruction semantics come from the pinned
-[RV32I specification](../third_party/riscv/spec/riscv-isa-manual-v20260120/src/unpriv/rv32.adoc) and
-[M-extension specification](../third_party/riscv/spec/riscv-isa-manual-v20260120/src/unpriv/m-st-ext.adoc).
-The imported [Sail model](../third_party/riscv/spec/sail-riscv-0.12/model/) provides a formal reference.
+[RV32I specification](../third_party/riscv/isa_specs/riscv-isa-manual-v20260120/src/unpriv/rv32.adoc) and
+[M-extension specification](../third_party/riscv/isa_specs/riscv-isa-manual-v20260120/src/unpriv/m-st-ext.adoc).
+The imported [Sail model](../third_party/riscv/isa_specs/sail-riscv-0.12/model/) provides a formal reference.
 This document selects the supported ISA features and defines the execution environment around them.
 The host representation of runs and results is defined by [`rv32vm-interface.md`](rv32vm-interface.md).
 
