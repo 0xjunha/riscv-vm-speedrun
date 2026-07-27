@@ -1,0 +1,19 @@
+[project]
+name = "rv32im-harness"
+version = "0.1.0"
+description = "Conformance and benchmarking harness for RV32IM VM implementations"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.29,<0.12"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py312"
