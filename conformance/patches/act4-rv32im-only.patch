@@ -1,0 +1,35 @@
+diff --git a/tests/env/rvtest_setup.h b/tests/env/rvtest_setup.h
+--- a/tests/env/rvtest_setup.h
++++ b/tests/env/rvtest_setup.h
+@@ -30,6 +30,6 @@
+   // *** not sure this is still needed after recent simplifications.  dh 4/24/26
+   .option push
+-  .option rvc
++  .option norvc
+   .p2align UNROLLSZ
+   .option norvc
+ 
+diff --git a/tests/env/rvtest_trap_handler.h b/tests/env/rvtest_trap_handler.h
+--- a/tests/env/rvtest_trap_handler.h
++++ b/tests/env/rvtest_trap_handler.h
+@@ -1065,7 +1065,7 @@
+ 
+ .macro RVTEST_TRAP_HANDLER __MODE__
+ .option push
+-.option rvc             // temporarily allow compress to allow c.nop alignment
++.option norvc           // RV32IM EEI alignment uses only 32-bit nops
+ // Ensure that trampoline is on a boundary that is the max of 64 bytes, UDB_MTVEC_BASE_ALIGNMENT_VECTORED, and UDB_MTVEC_BASE_ALIGNMENT_DIRECT
+ .balign 64
+ #ifdef UDB_MTVEC_BASE_ALIGNMENT_VECTORED
+diff --git a/tests/env/utils.h b/tests/env/utils.h
+--- a/tests/env/utils.h
++++ b/tests/env/utils.h
+@@ -379,7 +379,7 @@
+ #define LA(reg,val) ;\
+   .ifnc(reg, X0)    ;\
+     .option push    ;\
+-    .option rvc     ;\
++    .option norvc   ;\
+     .p2align UNROLLSZ ;\
+     .option norvc   ;\
+     la reg,val      ;\

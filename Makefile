@@ -2,8 +2,12 @@ VM0 := vm/00-python-interpreter
 HARNESS_PACKAGE := rv32im-harness
 HARNESS_SOURCE := harness/src
 HARNESS_TESTS := harness/tests
+CONFORMANCE_IMAGE := rv32im-conformance-builder:local
+CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolchain.env)
 
-.PHONY: check harness-format harness-lint harness-test lock-check vm0 \
+.PHONY: check conformance-build conformance-check conformance-format \
+	conformance-image conformance-lint conformance-reproducible \
+	conformance-sources harness-format harness-lint harness-test lock-check vm0 \
 	vm0-build vm0-format vm0-lint vm0-test
 
 lock-check:
@@ -38,4 +42,34 @@ harness-lint:
 	uv run --locked --package $(HARNESS_PACKAGE) \
 		ruff check $(HARNESS_SOURCE) $(HARNESS_TESTS)
 
-check: lock-check vm0 harness-lint harness-test
+conformance-sources:
+	PYTHONDONTWRITEBYTECODE=1 python3 conformance/build.py check-sources
+
+conformance-image:
+	docker build --platform linux/amd64 \
+		--build-arg BASE_IMAGE="$(CONFORMANCE_BASE_IMAGE)" \
+		-t $(CONFORMANCE_IMAGE) conformance
+
+conformance-build: conformance-sources conformance-image
+	docker run --rm --platform linux/amd64 \
+		--user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
+		python3 conformance/build.py build
+
+conformance-check:
+	PYTHONDONTWRITEBYTECODE=1 python3 conformance/build.py check
+
+conformance-format:
+	uv run --locked ruff format conformance/build.py
+
+conformance-lint:
+	uv run --locked ruff format --check conformance/build.py
+	uv run --locked ruff check conformance/build.py
+
+conformance-reproducible: conformance-sources conformance-image
+	docker run --rm --platform linux/amd64 \
+		--user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
+		python3 conformance/build.py reproduce
+
+check: lock-check vm0 harness-lint harness-test conformance-lint conformance-check

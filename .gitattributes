@@ -9,6 +9,9 @@ third_party/riscv/conformance/upstream/** -text -diff
 third_party/riscv/**/*.elf -text -diff
 third_party/riscv/**/*.bin -text -diff
 
+# Collapse reproducible conformance outputs in GitHub diffs.
+conformance/artifacts/** linguist-generated=true
+
 # Keep project-owned import tooling and provenance metadata portable.
 .gitattributes text eol=lf
 scripts/*.sh text eol=lf

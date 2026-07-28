@@ -1,0 +1,18 @@
+diff --git a/tests/env/rvtest_failure_code.h b/tests/env/rvtest_failure_code.h
+--- a/tests/env/rvtest_failure_code.h
++++ b/tests/env/rvtest_failure_code.h
+@@ -39,6 +39,7 @@
+         # now DEFAULT_LINK_REG has the return address of jal from the failure and DEFAULT_TEMP_REG is a vacant temporary register.
+         j failedtest_saveregs
+ 
++#ifdef STANDARD_SM_SUPPORTED
+     # Log failure. x7 contains return address of jal from the failure and x9 is a vacant temporary register
+     # This is the trap handler failure entry point
+     failedtest_trap_x7_x9:
+@@ -62,6 +63,7 @@
+         SREG x1, 0(x9)
+         j failedtest_saveregs
++#endif // STANDARD_SM_SUPPORTED
+ 
+ #ifdef F_SUPPORTED
+     # FP failure entry points (failure_type = 1)
