@@ -4,11 +4,12 @@ HARNESS_SOURCE := harness/src
 HARNESS_TESTS := harness/tests
 CONFORMANCE_IMAGE := rv32im-conformance-builder:local
 CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolchain.env)
+CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 
-.PHONY: check conformance-build conformance-check conformance-format \
+.PHONY: check conformance conformance-build conformance-check conformance-format \
 	conformance-image conformance-lint conformance-reproducible \
 	conformance-sources harness-format harness-lint harness-test lock-check vm0 \
-	vm0-build vm0-format vm0-lint vm0-test
+	vm0-build vm0-conformance vm0-format vm0-lint vm0-test
 
 lock-check:
 	uv lock --check
@@ -59,6 +60,15 @@ conformance-build: conformance-sources conformance-image
 conformance-check:
 	PYTHONDONTWRITEBYTECODE=1 python3 conformance/build.py check
 
+conformance: conformance-check
+	@test -n "$(VM)" || (echo "usage: make conformance VM=/path/to/rv32vm" >&2; exit 2)
+	uv run --locked --package $(HARNESS_PACKAGE) \
+		rv32im-conformance "$(VM)" $(CONFORMANCE_MANIFEST)
+
+vm0-conformance: vm0-build conformance-check
+	uv run --locked --package $(HARNESS_PACKAGE) \
+		rv32im-conformance $(VM0)/out/rv32vm $(CONFORMANCE_MANIFEST)
+
 conformance-format:
 	uv run --locked ruff format conformance/build.py
 
@@ -72,4 +82,4 @@ conformance-reproducible: conformance-sources conformance-image
 		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
 		python3 conformance/build.py reproduce
 
-check: lock-check vm0 harness-lint harness-test conformance-lint conformance-check
+check: lock-check vm0 harness-lint harness-test conformance-lint vm0-conformance

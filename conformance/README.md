@@ -34,6 +34,19 @@ area.
 
 The upstream snapshots are never modified.
 
+## How Tests Are Judged
+
+Each ELF is a self-checking program. `riscv-tests` already compares actual
+results with expected values. For ACT4, the build runs a reference ELF on Sail
+and embeds the resulting trusted values using ACT4's self-check mode.
+
+The runner executes every ELF with empty input through both VM interfaces. The
+ELF reports success through the EEI exit syscall. A case passes only if the VM
+exits normally with code 0 and produces no output.
+
+The ACT4 `reference-results/` files are build inputs and reproducibility evidence;
+the runner does not compare them at runtime.
+
 ## Builder and Outputs
 
 The canonical builder is `linux/amd64`. `toolchain.env` pins its Ubuntu image
@@ -48,6 +61,8 @@ Run:
 make conformance-build          # generate all outputs
 make conformance-check          # verify sources, manifest, and hashes
 make conformance-reproducible   # rebuild and byte-compare every output
+make conformance VM=path/to/vm  # run every ELF through both VM interfaces
+make vm0-conformance            # run every ELF against the baseline VM
 ```
 
 The first build compiles the pinned GNU toolchain and can be slow under CPU

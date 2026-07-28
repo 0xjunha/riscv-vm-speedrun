@@ -140,6 +140,7 @@ def _run(arguments: list[str]) -> int:
             state_path.write_bytes(bytes(12 * 1024 * 1024 + 1))
         else:
             state_path.write_bytes(_state(output, options.inspect, mode))
+    _log("run-once")
     return 0
 
 

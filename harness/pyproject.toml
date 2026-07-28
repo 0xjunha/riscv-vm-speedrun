@@ -5,6 +5,9 @@ description = "Conformance and benchmarking harness for RV32IM VM implementation
 requires-python = ">=3.12"
 dependencies = []
 
+[project.scripts]
+rv32im-conformance = "rv32im_harness.conformance:main"
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
