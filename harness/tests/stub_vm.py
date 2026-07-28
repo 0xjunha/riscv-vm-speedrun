@@ -30,12 +30,12 @@ def _json(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":")).encode()
 
 
-def _result(output: bytes, retired: int = 3) -> bytes:
+def _result(output: bytes, retired: int = 3, exit_code: int = 0) -> bytes:
     return _json(
         {
             "schema_version": 1,
             "status": "exit",
-            "exit_code": 0,
+            "exit_code": exit_code,
             "trap": None,
             "resource_failure": None,
             "retired_instructions": retired,
@@ -84,8 +84,8 @@ def _run(arguments: list[str]) -> int:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--result", required=True)
-    parser.add_argument("--instruction-limit", required=True, type=int)
-    parser.add_argument("--output-limit", required=True, type=int)
+    parser.add_argument("--instruction-limit", type=int, default=100_000_000)
+    parser.add_argument("--output-limit", type=int, default=1_048_576)
     parser.add_argument("--state")
     parser.add_argument("--inspect", action="append", default=[])
     options = parser.parse_args(arguments)
@@ -110,7 +110,18 @@ def _run(arguments: list[str]) -> int:
             os.write(2, chunk)
         return 7
 
+    bad_result_alias = (
+        mode == "contract-result-alias-bug"
+        and Path(options.result).resolve() == Path(options.elf).resolve()
+    )
+    if bad_result_alias:
+        Path(options.result).write_bytes(b"")
     Path(options.elf).read_bytes()
+    if (
+        mode == "contract-alias-bug"
+        and Path(options.output).resolve() == Path(options.input).resolve()
+    ):
+        Path(options.output).write_bytes(b"")
     output = Path(options.input).read_bytes()
     output_path = Path(options.output)
     if mode == "oversized-output":
@@ -128,7 +139,18 @@ def _run(arguments: list[str]) -> int:
         result_path.write_bytes(b"{}")
     else:
         retired = options.instruction_limit + 1 if mode == "too-many-retired" else 3
-        result_path.write_bytes(_result(output, retired))
+        contract_alias = mode in {
+            "contract-alias",
+            "contract-alias-bug",
+            "contract-result-alias-bug",
+        }
+        result_path.write_bytes(
+            _result(
+                output,
+                1 if bad_result_alias else 6 if contract_alias else retired,
+                0 if bad_result_alias else 7 if contract_alias else 0,
+            )
+        )
     if options.state is not None:
         state_path = Path(options.state)
         if mode == "missing-state":

@@ -5,11 +5,14 @@ HARNESS_TESTS := harness/tests
 CONFORMANCE_IMAGE := rv32im-conformance-builder:local
 CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolchain.env)
 CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
+CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 
 .PHONY: check conformance conformance-build conformance-check conformance-format \
 	conformance-image conformance-lint conformance-reproducible \
-	conformance-sources harness-format harness-lint harness-test lock-check vm0 \
-	vm0-build vm0-conformance vm0-format vm0-lint vm0-test
+	conformance-sources contract contract-build contract-check contract-format \
+	contract-lint contract-reproducible contract-test harness-format harness-lint \
+	harness-test lock-check vm0 vm0-build vm0-conformance vm0-contract vm0-format \
+	vm0-lint vm0-test
 
 lock-check:
 	uv lock --check
@@ -82,4 +85,40 @@ conformance-reproducible: conformance-sources conformance-image
 		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
 		python3 conformance/build.py reproduce
 
-check: lock-check vm0 harness-lint harness-test conformance-lint vm0-conformance
+contract-build: conformance-image
+	docker run --rm --platform linux/amd64 \
+		--user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
+		python3 contracts/build.py build
+
+contract-check:
+	PYTHONDONTWRITEBYTECODE=1 python3 contracts/build.py check
+
+contract: contract-check
+	@test -n "$(VM)" || (echo "usage: make contract VM=/path/to/rv32vm" >&2; exit 2)
+	uv run --locked --package $(HARNESS_PACKAGE) \
+		rv32im-contract "$(VM)" $(CONTRACT_MANIFEST)
+
+vm0-contract: vm0-build contract-check
+	uv run --locked --package $(HARNESS_PACKAGE) \
+		rv32im-contract $(VM0)/out/rv32vm $(CONTRACT_MANIFEST)
+
+contract-test:
+	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=contracts \
+		uv run --locked pytest contracts/tests
+
+contract-format:
+	uv run --locked ruff format contracts/*.py contracts/tests
+
+contract-lint:
+	uv run --locked ruff format --check contracts/*.py contracts/tests
+	uv run --locked ruff check contracts/*.py contracts/tests
+
+contract-reproducible: conformance-image
+	docker run --rm --platform linux/amd64 \
+		--user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
+		python3 contracts/build.py reproduce
+
+check: lock-check vm0 harness-lint harness-test conformance-lint contract-lint \
+	contract-test vm0-conformance vm0-contract

@@ -7,6 +7,7 @@ dependencies = []
 
 [project.scripts]
 rv32im-conformance = "rv32im_harness.conformance:main"
+rv32im-contract = "rv32im_harness.contract_runner:main"
 
 [dependency-groups]
 dev = [

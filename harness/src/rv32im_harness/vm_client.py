@@ -531,6 +531,12 @@ class _ServerTransport:
     def stderr(self) -> bytes:
         return self._stderr_capture.snapshot()
 
+    def close_input(self) -> None:
+        """Send EOF to a server without closing its output stream."""
+
+        if not self._stdin.closed:
+            self._stdin.close()
+
     def abort(self) -> None:
         if self._closed:
             return
