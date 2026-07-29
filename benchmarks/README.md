@@ -34,11 +34,13 @@ Run from the repository root:
 
 ```sh
 make benchmark-check
+make benchmark-guest-lint
 make benchmark-build
 make benchmark-reproducible
 make vm0-benchmark-smoke
 make benchmark VM=/path/to/rv32vm
 ```
 
-`benchmark-build` and `benchmark-reproducible` use the Docker builder.
-`benchmark-check` needs only Python.
+`benchmark-guest-lint`, `benchmark-build`, and `benchmark-reproducible` use the
+Docker builder. Builds and reproducibility checks also enforce rustfmt and
+Clippy. `benchmark-check` needs only Python.

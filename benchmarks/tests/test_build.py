@@ -46,6 +46,46 @@ def test_builder_metadata_comes_from_dockerfile(tmp_path: Path) -> None:
     assert "image" not in metadata
 
 
+def test_guest_source_checks_use_strict_targeted_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    def fake_run(command: list[str], **options: object) -> None:
+        calls.append((command, options))
+
+    monkeypatch.setattr(build.subprocess, "run", fake_run)
+
+    build._check_guest_sources(tmp_path)
+
+    assert [command for command, _ in calls] == [
+        ["cargo", "fmt", "--all", "--", "--check"],
+        [
+            "cargo",
+            "clippy",
+            "--frozen",
+            "--workspace",
+            "--lib",
+            "--bins",
+            "--all-features",
+            "--release",
+            "--target",
+            build.TARGET,
+            "--",
+            "-D",
+            "warnings",
+            "-D",
+            "clippy::all",
+        ],
+    ]
+    for _, options in calls:
+        assert options["cwd"] == build.GUEST
+        assert options["check"] is True
+        assert options["env"]["CARGO_TARGET_DIR"] == str(tmp_path)
+        assert options["env"]["CARGO_NET_OFFLINE"] == "true"
+
+
 @pytest.mark.parametrize(
     "contents",
     [

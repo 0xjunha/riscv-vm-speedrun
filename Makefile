@@ -9,14 +9,15 @@ CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolc
 CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 
-.PHONY: benchmark benchmark-build benchmark-check benchmark-format benchmark-image \
-	benchmark-lint benchmark-reproducible benchmark-test check conformance \
-	conformance-build conformance-check conformance-format conformance-image \
-	conformance-lint conformance-reproducible conformance-sources contract \
-	contract-build contract-check contract-format contract-lint \
-	contract-reproducible contract-test harness-format harness-lint harness-test \
-	lock-check vm0 vm0-benchmark-smoke vm0-build vm0-conformance vm0-contract \
-	vm0-format vm0-lint vm0-test
+s.PHONY: benchmark benchmark-build benchmark-check benchmark-format \
+	benchmark-guest-lint benchmark-image benchmark-lint benchmark-reproducible \
+	benchmark-test check conformance conformance-build conformance-check \
+	conformance-format conformance-image conformance-lint \
+	conformance-reproducible conformance-sources contract contract-build \
+	contract-check contract-format contract-lint contract-reproducible \
+	contract-test harness-format harness-lint harness-test lock-check vm0 \
+	vm0-benchmark-smoke vm0-build vm0-conformance vm0-contract vm0-format \
+	vm0-lint vm0-test
 
 lock-check:
 	uv lock --check
@@ -72,6 +73,12 @@ benchmark-format:
 benchmark-lint:
 	uv run --locked ruff format --check benchmarks/*.py benchmarks/tests
 	uv run --locked ruff check benchmarks/*.py benchmarks/tests
+
+benchmark-guest-lint: benchmark-image
+	docker run --rm --platform linux/amd64 \
+		--user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR):/repo:ro" -w /repo $(BENCHMARK_IMAGE) \
+		python3 benchmarks/build.py lint
 
 benchmark-reproducible: benchmark-image
 	docker run --rm --platform linux/amd64 \

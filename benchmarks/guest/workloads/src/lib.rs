@@ -34,6 +34,11 @@ impl<'a> Words<'a> {
     pub fn len(&self) -> usize {
         self.bytes.len() / 4
     }
+
+    /// Return whether the input contains no complete words.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Use `default` for zero and otherwise cap the value at `maximum`.

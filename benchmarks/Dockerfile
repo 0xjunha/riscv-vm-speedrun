@@ -18,7 +18,7 @@ RUN sed -i \
     && apt-get update \
     && apt-get install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/* \
-    && rustup component add rustfmt \
+    && rustup component add clippy rustfmt \
     && rustup target add riscv32im-unknown-none-elf
 
 WORKDIR /repo

@@ -61,22 +61,22 @@
     }
   ],
   "project_inputs": {
-    "benchmarks/Dockerfile": "2b19b051a4dbc021f658da078cbbe6abd52a0ab75a71448a41b13589cab22c03",
-    "benchmarks/build.py": "9a50231c4d638f88a3121396fb292699ff1e33ba955bd8af2074efcdbdbba32a",
+    "benchmarks/Dockerfile": "249ac46f71bb26c5e381499cff4a48026728e82880183620188743e518971a9b",
+    "benchmarks/build.py": "cfcf0df4423b3add7046584528447d52bcdf1784dc301d9feef94597d7a2ff43",
     "benchmarks/cases.json": "52affdade5cf3205c8794e8ba7baa3b483db6c004a7c1abab669dd321461bae1",
     "benchmarks/guest/.cargo/config.toml": "f733bc71a6c63f8a1f3a2e0235e90e952ac9e4caf3167c89fda890a59e3a9dfc",
     "benchmarks/guest/Cargo.lock": "54c5b7eef72fb45fc53a6a7849fa8052e581862e1e57b6d2ba94a237943a0dbf",
     "benchmarks/guest/Cargo.toml": "f7e3d89474543167e402d42f385f543a8fa19066f4431d13a5feb1b2a0448ec7",
     "benchmarks/guest/link.x": "221aa7a767dabb1452fe43d1337723c1f3087e85ddad2980bc356ef0847386f9",
     "benchmarks/guest/runtime/Cargo.toml": "d2ac3dc83fdbd19859f422959ea2358a0ee520168758081074364a07ebbf115d",
-    "benchmarks/guest/runtime/src/lib.rs": "fc02226f3f0ba7733059140c35da27cfc7bf8b20f53d8734946a555d38adbe48",
+    "benchmarks/guest/runtime/src/lib.rs": "cb8c2ff5df25b185af7fa9e30d37c3841ff67e5fb534605ec89c0307b4c24cda",
     "benchmarks/guest/rust-toolchain.toml": "006ebca004c93d8741623c05dbee1d3fe58a2637dcddaf5b2488994e88d8f9ca",
     "benchmarks/guest/workloads/Cargo.toml": "edca7c1eb7ee7ce9c1ac549fbcf2ad54f151585a60718f98147bd0c949288a34",
     "benchmarks/guest/workloads/build.rs": "dac348ce23e8666dca31cd1bc475b5a3fedbe22464f51fa407d27cba26e94d4e",
     "benchmarks/guest/workloads/src/bin/arithmetic.rs": "e9849db7edf1b21a42e5fed5f7b9c6c002fc052cb5c0d05486f556501ec0a411",
     "benchmarks/guest/workloads/src/bin/streaming.rs": "9cbce09bfbd0226ff35e025c9ab01b76bceac4cc26becb7cf4a70e54b305c6c9",
     "benchmarks/guest/workloads/src/bin/tiny.rs": "0b5eb9457705eaa2ba8ddbf1f70da4b70311411c1db0d24db818535a44d80fc7",
-    "benchmarks/guest/workloads/src/lib.rs": "68463f36fb4266a6973d123868db83bbe2a2b8f9a4128a46be858d73c2f4edfa",
+    "benchmarks/guest/workloads/src/lib.rs": "2c81cc7b53ec64a3e43343aa3e21cb8a8d04b29515a491b9b0feefb4fb134cd4",
     "benchmarks/reference.py": "6b44b70bd16dd6ca989cb6dc8837dbe63ead33538e11ee460b2cffdcb584dfb9"
   },
   "schema_version": 1

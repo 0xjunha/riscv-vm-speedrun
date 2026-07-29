@@ -251,7 +251,11 @@ def _validate_toolchain() -> None:
         raise BuildError("cargo does not match the pinned builder")
 
 
-def _compile(target_dir: Path) -> dict[str, Path]:
+def _cargo(
+    arguments: list[str],
+    target_dir: Path,
+    action: str,
+) -> None:
     environment = dict(os.environ)
     environment.update(
         {
@@ -261,23 +265,47 @@ def _compile(target_dir: Path) -> dict[str, Path]:
             "SOURCE_DATE_EPOCH": "0",
         }
     )
-    command = [
-        "cargo",
-        "build",
-        "--frozen",
-        "--release",
-        "--bins",
-    ]
     try:
         subprocess.run(
-            ["cargo", "fmt", "--all", "--", "--check"],
+            ["cargo", *arguments],
             cwd=GUEST,
             env=environment,
             check=True,
         )
-        subprocess.run(command, cwd=GUEST, env=environment, check=True)
     except (OSError, subprocess.CalledProcessError) as error:
-        raise BuildError(f"guest format or build failed: {error}") from error
+        raise BuildError(f"guest {action} failed: {error}") from error
+
+
+def _check_guest_sources(target_dir: Path) -> None:
+    _cargo(["fmt", "--all", "--", "--check"], target_dir, "format check")
+    _cargo(
+        [
+            "clippy",
+            "--frozen",
+            "--workspace",
+            "--lib",
+            "--bins",
+            "--all-features",
+            "--release",
+            "--target",
+            TARGET,
+            "--",
+            "-D",
+            "warnings",
+            "-D",
+            "clippy::all",
+        ],
+        target_dir,
+        "Clippy check",
+    )
+
+
+def _compile(target_dir: Path) -> dict[str, Path]:
+    _cargo(
+        ["build", "--frozen", "--release", "--bins"],
+        target_dir,
+        "build",
+    )
     release = target_dir / TARGET / "release"
     return {workload: release / workload for workload in WORKLOADS}
 
@@ -539,10 +567,17 @@ def build() -> None:
     with tempfile.TemporaryDirectory(prefix="rv32im-benchmark-target-") as temporary:
         parent = Path(temporary)
         staged = parent / "artifacts"
+        _check_guest_sources(parent / "lint-target")
         _build_to(staged, parent / "target", cases)
         check(staged)
         _publish(staged, ARTIFACTS)
     check()
+
+
+def lint() -> None:
+    _validate_toolchain()
+    with tempfile.TemporaryDirectory(prefix="rv32im-benchmark-lint-") as temporary:
+        _check_guest_sources(Path(temporary))
 
 
 def _publish(staged: Path, destination: Path) -> None:
@@ -576,6 +611,7 @@ def reproduce() -> None:
         parent = Path(temporary)
         first = parent / "first"
         second = parent / "second"
+        _check_guest_sources(parent / "lint-target")
         _build_to(first, parent / "target-first", cases)
         _build_to(second, parent / "target-second", cases)
         check(first)
@@ -586,10 +622,15 @@ def reproduce() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("build", "check", "reproduce"))
+    parser.add_argument("command", choices=("build", "check", "lint", "reproduce"))
     arguments = parser.parse_args(argv)
     try:
-        {"build": build, "check": check, "reproduce": reproduce}[arguments.command]()
+        {
+            "build": build,
+            "check": check,
+            "lint": lint,
+            "reproduce": reproduce,
+        }[arguments.command]()
     except (BuildError, OSError) as error:
         parser.exit(1, f"benchmark assets: {error}\n")
     print(f"benchmark assets {arguments.command}: passed")
