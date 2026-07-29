@@ -1,0 +1,83 @@
+{
+  "builder": {
+    "base_image": "rust:1.96.1-slim-bookworm@sha256:e18a79fc84dfcfc3ab5ba72290398a644c135c97eaa881447fddc354ee4701a3",
+    "cargo": "1.96.1 (356927216 2026-06-26)",
+    "llvm": "22.1.2",
+    "platform": "linux/amd64",
+    "rustc": "1.96.1 (31fca3adb 2026-06-26)",
+    "target": "riscv32im-unknown-none-elf"
+  },
+  "cases": [
+    {
+      "elf": "elf/tiny.elf",
+      "elf_sha256": "f43e9a78e3f7315fadbef8a1155411361a8567633e0f652ab28b473ac0a7bae4",
+      "elf_size": 4672,
+      "expected_exit_code": 0,
+      "expected_output": "expected/tiny.bin",
+      "expected_output_sha256": "cc41c909652df49908ae82b37bc0f75290965fa1b01d000294b9af3704c789a7",
+      "expected_output_size": 16,
+      "id": "tiny",
+      "input": "input/tiny.bin",
+      "input_sha256": "fdd232547ceee35add35783ca7d518d2a49abccd0b60b028c8a9c629eba6201f",
+      "input_size": 8,
+      "instruction_limit": 100000,
+      "output_limit": 16,
+      "regime": "fixed overhead",
+      "workload": "tiny"
+    },
+    {
+      "elf": "elf/arithmetic.elf",
+      "elf_sha256": "ef8d970ceda4c0978af1341ba34da6be6a9a6cd16414d0b9d27458a8f3fa534c",
+      "elf_size": 4884,
+      "expected_exit_code": 0,
+      "expected_output": "expected/arithmetic.bin",
+      "expected_output_sha256": "d4882d827ea758cb6b02a2636639a6547ac0df710773049b335b3a9169d5b654",
+      "expected_output_size": 16,
+      "id": "arithmetic",
+      "input": "input/arithmetic.bin",
+      "input_sha256": "a34582326b5b9036c0560479357ddfaf3314d354cf320433cc4fd582d6704ee0",
+      "input_size": 12,
+      "instruction_limit": 5000000,
+      "output_limit": 16,
+      "regime": "integer hot loop",
+      "workload": "arithmetic"
+    },
+    {
+      "elf": "elf/streaming.elf",
+      "elf_sha256": "1fb7a381cc7f2dd864d3a144c244e455087092bc99d8ca399069ccdc0712a80b",
+      "elf_size": 4916,
+      "expected_exit_code": 0,
+      "expected_output": "expected/streaming.bin",
+      "expected_output_sha256": "25c8e44b769a65055917ff2766c0cefb6d965df61ed0bdd0b1c041b26eb8f32a",
+      "expected_output_size": 16,
+      "id": "streaming",
+      "input": "input/streaming.bin",
+      "input_sha256": "74d6ae3773394cd22a118b599c926dae2b4d519ce9e4be5d69768fc04c350616",
+      "input_size": 2056,
+      "instruction_limit": 2000000,
+      "output_limit": 16,
+      "regime": "sequential memory reads",
+      "workload": "streaming"
+    }
+  ],
+  "project_inputs": {
+    "benchmarks/Dockerfile": "2b19b051a4dbc021f658da078cbbe6abd52a0ab75a71448a41b13589cab22c03",
+    "benchmarks/build.py": "9a50231c4d638f88a3121396fb292699ff1e33ba955bd8af2074efcdbdbba32a",
+    "benchmarks/cases.json": "52affdade5cf3205c8794e8ba7baa3b483db6c004a7c1abab669dd321461bae1",
+    "benchmarks/guest/.cargo/config.toml": "f733bc71a6c63f8a1f3a2e0235e90e952ac9e4caf3167c89fda890a59e3a9dfc",
+    "benchmarks/guest/Cargo.lock": "54c5b7eef72fb45fc53a6a7849fa8052e581862e1e57b6d2ba94a237943a0dbf",
+    "benchmarks/guest/Cargo.toml": "f7e3d89474543167e402d42f385f543a8fa19066f4431d13a5feb1b2a0448ec7",
+    "benchmarks/guest/link.x": "221aa7a767dabb1452fe43d1337723c1f3087e85ddad2980bc356ef0847386f9",
+    "benchmarks/guest/runtime/Cargo.toml": "d2ac3dc83fdbd19859f422959ea2358a0ee520168758081074364a07ebbf115d",
+    "benchmarks/guest/runtime/src/lib.rs": "fc02226f3f0ba7733059140c35da27cfc7bf8b20f53d8734946a555d38adbe48",
+    "benchmarks/guest/rust-toolchain.toml": "006ebca004c93d8741623c05dbee1d3fe58a2637dcddaf5b2488994e88d8f9ca",
+    "benchmarks/guest/workloads/Cargo.toml": "edca7c1eb7ee7ce9c1ac549fbcf2ad54f151585a60718f98147bd0c949288a34",
+    "benchmarks/guest/workloads/build.rs": "dac348ce23e8666dca31cd1bc475b5a3fedbe22464f51fa407d27cba26e94d4e",
+    "benchmarks/guest/workloads/src/bin/arithmetic.rs": "e9849db7edf1b21a42e5fed5f7b9c6c002fc052cb5c0d05486f556501ec0a411",
+    "benchmarks/guest/workloads/src/bin/streaming.rs": "9cbce09bfbd0226ff35e025c9ab01b76bceac4cc26becb7cf4a70e54b305c6c9",
+    "benchmarks/guest/workloads/src/bin/tiny.rs": "0b5eb9457705eaa2ba8ddbf1f70da4b70311411c1db0d24db818535a44d80fc7",
+    "benchmarks/guest/workloads/src/lib.rs": "68463f36fb4266a6973d123868db83bbe2a2b8f9a4128a46be858d73c2f4edfa",
+    "benchmarks/reference.py": "6b44b70bd16dd6ca989cb6dc8837dbe63ead33538e11ee460b2cffdcb584dfb9"
+  },
+  "schema_version": 1
+}
