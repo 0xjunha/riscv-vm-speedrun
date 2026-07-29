@@ -9,7 +9,7 @@
       "tree": "798ec179363ed9fc9704e787c72623915227380c",
       "document_version": "20260120",
       "license": "CC-BY-4.0",
-      "destination": "specifications/riscv-isa-manual-v20260120",
+      "destination": "isa_specs/riscv-isa-manual-v20260120",
       "imported_paths": [
         "LICENSE",
         "README.md",
@@ -28,7 +28,7 @@
       "tree": "51c4d481d9e9ccf87aa98897cbad3c237efeb4e3",
       "model_version": "0.12",
       "license": "BSD-2-Clause",
-      "destination": "specifications/sail-riscv-0.12",
+      "destination": "isa_specs/sail-riscv-0.12",
       "imported_paths": [
         "LICENCE",
         "README.md",

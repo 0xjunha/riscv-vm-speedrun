@@ -28,6 +28,19 @@ ACT4_REFERENCE_RESULTS = ARTIFACTS / "reference-results/act4"
 MANIFEST = ARTIFACTS / "manifest.json"
 GCC = "riscv64-unknown-elf-gcc"
 
+ACT4_LINKER_SCRIPT = Path("act4/link.ld")
+ACT4_RVMODEL_MACROS = Path("act4/rvmodel_macros.h")
+ACT4_RVTEST_CONFIG = Path("act4/rvtest_config.h")
+RISCV_TESTS_LINKER_SCRIPT = Path("riscv-tests/link.ld")
+RISCV_TESTS_HEADER = Path("riscv-tests/riscv_test.h")
+ADAPTER_BUILD_INPUTS = (
+    ACT4_LINKER_SCRIPT,
+    ACT4_RVMODEL_MACROS,
+    ACT4_RVTEST_CONFIG,
+    RISCV_TESTS_LINKER_SCRIPT,
+    RISCV_TESTS_HEADER,
+)
+
 RISCV_TESTS_I = (
     "simple",
     "add",
@@ -110,6 +123,12 @@ def sha256(path: Path) -> str:
 
 def relative(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
+
+
+def adapter_path(path: Path) -> Path:
+    if path not in ADAPTER_BUILD_INPUTS:
+        raise ValueError(f"undeclared adapter build input: {path}")
+    return HERE / "adapters" / path
 
 
 def read_lock(path: Path = HERE / "toolchain.env") -> dict[str, str]:
@@ -204,8 +223,8 @@ def prepare_act4_environment(work: Path) -> Path:
     shutil.copytree(ACT4 / "tests/env", env)
     for patch in sorted((HERE / "patches").glob("*.patch")):
         run("patch", "--silent", "-d", work, "-p1", "-i", patch)
-    shutil.copyfile(HERE / "adapters/act4/rvtest_config.h", env / "rvtest_config.h")
-    shutil.copyfile(HERE / "adapters/act4/rvmodel_macros.h", env / "rvmodel_macros.h")
+    shutil.copyfile(adapter_path(ACT4_RVTEST_CONFIG), env / "rvtest_config.h")
+    shutil.copyfile(adapter_path(ACT4_RVMODEL_MACROS), env / "rvmodel_macros.h")
     return env
 
 
@@ -369,7 +388,7 @@ def build_riscv_tests(work: Path, elf_root: Path) -> list[Case]:
     objects.mkdir(parents=True)
     (elf_root / "riscv-tests").mkdir(parents=True)
     includes = [
-        HERE / "adapters/riscv-tests",
+        adapter_path(RISCV_TESTS_HEADER).parent,
         RISCV_TESTS / "isa/macros/scalar",
         RISCV_TESTS / "isa",
     ]
@@ -379,7 +398,7 @@ def build_riscv_tests(work: Path, elf_root: Path) -> list[Case]:
         link(
             case,
             obj,
-            HERE / "adapters/riscv-tests/link.ld",
+            adapter_path(RISCV_TESTS_LINKER_SCRIPT),
             elf_path(elf_root, case),
         )
     print("built 48 riscv-tests ELFs")
@@ -407,7 +426,7 @@ def build_act4(work: Path, elf_root: Path, reference_root: Path) -> list[Case]:
             [env],
             ["-DSIGNATURE", "-DTEST_FLEN=32"],
         )
-        link(case, reference_object, HERE / "adapters/act4/link.ld", reference_elf)
+        link(case, reference_object, adapter_path(ACT4_LINKER_SCRIPT), reference_elf)
 
         sail_signature = objects / f"{case.case_id}.sig"
         sail_log = objects / f"{case.case_id}.sail.log"
@@ -444,17 +463,38 @@ def build_act4(work: Path, elf_root: Path, reference_root: Path) -> list[Case]:
         link(
             case,
             final_obj,
-            HERE / "adapters/act4/link.ld",
+            adapter_path(ACT4_LINKER_SCRIPT),
             elf_path(elf_root, case),
         )
     print("generated 47 Sail reference results and built 47 ACT4 ELFs")
     return cases
 
 
+def adapter_build_input_paths(here: Path = HERE) -> list[Path]:
+    adapter_root = here / "adapters"
+    declared = set(ADAPTER_BUILD_INPUTS)
+    undeclared = sorted(
+        path.relative_to(adapter_root)
+        for path in adapter_root.rglob("*")
+        if path.is_file()
+        and path.suffix.casefold() != ".md"
+        and path.relative_to(adapter_root) not in declared
+    )
+    if undeclared:
+        paths = ", ".join(path.as_posix() for path in undeclared)
+        raise ValueError(f"undeclared adapter build input(s): {paths}")
+    return [adapter_root / path for path in ADAPTER_BUILD_INPUTS]
+
+
+def project_input_paths(here: Path = HERE) -> list[Path]:
+    inputs = [here / "build.py", here / "Dockerfile", here / "toolchain.env"]
+    inputs += adapter_build_input_paths(here)
+    inputs += sorted((here / "patches").glob("*.patch"))
+    return inputs
+
+
 def input_hashes() -> dict[str, str]:
-    inputs = [HERE / "build.py", HERE / "Dockerfile", HERE / "toolchain.env"]
-    inputs += sorted(path for path in (HERE / "adapters").rglob("*") if path.is_file())
-    inputs += sorted((HERE / "patches").glob("*.patch"))
+    inputs = project_input_paths()
     return {relative(path): sha256(path) for path in inputs}
 
 

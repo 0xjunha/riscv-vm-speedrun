@@ -93,10 +93,10 @@ assert_inventory_path() {
     esac
 
     case "$relative_path" in
-        specifications/README.md)
+        isa_specs/README.md)
             die "project-owned README must not appear in the upstream inventory"
             ;;
-        specifications/* | manifests/specifications.lock.json)
+        isa_specs/* | manifests/specifications.lock.json)
             ;;
         *)
             die "inventory path is outside the specification snapshot: $relative_path"
@@ -143,6 +143,7 @@ done
 require_command find
 require_command sort
 require_command diff
+require_command cmp
 require_command grep
 require_command uniq
 require_command mktemp
@@ -161,12 +162,12 @@ LOCK_FILE="$DESTINATION/manifests/specifications.lock.json"
 [ ! -L "$INVENTORY" ] || die "inventory must not be a symbolic link: $INVENTORY"
 [ -f "$LOCK_FILE" ] || die "source lock not found: $LOCK_FILE"
 [ ! -L "$LOCK_FILE" ] || die "source lock must not be a symbolic link: $LOCK_FILE"
-[ -d "$DESTINATION/specifications" ] ||
-    die "specification directory not found: $DESTINATION/specifications"
-[ ! -L "$DESTINATION/specifications" ] ||
+[ -d "$DESTINATION/isa_specs" ] ||
+    die "specification directory not found: $DESTINATION/isa_specs"
+[ ! -L "$DESTINATION/isa_specs" ] ||
     die "specification directory must not be a symbolic link"
 
-SPECIFICATIONS_README="$DESTINATION/specifications/README.md"
+SPECIFICATIONS_README="$DESTINATION/isa_specs/README.md"
 if [ -e "$SPECIFICATIONS_README" ] || [ -L "$SPECIFICATIONS_README" ]; then
     [ -f "$SPECIFICATIONS_README" ] && [ ! -L "$SPECIFICATIONS_README" ] ||
         die "project-owned specification README must be a regular file"
@@ -243,6 +244,8 @@ done <"$INVENTORY"
 [ "$entry_count" -gt 0 ] || die "inventory is empty"
 
 LC_ALL=C sort "$EXPECTED_PATHS" >"$EXPECTED_PATHS_SORTED"
+cmp -s "$EXPECTED_PATHS" "$EXPECTED_PATHS_SORTED" ||
+    die "inventory paths are not in canonical bytewise order"
 uniq -d "$EXPECTED_PATHS_SORTED" >"$DUPLICATE_PATHS"
 if [ -s "$DUPLICATE_PATHS" ]; then
     IFS= read -r duplicate_path <"$DUPLICATE_PATHS" || true
@@ -251,9 +254,9 @@ fi
 
 (
     cd "$DESTINATION"
-    find specifications \
+    find isa_specs \
         \( -type f -o -type l \) \
-        ! -path "specifications/README.md" \
+        ! -path "isa_specs/README.md" \
         -print
     printf '%s\n' "manifests/specifications.lock.json"
 ) >"$ACTUAL_PATHS"
@@ -261,7 +264,7 @@ LC_ALL=C sort "$ACTUAL_PATHS" >"$ACTUAL_PATHS_SORTED"
 
 (
     cd "$DESTINATION"
-    find specifications \
+    find isa_specs \
         ! -type d \
         ! -type f \
         ! -type l \

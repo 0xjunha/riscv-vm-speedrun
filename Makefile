@@ -9,18 +9,21 @@ CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolc
 CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 
-s.PHONY: benchmark benchmark-build benchmark-check benchmark-format \
+.PHONY: benchmark benchmark-build benchmark-check benchmark-format \
 	benchmark-guest-lint benchmark-image benchmark-lint benchmark-reproducible \
 	benchmark-test check conformance conformance-build conformance-check \
 	conformance-format conformance-image conformance-lint \
-	conformance-reproducible conformance-sources contract contract-build \
-	contract-check contract-format contract-lint contract-reproducible \
-	contract-test harness-format harness-lint harness-test lock-check vm0 \
-	vm0-benchmark-smoke vm0-build vm0-conformance vm0-contract vm0-format \
-	vm0-lint vm0-test
+	conformance-reproducible conformance-sources conformance-test contract \
+	contract-build contract-check contract-format contract-lint \
+	contract-reproducible contract-test harness-format harness-lint \
+	harness-test lock-check spec-check vm0 vm0-benchmark-smoke \
+	vm0-build vm0-conformance vm0-contract vm0-format vm0-lint vm0-test
 
 lock-check:
 	uv lock --check
+
+spec-check:
+	./scripts/verify-riscv-specifications.sh
 
 vm0-build:
 	./$(VM0)/build.sh
@@ -123,11 +126,14 @@ vm0-conformance: vm0-build conformance-check
 		rv32im-conformance $(VM0)/out/rv32vm $(CONFORMANCE_MANIFEST)
 
 conformance-format:
-	uv run --locked ruff format conformance/build.py
+	uv run --locked ruff format conformance/build.py conformance/tests
 
 conformance-lint:
-	uv run --locked ruff format --check conformance/build.py
-	uv run --locked ruff check conformance/build.py
+	uv run --locked ruff format --check conformance/build.py conformance/tests
+	uv run --locked ruff check conformance/build.py conformance/tests
+
+conformance-test:
+	PYTHONDONTWRITEBYTECODE=1 uv run --locked pytest conformance/tests
 
 conformance-reproducible: conformance-sources conformance-image
 	docker run --rm --platform linux/amd64 \
@@ -170,6 +176,7 @@ contract-reproducible: conformance-image
 		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
 		python3 contracts/build.py reproduce
 
-check: lock-check vm0 harness-lint harness-test benchmark-check benchmark-lint \
-	benchmark-test conformance-lint contract-lint contract-test vm0-conformance \
-	vm0-contract vm0-benchmark-smoke
+check: lock-check spec-check vm0 harness-lint harness-test \
+	benchmark-check benchmark-lint benchmark-test conformance-lint \
+	conformance-test contract-lint contract-test vm0-conformance vm0-contract \
+	vm0-benchmark-smoke

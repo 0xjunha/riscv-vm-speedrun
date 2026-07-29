@@ -48,7 +48,7 @@ usage() {
 Usage: $(basename "$0") [--destination DIRECTORY]
 
 Import pinned RISC-V ISA manual and Sail model snapshots. DIRECTORY is the
-RISC-V third-party root that will contain specifications/ and manifests/.
+RISC-V third-party root that will contain isa_specs/ and manifests/.
 It defaults to:
 
   $REPOSITORY_ROOT/third_party/riscv
@@ -263,7 +263,7 @@ write_lock_file() {
       "tree": "$MANUAL_TREE",
       "document_version": "20260120",
       "license": "CC-BY-4.0",
-      "destination": "specifications/$MANUAL_DESTINATION",
+      "destination": "isa_specs/$MANUAL_DESTINATION",
       "imported_paths": [
         "LICENSE",
         "README.md",
@@ -282,7 +282,7 @@ write_lock_file() {
       "tree": "$SAIL_TREE",
       "model_version": "0.12",
       "license": "BSD-2-Clause",
-      "destination": "specifications/$SAIL_DESTINATION",
+      "destination": "isa_specs/$SAIL_DESTINATION",
       "imported_paths": [
         "LICENCE",
         "README.md",
@@ -333,7 +333,7 @@ write_inventory() {
 
     (
         cd "$payload_root"
-        find specifications \( -type f -o -type l \) -print
+        find isa_specs \( -type f -o -type l \) -print
         printf '%s\n' "manifests/specifications.lock.json"
     ) >"$unsorted_paths"
 
@@ -366,10 +366,10 @@ write_inventory() {
 publish_payload() {
     payload_root=$1
 
-    MANUAL_STAGE_PATH="$payload_root/specifications/$MANUAL_DESTINATION"
-    MANUAL_TARGET_PATH="$DESTINATION/specifications/$MANUAL_DESTINATION"
-    SAIL_STAGE_PATH="$payload_root/specifications/$SAIL_DESTINATION"
-    SAIL_TARGET_PATH="$DESTINATION/specifications/$SAIL_DESTINATION"
+    MANUAL_STAGE_PATH="$payload_root/isa_specs/$MANUAL_DESTINATION"
+    MANUAL_TARGET_PATH="$DESTINATION/isa_specs/$MANUAL_DESTINATION"
+    SAIL_STAGE_PATH="$payload_root/isa_specs/$SAIL_DESTINATION"
+    SAIL_TARGET_PATH="$DESTINATION/isa_specs/$SAIL_DESTINATION"
     LOCK_STAGE_PATH="$payload_root/manifests/specifications.lock.json"
     LOCK_TARGET_PATH="$DESTINATION/manifests/specifications.lock.json"
     INVENTORY_STAGE_PATH="$payload_root/manifests/specifications.inventory.tsv"
@@ -430,7 +430,7 @@ DESTINATION=$(CDPATH= cd -- "$DESTINATION" && pwd -P)
 [ "$DESTINATION" != "/" ] || die "refusing to import into the filesystem root"
 
 for directory in \
-    "$DESTINATION/specifications" \
+    "$DESTINATION/isa_specs" \
     "$DESTINATION/manifests"
 do
     if [ -L "$directory" ]; then
@@ -443,8 +443,8 @@ do
 done
 
 for output in \
-    "$DESTINATION/specifications/$MANUAL_DESTINATION" \
-    "$DESTINATION/specifications/$SAIL_DESTINATION" \
+    "$DESTINATION/isa_specs/$MANUAL_DESTINATION" \
+    "$DESTINATION/isa_specs/$SAIL_DESTINATION" \
     "$DESTINATION/manifests/specifications.lock.json" \
     "$DESTINATION/manifests/specifications.inventory.tsv"
 do
@@ -470,7 +470,7 @@ MANUAL_SOURCE="$STAGING_DIRECTORY/manual-source"
 SAIL_SOURCE="$STAGING_DIRECTORY/sail-source"
 LINK_HASH_INPUT="$STAGING_DIRECTORY/link-target"
 
-mkdir -p "$PAYLOAD_ROOT/specifications" "$PAYLOAD_ROOT/manifests"
+mkdir -p "$PAYLOAD_ROOT/isa_specs" "$PAYLOAD_ROOT/manifests"
 
 clone_pinned_source \
     "$MANUAL_NAME" \
@@ -490,13 +490,13 @@ clone_pinned_source \
 note "Exporting selected RISC-V ISA manual sources..."
 export_manual \
     "$MANUAL_SOURCE" \
-    "$PAYLOAD_ROOT/specifications/$MANUAL_DESTINATION" \
+    "$PAYLOAD_ROOT/isa_specs/$MANUAL_DESTINATION" \
     "$STAGING_DIRECTORY/manual.tar"
 
 note "Exporting Sail formal model sources..."
 export_sail \
     "$SAIL_SOURCE" \
-    "$PAYLOAD_ROOT/specifications/$SAIL_DESTINATION" \
+    "$PAYLOAD_ROOT/isa_specs/$SAIL_DESTINATION" \
     "$STAGING_DIRECTORY/sail.tar"
 
 write_lock_file "$PAYLOAD_ROOT/manifests/specifications.lock.json"
