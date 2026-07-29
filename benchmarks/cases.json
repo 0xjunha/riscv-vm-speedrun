@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "tiny",
+      "workload": "tiny",
+      "regime": "fixed overhead",
+      "parameters": {
+        "a": 19088743,
+        "b": 2309737967
+      },
+      "instruction_limit": 100000,
+      "output_limit": 16
+    },
+    {
+      "id": "arithmetic",
+      "workload": "arithmetic",
+      "regime": "integer hot loop",
+      "parameters": {
+        "iterations": 32000,
+        "x": 4079117402,
+        "y": 2024672538
+      },
+      "instruction_limit": 5000000,
+      "output_limit": 16
+    },
+    {
+      "id": "streaming",
+      "workload": "streaming",
+      "regime": "sequential memory reads",
+      "parameters": {
+        "passes": 8,
+        "count": 512,
+        "seed": 305419896
+      },
+      "instruction_limit": 2000000,
+      "output_limit": 16
+    }
+  ]
+}

@@ -1,0 +1,419 @@
+"""Measure manifest-defined workloads through persistent ``rv32vm serve``."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import stat
+import statistics
+import sys
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .vm_client import VmServer
+from .vm_interface import (
+    MAX_ELF_SIZE,
+    MAX_INPUT_SIZE,
+    MAX_INSTRUCTION_LIMIT,
+    MAX_OUTPUT_LIMIT,
+    RunOutcome,
+)
+
+DEFAULT_MANIFEST = Path("benchmarks/artifacts/manifest.json")
+DEFAULT_WARMUPS = 2
+DEFAULT_REPETITIONS = 7
+DEFAULT_TIMEOUT = 10.0
+
+
+class BenchmarkFailure(RuntimeError):
+    """A benchmark asset, VM result, or runner configuration was invalid."""
+
+
+@dataclass(frozen=True)
+class _Case:
+    case_id: str
+    workload: str
+    elf: bytes
+    input_data: bytes
+    expected_output: bytes
+    expected_exit_code: int
+    instruction_limit: int
+    output_limit: int
+
+
+@dataclass(frozen=True)
+class _Manifest:
+    sha256: str
+    cases: tuple[_Case, ...]
+
+
+def _bounded_integer(
+    record: dict[str, Any],
+    key: str,
+    maximum: int,
+    case_id: str,
+) -> int:
+    value = record.get(key)
+    if type(value) is not int or not 0 <= value <= maximum:
+        raise BenchmarkFailure(f"{case_id}: {key} is invalid")
+    return value
+
+
+def _read_artifact(
+    root: Path,
+    record: dict[str, Any],
+    key: str,
+    case_id: str,
+    maximum_size: int,
+) -> bytes:
+    name = record.get(key)
+    expected_hash = record.get(f"{key}_sha256")
+    expected_size = record.get(f"{key}_size")
+    if (
+        not isinstance(name, str)
+        or not name
+        or not isinstance(expected_hash, str)
+        or len(expected_hash) != 64
+        or any(character not in "0123456789abcdef" for character in expected_hash)
+        or type(expected_size) is not int
+        or expected_size < 0
+    ):
+        raise BenchmarkFailure(f"{case_id}: {key} metadata is invalid")
+    if expected_size > maximum_size:
+        raise BenchmarkFailure(
+            f"{case_id}: {key} size exceeds its {maximum_size}-byte limit"
+        )
+
+    def require_file(metadata: os.stat_result) -> None:
+        if not stat.S_ISREG(metadata.st_mode):
+            raise BenchmarkFailure(f"{case_id}: {key} is not a regular file")
+        if metadata.st_size > maximum_size:
+            raise BenchmarkFailure(
+                f"{case_id}: {key} size exceeds its {maximum_size}-byte limit"
+            )
+        if metadata.st_size != expected_size:
+            raise BenchmarkFailure(f"{case_id}: {key} size does not match the manifest")
+
+    try:
+        relative = Path(name)
+        path = (root / relative).resolve()
+        if relative.is_absolute() or not path.is_relative_to(root):
+            raise BenchmarkFailure(
+                f"{case_id}: {key} path leaves the artifact directory"
+            )
+        require_file(path.stat())
+        with path.open("rb") as stream:
+            require_file(os.fstat(stream.fileno()))
+            data = stream.read(expected_size + 1)
+    except BenchmarkFailure:
+        raise
+    except (OSError, RuntimeError, ValueError) as error:
+        raise BenchmarkFailure(
+            f"{case_id}: cannot read {key} {name}: {error}"
+        ) from error
+    if len(data) != expected_size:
+        raise BenchmarkFailure(f"{case_id}: {key} size does not match the manifest")
+    if hashlib.sha256(data).hexdigest() != expected_hash:
+        raise BenchmarkFailure(f"{case_id}: {key} hash does not match the manifest")
+    return data
+
+
+def _load_manifest(path: Path) -> _Manifest:
+    path = path.resolve()
+    try:
+        payload = path.read_bytes()
+        document = json.loads(payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BenchmarkFailure(f"cannot read manifest {path}: {error}") from error
+    records = document.get("cases") if isinstance(document, dict) else None
+    if (
+        not isinstance(document, dict)
+        or document.get("schema_version") != 1
+        or not isinstance(records, list)
+    ):
+        raise BenchmarkFailure("manifest schema is invalid")
+
+    root = path.parent
+    cases = []
+    seen = set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise BenchmarkFailure("manifest contains a non-object case")
+        case_id = record.get("id")
+        workload = record.get("workload")
+        if (
+            not isinstance(case_id, str)
+            or not case_id
+            or case_id in seen
+            or not isinstance(workload, str)
+            or not workload
+        ):
+            raise BenchmarkFailure(f"manifest case is invalid: {case_id!r}")
+        seen.add(case_id)
+
+        expected_exit_code = _bounded_integer(
+            record, "expected_exit_code", 0xFFFF_FFFF, case_id
+        )
+        instruction_limit = _bounded_integer(
+            record, "instruction_limit", MAX_INSTRUCTION_LIMIT, case_id
+        )
+        output_limit = _bounded_integer(
+            record, "output_limit", MAX_OUTPUT_LIMIT, case_id
+        )
+        elf = _read_artifact(root, record, "elf", case_id, MAX_ELF_SIZE)
+        input_data = _read_artifact(root, record, "input", case_id, MAX_INPUT_SIZE)
+        expected_output = _read_artifact(
+            root,
+            record,
+            "expected_output",
+            case_id,
+            output_limit,
+        )
+        cases.append(
+            _Case(
+                case_id,
+                workload,
+                elf,
+                input_data,
+                expected_output,
+                expected_exit_code,
+                instruction_limit,
+                output_limit,
+            )
+        )
+
+    if not cases:
+        raise BenchmarkFailure("manifest contains no cases")
+    return _Manifest(hashlib.sha256(payload).hexdigest(), tuple(cases))
+
+
+def _select_cases(
+    cases: tuple[_Case, ...],
+    case_ids: Sequence[str] | None,
+) -> tuple[_Case, ...]:
+    if case_ids is None:
+        return cases
+    requested = tuple(case_ids)
+    if not requested:
+        raise BenchmarkFailure("case selection is empty")
+    if any(not isinstance(case_id, str) or not case_id for case_id in requested):
+        raise BenchmarkFailure("case IDs must be nonempty strings")
+    if len(set(requested)) != len(requested):
+        raise BenchmarkFailure("case selection contains duplicate IDs")
+    available = {case.case_id: case for case in cases}
+    unknown = [case_id for case_id in requested if case_id not in available]
+    if unknown:
+        raise BenchmarkFailure(f"unknown benchmark case: {unknown[0]}")
+    return tuple(available[case_id] for case_id in requested)
+
+
+def _require_outcome(
+    case: _Case,
+    phase: str,
+    outcome: RunOutcome,
+    retired_instructions: int | None = None,
+) -> int:
+    result = outcome.result
+    prefix = f"{case.case_id} {phase}"
+    if result.status != "exit":
+        raise BenchmarkFailure(f"{prefix}: expected exit, got {result.status}")
+    if result.exit_code != case.expected_exit_code:
+        raise BenchmarkFailure(
+            f"{prefix}: expected exit code {case.expected_exit_code}, "
+            f"got {result.exit_code}"
+        )
+    if outcome.output != case.expected_output:
+        raise BenchmarkFailure(
+            f"{prefix}: output differs (expected {len(case.expected_output)} bytes, "
+            f"got {len(outcome.output)})"
+        )
+    if (
+        retired_instructions is not None
+        and result.retired_instructions != retired_instructions
+    ):
+        raise BenchmarkFailure(
+            f"{prefix}: retired instruction count changed from "
+            f"{retired_instructions} to {result.retired_instructions}"
+        )
+    return result.retired_instructions
+
+
+def _run_untimed(server: VmServer, case: _Case, phase: str) -> RunOutcome:
+    try:
+        return server.run(
+            case.input_data,
+            instruction_limit=case.instruction_limit,
+            output_limit=case.output_limit,
+        )
+    except Exception as error:
+        raise BenchmarkFailure(f"{case.case_id} {phase}: {error}") from error
+
+
+def _measure_case(
+    server: VmServer,
+    case: _Case,
+    warmups: int,
+    repetitions: int,
+) -> dict[str, object]:
+    try:
+        server.load(case.elf)
+    except Exception as error:
+        raise BenchmarkFailure(f"{case.case_id} load: {error}") from error
+
+    correctness = _run_untimed(server, case, "correctness run")
+    retired = _require_outcome(case, "correctness run", correctness)
+    for index in range(warmups):
+        outcome = _run_untimed(server, case, f"warmup {index + 1}")
+        _require_outcome(case, f"warmup {index + 1}", outcome, retired)
+
+    samples = []
+    run_arguments = {
+        "instruction_limit": case.instruction_limit,
+        "output_limit": case.output_limit,
+    }
+    for index in range(repetitions):
+        started = time.perf_counter_ns()
+        try:
+            outcome = server.run(case.input_data, **run_arguments)
+        except Exception as error:
+            raise BenchmarkFailure(
+                f"{case.case_id} repetition {index + 1}: {error}"
+            ) from error
+        elapsed = time.perf_counter_ns() - started
+        _require_outcome(case, f"repetition {index + 1}", outcome, retired)
+        if elapsed <= 0:
+            raise BenchmarkFailure(
+                f"{case.case_id} repetition {index + 1}: clock did not advance"
+            )
+        samples.append(elapsed)
+
+    try:
+        server.unload()
+    except Exception as error:
+        raise BenchmarkFailure(f"{case.case_id} unload: {error}") from error
+    return {
+        "id": case.case_id,
+        "workload": case.workload,
+        "retired_instructions": retired,
+        "samples_ns": samples,
+        "median_ns": statistics.median(samples),
+    }
+
+
+def _run_count(value: int, name: str, *, allow_zero: bool) -> int:
+    minimum = 0 if allow_zero else 1
+    if type(value) is not int or value < minimum:
+        qualifier = "nonnegative" if allow_zero else "positive"
+        raise BenchmarkFailure(f"{name} must be a {qualifier} integer")
+    return value
+
+
+def run_benchmarks(
+    executable: str | os.PathLike[str],
+    manifest: str | os.PathLike[str] = DEFAULT_MANIFEST,
+    *,
+    warmups: int = DEFAULT_WARMUPS,
+    repetitions: int = DEFAULT_REPETITIONS,
+    timeout: float = DEFAULT_TIMEOUT,
+    case_ids: Sequence[str] | None = None,
+) -> dict[str, object]:
+    """Validate and measure each selected case in a fresh VM server."""
+
+    warmups = _run_count(warmups, "warmups", allow_zero=True)
+    repetitions = _run_count(repetitions, "repetitions", allow_zero=False)
+    loaded = _load_manifest(Path(manifest))
+    cases = _select_cases(loaded.cases, case_ids)
+    results = []
+    for case in cases:
+        try:
+            with VmServer(executable, timeout=timeout) as server:
+                result = _measure_case(server, case, warmups, repetitions)
+        except BenchmarkFailure:
+            raise
+        except Exception as error:
+            raise BenchmarkFailure(f"{case.case_id} serve: {error}") from error
+        results.append(result)
+    return {
+        "schema_version": 1,
+        "manifest_sha256": loaded.sha256,
+        "interface": "serve",
+        "warmups": warmups,
+        "repetitions": repetitions,
+        "timeout_seconds": float(timeout),
+        "cases": results,
+    }
+
+
+def _json_text(result: dict[str, object]) -> str:
+    return json.dumps(result, indent=2, sort_keys=True) + "\n"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Measure public RV32IM workloads through persistent serve mode."
+    )
+    parser.add_argument("vm", help="path to an rv32vm executable")
+    parser.add_argument(
+        "manifest",
+        nargs="?",
+        default=DEFAULT_MANIFEST,
+        help=f"manifest path (default: {DEFAULT_MANIFEST})",
+    )
+    parser.add_argument(
+        "--warmups",
+        type=int,
+        default=DEFAULT_WARMUPS,
+        help=f"untimed warmup runs per case (default: {DEFAULT_WARMUPS})",
+    )
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=DEFAULT_REPETITIONS,
+        help=f"timed runs per case (default: {DEFAULT_REPETITIONS})",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help=f"timeout in seconds per VM operation (default: {DEFAULT_TIMEOUT:g})",
+    )
+    parser.add_argument(
+        "--case",
+        dest="case_ids",
+        action="append",
+        help="run only this case (repeatable)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="write result JSON to this file instead of standard output",
+    )
+    arguments = parser.parse_args(argv)
+
+    try:
+        result = run_benchmarks(
+            arguments.vm,
+            arguments.manifest,
+            warmups=arguments.warmups,
+            repetitions=arguments.repetitions,
+            timeout=arguments.timeout,
+            case_ids=arguments.case_ids,
+        )
+        text = _json_text(result)
+        if arguments.output is None:
+            print(text, end="")
+        else:
+            arguments.output.write_text(text, encoding="utf-8")
+    except (BenchmarkFailure, OSError) as error:
+        print(f"benchmark failed: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,8 @@
+[package]
+name = "rv32im-workloads"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rv32im-guest = { path = "../runtime" }
