@@ -147,12 +147,22 @@ def _project_input_paths() -> tuple[Path, ...]:
         ROOT / "cases.json",
         ROOT / "reference.py",
     )
-    guest = tuple(
-        path
-        for path in GUEST.rglob("*")
-        if path.is_file() and "target" not in path.relative_to(GUEST).parts
+    guest_configuration = (
+        GUEST / ".cargo/config.toml",
+        GUEST / "Cargo.lock",
+        GUEST / "Cargo.toml",
+        GUEST / "link.x",
+        GUEST / "runtime/Cargo.toml",
+        GUEST / "rust-toolchain.toml",
+        GUEST / "workloads/build.rs",
+        GUEST / "workloads/Cargo.toml",
     )
-    return tuple(sorted((*fixed, *guest)))
+    guest_sources = tuple(
+        path
+        for source_root in (GUEST / "runtime/src", GUEST / "workloads/src")
+        for path in source_root.rglob("*.rs")
+    )
+    return tuple(sorted((*fixed, *guest_configuration, *guest_sources)))
 
 
 def _project_inputs() -> dict[str, str]:
