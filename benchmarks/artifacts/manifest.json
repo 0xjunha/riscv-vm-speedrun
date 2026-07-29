@@ -67,6 +67,7 @@
     "benchmarks/guest/.cargo/config.toml": "f733bc71a6c63f8a1f3a2e0235e90e952ac9e4caf3167c89fda890a59e3a9dfc",
     "benchmarks/guest/Cargo.lock": "54c5b7eef72fb45fc53a6a7849fa8052e581862e1e57b6d2ba94a237943a0dbf",
     "benchmarks/guest/Cargo.toml": "f7e3d89474543167e402d42f385f543a8fa19066f4431d13a5feb1b2a0448ec7",
+    "benchmarks/guest/README.md": "832c21f6dad0f67daad116fdaf2e8037ae3c42506ed1b6d153ecf2f6cfc747ee",
     "benchmarks/guest/link.x": "221aa7a767dabb1452fe43d1337723c1f3087e85ddad2980bc356ef0847386f9",
     "benchmarks/guest/runtime/Cargo.toml": "d2ac3dc83fdbd19859f422959ea2358a0ee520168758081074364a07ebbf115d",
     "benchmarks/guest/runtime/src/lib.rs": "cb8c2ff5df25b185af7fa9e30d37c3841ff67e5fb534605ec89c0307b4c24cda",
