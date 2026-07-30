@@ -52,10 +52,10 @@ Docker builder. Builds and reproducibility checks also enforce rustfmt and
 Clippy. `benchmark-check` needs only Python.
 
 `make benchmark-compare` rebuilds every VM in `RUNTIME_VM_LIST` and selects
-`BASELINE_VM` as the baseline. On x86-64 Linux this includes VM4; other hosts
-report that VM4 is skipped. The command measures the selected VMs on the local
-host with the same manifest, case selection, warmup count, repetition count,
-and timeout. For each selected case it reports:
+`BASELINE_VM` as the baseline. On x86-64 Linux this includes VM4 and VM5; other
+hosts report that both are skipped. The command measures the selected VMs on
+the local host with the same manifest, case selection, warmup count, repetition
+count, and timeout. For each selected case it reports:
 
 ```text
 candidate speedup = baseline median / candidate median
