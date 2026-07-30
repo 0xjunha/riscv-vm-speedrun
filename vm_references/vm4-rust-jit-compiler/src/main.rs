@@ -25,16 +25,6 @@ mod cache;
     )
 ))]
 mod engine;
-#[cfg(any(
-    test,
-    all(
-        target_arch = "x86_64",
-        target_os = "linux",
-        target_pointer_width = "64"
-    )
-))]
-mod native;
-
 #[cfg(test)]
 mod test_support;
 

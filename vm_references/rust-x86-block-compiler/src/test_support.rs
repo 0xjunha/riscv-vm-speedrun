@@ -3,6 +3,13 @@ use rv32vm_rust_common::{
     memory::{Image, PAGE_COUNT, PAGE_SHIFT, PAGE_SIZE, PERM_EXEC, PERM_READ},
 };
 
+use crate::BlockInstruction;
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    target_pointer_width = "64"
+))]
 pub(crate) const NOP: u32 = 0x0000_0013;
 
 pub(crate) fn addi(rd: u32, rs1: u32, immediate: i32) -> u32 {
@@ -13,23 +20,7 @@ pub(crate) fn lw(rd: u32, rs1: u32, immediate: i32) -> u32 {
     ((immediate as u32 & 0xfff) << 20) | (rs1 << 15) | (2 << 12) | (rd << 7) | 0x03
 }
 
-#[cfg(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    target_pointer_width = "64"
-))]
-pub(crate) fn beq(rs1: u32, rs2: u32, offset: i32) -> u32 {
-    let immediate = offset as u32 & 0x1fff;
-    ((immediate >> 12) << 31)
-        | (((immediate >> 5) & 0x3f) << 25)
-        | (rs2 << 20)
-        | (rs1 << 15)
-        | (((immediate >> 1) & 0xf) << 8)
-        | (((immediate >> 11) & 1) << 7)
-        | 0x63
-}
-
-pub(crate) fn image_with_code_at(code: &[u32], start: u32) -> Image {
+pub(crate) fn machine_with_code(code: &[u32], start: u32) -> Machine {
     let mut permissions = vec![0; PAGE_COUNT];
     let mut pages = std::iter::repeat_with(|| None)
         .take(PAGE_COUNT)
@@ -44,14 +35,30 @@ pub(crate) fn image_with_code_at(code: &[u32], start: u32) -> Image {
         page[offset..offset + 4].copy_from_slice(&instruction.to_le_bytes());
     }
 
-    Image {
-        entry: start,
-        permissions,
-        pages,
-        executable_file_ranges: std::iter::once(start..start + code.len() as u32 * 4).collect(),
-    }
+    Machine::new(
+        &Image {
+            entry: start,
+            permissions,
+            pages,
+            executable_file_ranges: std::iter::once(start..start + code.len() as u32 * 4).collect(),
+        },
+        &[],
+        0,
+    )
 }
 
-pub(crate) fn machine_with_code_at(code: &[u32], start: u32) -> Machine {
-    Machine::new(&image_with_code_at(code, start), &[], 0)
+pub(crate) fn decoded_block(machine: &Machine, start: u32) -> Vec<BlockInstruction> {
+    let mut instructions = Vec::new();
+    let mut pc = start;
+    loop {
+        let instruction = machine.fetch_decode(pc);
+        let ends_block = instruction
+            .as_ref()
+            .map_or(true, |instruction| instruction.ends_block());
+        instructions.push(instruction);
+        if ends_block || instructions.len() == 64 {
+            return instructions;
+        }
+        pc = pc.wrapping_add(4);
+    }
 }

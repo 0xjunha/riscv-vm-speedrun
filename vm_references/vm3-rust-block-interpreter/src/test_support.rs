@@ -33,6 +33,7 @@ pub(crate) fn machine_with_code_at(code: &[u32], start: u32) -> Machine {
             entry: start,
             permissions,
             pages,
+            executable_file_ranges: std::iter::once(start..start + code.len() as u32 * 4).collect(),
         },
         &[],
         0,

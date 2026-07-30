@@ -1,0 +1,13 @@
+[package]
+name = "rv32vm-rust-x86-block-compiler"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[dependencies]
+rv32vm-rust-common = { path = "../rust-interpreter-common" }
+
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"

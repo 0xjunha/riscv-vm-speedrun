@@ -143,6 +143,33 @@ impl DecodedInstruction {
         matches!(self.opcode, 0x63 | 0x67 | 0x6f | 0x73)
             || !matches!(self.opcode, 0x03 | 0x0f | 0x13 | 0x17 | 0x23 | 0x33 | 0x37)
     }
+
+    /// Returns the target encoded by a conditional branch.
+    pub const fn branch_target(self) -> u32 {
+        let encoded = (((self.raw >> 31) & 1) << 12)
+            | (((self.raw >> 7) & 1) << 11)
+            | (((self.raw >> 25) & 0x3f) << 5)
+            | (((self.raw >> 8) & 0xf) << 1);
+        self.pc.wrapping_add(sign_extend(encoded, 13))
+    }
+
+    /// Returns the target encoded by a direct jump.
+    pub const fn jump_target(self) -> u32 {
+        let encoded = ((self.raw >> 31) << 20)
+            | (((self.raw >> 12) & 0xff) << 12)
+            | (((self.raw >> 20) & 1) << 11)
+            | (((self.raw >> 21) & 0x3ff) << 1);
+        self.pc.wrapping_add(sign_extend(encoded, 21))
+    }
+
+    /// Returns the static target of a conditional branch or direct jump.
+    pub const fn direct_target(self) -> Option<u32> {
+        match self.opcode {
+            0x63 => Some(self.branch_target()),
+            0x6f => Some(self.jump_target()),
+            _ => None,
+        }
+    }
 }
 
 pub struct Machine {
@@ -250,11 +277,7 @@ impl Machine {
                 self.pc = next_pc;
             }
             0x6f => {
-                let encoded = ((instruction >> 31) << 20)
-                    | (((instruction >> 12) & 0xff) << 12)
-                    | (((instruction >> 20) & 1) << 11)
-                    | (((instruction >> 21) & 0x3ff) << 1);
-                let target = pc.wrapping_add(sign_extend(encoded, 21));
+                let target = decoded.jump_target();
                 if target & 3 != 0 {
                     return Err(GuestTrap::new("InstructionAddressMisaligned", pc, target));
                 }
@@ -286,11 +309,7 @@ impl Machine {
                     _ => return Err(self.illegal(instruction)),
                 };
                 if taken {
-                    let encoded = (((instruction >> 31) & 1) << 12)
-                        | (((instruction >> 7) & 1) << 11)
-                        | (((instruction >> 25) & 0x3f) << 5)
-                        | (((instruction >> 8) & 0xf) << 1);
-                    let target = pc.wrapping_add(sign_extend(encoded, 13));
+                    let target = decoded.branch_target();
                     if target & 3 != 0 {
                         return Err(GuestTrap::new("InstructionAddressMisaligned", pc, target));
                     }
@@ -429,7 +448,7 @@ impl Machine {
     }
 }
 
-fn sign_extend(value: u32, bits: u32) -> u32 {
+const fn sign_extend(value: u32, bits: u32) -> u32 {
     ((value << (32 - bits)) as i32 >> (32 - bits)) as u32
 }
 
@@ -471,5 +490,19 @@ mod tests {
         );
         assert_eq!(completed.pc, IMAGE_START);
         assert_eq!(completed.retired, 1);
+    }
+
+    #[test]
+    fn decodes_direct_control_flow_targets() {
+        let image = load(&executable(&[0x0000_0463, 0x0080_006f, 0x0000_0013])).unwrap();
+        let machine = Machine::new(&image, &[], 0);
+
+        let branch = machine.fetch_decode(IMAGE_START).unwrap();
+        let jump = machine.fetch_decode(IMAGE_START + 4).unwrap();
+        let addi = machine.fetch_decode(IMAGE_START + 8).unwrap();
+
+        assert_eq!(branch.direct_target(), Some(IMAGE_START + 8));
+        assert_eq!(jump.direct_target(), Some(IMAGE_START + 12));
+        assert_eq!(addi.direct_target(), None);
     }
 }

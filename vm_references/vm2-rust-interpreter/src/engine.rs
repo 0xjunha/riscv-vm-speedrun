@@ -39,6 +39,7 @@ mod tests {
             entry: IMAGE_START,
             permissions,
             pages,
+            executable_file_ranges: std::iter::once(IMAGE_START..IMAGE_START + 4).collect(),
         };
         let mut machine = Machine::new(&image, &[], 0);
         let mut engine = Interpreter;

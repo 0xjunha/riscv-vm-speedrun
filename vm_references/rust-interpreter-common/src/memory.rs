@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::error::GuestTrap;
 
 pub const ADDRESS_SPACE_SIZE: u32 = 0x0400_0000;
@@ -23,6 +25,8 @@ pub struct Image {
     pub entry: u32,
     pub permissions: Vec<u8>,
     pub pages: Vec<Option<Page>>,
+    /// Exact virtual ranges backed by executable bytes in the ELF.
+    pub executable_file_ranges: Vec<Range<u32>>,
 }
 
 pub struct Memory {

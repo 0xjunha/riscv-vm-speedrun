@@ -166,6 +166,7 @@ pub fn load(data: &[u8]) -> Result<Image, String> {
     let mut permissions = vec![0; PAGE_COUNT];
     let mut pages = vec![None; PAGE_COUNT];
     let mut ranges = Vec::new();
+    let mut executable_file_ranges = Vec::new();
     let mut load_count = 0;
 
     for index in 0..phnum {
@@ -219,6 +220,9 @@ pub fn load(data: &[u8]) -> Result<Image, String> {
         if permission & PERM_EXEC != 0 && (virtual_address | file_size | memory_size) & 3 != 0 {
             return Err("executable PT_LOAD is not 4-byte granular".into());
         }
+        if permission & PERM_EXEC != 0 && file_size != 0 {
+            executable_file_ranges.push(virtual_address..virtual_address + file_size);
+        }
         if ranges
             .iter()
             .any(|(start, end)| virtual_address < *end && *start < segment_end)
@@ -261,10 +265,12 @@ pub fn load(data: &[u8]) -> Result<Image, String> {
     if entry >= IMAGE_END || permissions[(entry >> PAGE_SHIFT) as usize] & PERM_EXEC == 0 {
         return Err("ELF entry point is not in executable memory".into());
     }
+    executable_file_ranges.sort_unstable_by_key(|range| range.start);
     Ok(Image {
         entry,
         permissions,
         pages,
+        executable_file_ranges,
     })
 }
 
@@ -304,6 +310,9 @@ pub(crate) mod tests {
     fn loads_a_minimal_executable() {
         let image = load(&executable(&[0x0000_0073])).unwrap();
         assert_eq!(image.entry, IMAGE_START);
+        assert_eq!(image.executable_file_ranges.len(), 1);
+        assert_eq!(image.executable_file_ranges[0].start, IMAGE_START);
+        assert_eq!(image.executable_file_ranges[0].end, IMAGE_START + 4);
     }
 
     #[test]

@@ -6,13 +6,16 @@ use rv32vm_rust_common::{
     machine::Machine,
     memory::{PAGE_COUNT, PAGE_SHIFT, PAGE_SIZE},
 };
+use rv32vm_rust_x86_block_compiler::{CompiledBlock, NativeBlock};
 
-use crate::{block::BasicBlock, native::NativeBlock};
+use crate::block::BasicBlock;
 
 const INSTRUCTIONS_PER_PAGE: usize = PAGE_SIZE / 4;
 const MAX_BLOCKS: usize = 8_192;
 const MAX_DECODED_INSTRUCTIONS: usize = 262_144;
 const COMPILATION_THRESHOLD: u8 = 3;
+/// Shortest native prefix worth publishing for the lazy JIT.
+const MIN_NATIVE_INSTRUCTIONS: usize = 2;
 
 #[derive(Clone, Copy)]
 struct BlockId(NonZeroU32);
@@ -80,10 +83,10 @@ impl CachedBlock {
             return 0;
         }
 
-        self.tier = match NativeBlock::compile(&self.block, code_budget) {
-            Some(native) => Tier::Native(native),
-            None => Tier::Disabled,
-        };
+        self.tier = CompiledBlock::compile(self.block.instructions())
+            .filter(|block| block.instruction_count() >= MIN_NATIVE_INSTRUCTIONS)
+            .and_then(|block| NativeBlock::publish(block, code_budget))
+            .map_or(Tier::Disabled, Tier::Native);
         self.native().map_or(0, NativeBlock::mapped_len)
     }
 }

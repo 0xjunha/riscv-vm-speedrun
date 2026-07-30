@@ -1,49 +1,112 @@
 //! Owns native-code publication and invocation for x86-64 Linux.
 
-mod memory;
-
 use std::mem;
 
-use crate::{block::BasicBlock, native::emitter};
-
-use self::memory::ExecutableMemory;
+use crate::{CompiledBlock, memory::ExecutableMemory};
 
 type Entry = unsafe extern "C" fn(*mut u32) -> u32;
 
-/// Owns one executable native block and its guest-instruction count.
-pub(crate) struct NativeBlock {
-    memory: ExecutableMemory,
-    entry: Entry,
+#[derive(Clone, Copy)]
+struct EntryMetadata {
+    offset: usize,
     instruction_count: usize,
 }
 
-impl NativeBlock {
-    pub(crate) fn compile(block: &BasicBlock, code_budget: usize) -> Option<Self> {
-        let compiled = emitter::compile(block)?;
-        let memory = ExecutableMemory::publish(&compiled.code, code_budget)?;
-        debug_assert_eq!(size_of::<Entry>(), size_of::<*const u8>());
-        // SAFETY: `memory` contains finalized bytes emitted for `Entry`, is RX,
-        // and remains owned by the returned block for the entry's lifetime.
-        let entry = unsafe { mem::transmute::<*const u8, Entry>(memory.address()) };
-        Some(Self {
-            memory,
-            entry,
-            instruction_count: compiled.instruction_count,
+/// Owns one executable mapping containing one or more native blocks.
+pub struct NativeProgram {
+    memory: ExecutableMemory,
+    entries: Vec<EntryMetadata>,
+}
+
+impl NativeProgram {
+    pub fn publish(blocks: Vec<CompiledBlock>, code_budget: usize) -> Option<Self> {
+        let code_len = blocks.iter().try_fold(0_usize, |length, block| {
+            length.checked_add(block.code_len())
+        })?;
+        if code_len == 0 {
+            return None;
+        }
+
+        let mut code = Vec::with_capacity(code_len);
+        let mut entries = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            entries.push(EntryMetadata {
+                offset: code.len(),
+                instruction_count: block.instruction_count(),
+            });
+            code.extend_from_slice(&block.code);
+        }
+
+        let memory = ExecutableMemory::publish(&code, code_budget)?;
+        Some(Self { memory, entries })
+    }
+
+    pub fn entry(&self, index: usize) -> Option<NativeEntry<'_>> {
+        Some(NativeEntry {
+            program: self,
+            metadata: *self.entries.get(index)?,
         })
     }
 
-    pub(crate) const fn mapped_len(&self) -> usize {
+    pub const fn mapped_len(&self) -> usize {
         self.memory.len()
     }
+}
 
-    pub(crate) const fn instruction_count(&self) -> usize {
-        self.instruction_count
+/// A native block entry tied to the executable program that owns it.
+#[derive(Clone, Copy)]
+pub struct NativeEntry<'a> {
+    program: &'a NativeProgram,
+    metadata: EntryMetadata,
+}
+
+impl NativeEntry<'_> {
+    pub const fn instruction_count(&self) -> usize {
+        self.metadata.instruction_count
     }
 
-    pub(crate) fn execute(&self, registers: &mut [u32; 32]) -> u32 {
+    /// Executes the native block and returns its next guest program counter.
+    pub fn execute(&self, registers: &mut [u32; 32]) -> u32 {
+        debug_assert!(self.metadata.offset < self.program.memory.len());
+        // SAFETY: Every offset was recorded at the start of a finalized block
+        // while assembling this still-live executable program.
+        let address = unsafe { self.program.memory.address().add(self.metadata.offset) };
+        debug_assert_eq!(size_of::<Entry>(), size_of::<*const u8>());
+        // SAFETY: `address` names finalized bytes emitted for `Entry`.
+        let entry = unsafe { mem::transmute::<*const u8, Entry>(address) };
         // SAFETY: The entry follows the private ABI, its RX mapping is alive,
         // and `registers` is exclusively borrowed for the synchronous call.
-        unsafe { (self.entry)(registers.as_mut_ptr()) }
+        unsafe { entry(registers.as_mut_ptr()) }
+    }
+}
+
+/// Owns one executable native block and its guest-instruction count.
+pub struct NativeBlock {
+    program: NativeProgram,
+}
+
+impl NativeBlock {
+    pub fn publish(block: CompiledBlock, code_budget: usize) -> Option<Self> {
+        let program = NativeProgram::publish(vec![block], code_budget)?;
+        Some(Self { program })
+    }
+
+    pub const fn mapped_len(&self) -> usize {
+        self.program.mapped_len()
+    }
+
+    pub fn instruction_count(&self) -> usize {
+        self.program
+            .entry(0)
+            .expect("single-block program has one entry")
+            .instruction_count()
+    }
+
+    pub fn execute(&self, registers: &mut [u32; 32]) -> u32 {
+        self.program
+            .entry(0)
+            .expect("single-block program has one entry")
+            .execute(registers)
     }
 }
 
@@ -51,11 +114,9 @@ impl NativeBlock {
 mod tests {
     use rv32vm_rust_common::memory::IMAGE_START;
 
-    use super::NativeBlock;
-    use crate::{
-        block::BasicBlock,
-        test_support::{NOP, addi, machine_with_code_at},
-    };
+    use super::{NativeBlock, NativeProgram};
+    use crate::CompiledBlock;
+    use crate::test_support::{NOP, addi, decoded_block, machine_with_code};
 
     fn branch(funct3: u32, rs1: u32, rs2: u32, offset: i32) -> u32 {
         let immediate = offset as u32 & 0x1fff;
@@ -92,10 +153,11 @@ mod tests {
     }
 
     fn assert_matches_interpreter(code: &[u32], registers: &[(usize, u32)]) {
-        let machine = machine_with_code_at(code, IMAGE_START);
-        let block = BasicBlock::translate(&machine, IMAGE_START);
-        let native = NativeBlock::compile(&block, usize::MAX).unwrap();
-        let mut expected = machine_with_code_at(code, IMAGE_START);
+        let machine = machine_with_code(code, IMAGE_START);
+        let block = decoded_block(&machine, IMAGE_START);
+        let compiled = CompiledBlock::compile(&block).unwrap();
+        let native = NativeBlock::publish(compiled, usize::MAX).unwrap();
+        let mut expected = machine_with_code(code, IMAGE_START);
         for &(register, value) in registers {
             expected.registers[register] = value;
         }
@@ -175,5 +237,28 @@ mod tests {
             assert_matches_interpreter(&code, &[(6, taken.0), (7, taken.1)]);
             assert_matches_interpreter(&code, &[(6, not_taken.0), (7, not_taken.1)]);
         }
+    }
+
+    #[test]
+    fn publishes_multiple_blocks_in_one_program() {
+        let first_machine = machine_with_code(&[addi(5, 5, 1), NOP], IMAGE_START);
+        let second_machine = machine_with_code(&[addi(6, 6, 2), NOP], IMAGE_START);
+        let first = CompiledBlock::compile(&decoded_block(&first_machine, IMAGE_START)).unwrap();
+        let second = CompiledBlock::compile(&decoded_block(&second_machine, IMAGE_START)).unwrap();
+
+        let program = NativeProgram::publish(vec![first, second], usize::MAX).unwrap();
+        let mut registers = [0; 32];
+
+        assert_eq!(
+            program.entry(0).unwrap().execute(&mut registers),
+            IMAGE_START + 8
+        );
+        assert_eq!(
+            program.entry(1).unwrap().execute(&mut registers),
+            IMAGE_START + 8
+        );
+        assert_eq!(registers[5], 1);
+        assert_eq!(registers[6], 2);
+        assert!(program.entry(2).is_none());
     }
 }

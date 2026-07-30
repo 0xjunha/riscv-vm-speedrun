@@ -25,27 +25,18 @@ unsafe extern "C" {
     fn munmap(address: *mut c_void, length: usize) -> c_int;
 }
 
-/// Owns one read-execute mapping containing a finalized native block.
-pub(super) struct ExecutableMemory {
+/// Owns one read-execute mapping containing finalized native code.
+pub(crate) struct ExecutableMemory {
     address: NonNull<u8>,
     length: usize,
 }
 
 impl ExecutableMemory {
-    pub(super) fn publish(code: &[u8], byte_budget: usize) -> Option<Self> {
-        if code.is_empty() {
-            return None;
-        }
+    pub(crate) fn publish(code: &[u8], byte_budget: usize) -> Option<Self> {
         // SAFETY: `getpagesize` takes no arguments and has no side effects
         // relevant to Rust memory safety.
         let page_size = usize::try_from(unsafe { getpagesize() }).ok()?;
-        if page_size == 0 {
-            return None;
-        }
-        let length = code.len().checked_add(page_size - 1)? / page_size * page_size;
-        if length > byte_budget {
-            return None;
-        }
+        let length = mapping_length(code.len(), page_size, byte_budget)?;
 
         // SAFETY: This requests a new private anonymous mapping and checks the
         // returned sentinel before constructing an owner.
@@ -88,13 +79,22 @@ impl ExecutableMemory {
         Some(Self { address, length })
     }
 
-    pub(super) const fn address(&self) -> *const u8 {
+    pub(crate) const fn address(&self) -> *const u8 {
         self.address.as_ptr()
     }
 
-    pub(super) const fn len(&self) -> usize {
+    pub(crate) const fn len(&self) -> usize {
         self.length
     }
+}
+
+fn mapping_length(code_len: usize, page_size: usize, byte_budget: usize) -> Option<usize> {
+    if code_len == 0 || page_size == 0 {
+        return None;
+    }
+    let pages = code_len.checked_add(page_size - 1)? / page_size;
+    let length = pages.checked_mul(page_size)?;
+    (length <= byte_budget).then_some(length)
 }
 
 impl Drop for ExecutableMemory {
@@ -103,5 +103,20 @@ impl Drop for ExecutableMemory {
         unsafe {
             munmap(self.address.as_ptr().cast(), self.length);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mapping_length;
+
+    #[test]
+    fn mapping_length_obeys_exact_page_boundaries_and_budgets() {
+        assert_eq!(mapping_length(0, 4_096, usize::MAX), None);
+        assert_eq!(mapping_length(1, 4_096, 4_095), None);
+        assert_eq!(mapping_length(1, 4_096, 4_096), Some(4_096));
+        assert_eq!(mapping_length(4_096, 4_096, 4_096), Some(4_096));
+        assert_eq!(mapping_length(4_097, 4_096, 8_192), Some(8_192));
+        assert_eq!(mapping_length(usize::MAX, 4_096, usize::MAX), None);
     }
 }
