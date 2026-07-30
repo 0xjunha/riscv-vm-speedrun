@@ -1,4 +1,3 @@
-use crate::elf;
 use crate::error::GuestTrap;
 use crate::memory::{INPUT_START, Image, Memory, PERM_EXEC, PERM_READ, STACK_END};
 
@@ -13,20 +12,37 @@ pub const MAX_OUTPUT_LIMIT: u32 = 1_048_576;
 /// Largest accepted guest input, in bytes (4 MiB).
 pub const MAX_INPUT_LENGTH: usize = 4_194_304;
 
-pub struct LoadedProgram {
+pub struct LoadedProgram<E> {
     image: Image,
+    engine: E,
 }
 
-impl LoadedProgram {
+impl<E: Engine + Default> LoadedProgram<E> {
     pub fn new(elf: &[u8]) -> Result<Self, String> {
-        Ok(Self {
-            image: elf::load(elf)?,
-        })
+        let image = crate::elf::load(elf)?;
+        let mut engine = E::default();
+        engine.prepare(&image)?;
+        Ok(Self { image, engine })
     }
 
-    pub fn machine(&self, input: &[u8], output_limit: u32) -> Machine {
-        Machine::new(&self.image, input, output_limit)
+    pub fn run(&mut self, input: &[u8], instruction_limit: u64, output_limit: u32) -> CompletedRun {
+        let mut machine = Machine::new(&self.image, input, output_limit);
+        let result = self.engine.run(&mut machine, instruction_limit);
+        CompletedRun { machine, result }
     }
+}
+
+pub trait Engine {
+    fn prepare(&mut self, _image: &Image) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn run(&mut self, machine: &mut Machine, instruction_limit: u64) -> RunResult;
+}
+
+pub struct CompletedRun {
+    pub machine: Machine,
+    pub result: RunResult,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,6 +93,25 @@ enum Step {
     Exit(u32),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct DecodedInstruction {
+    pc: u32,
+    raw: u32,
+    opcode: u32,
+    rd: usize,
+    funct3: u32,
+    rs1: usize,
+    rs2: usize,
+    funct7: u32,
+}
+
+impl DecodedInstruction {
+    pub const fn ends_block(self) -> bool {
+        matches!(self.opcode, 0x63 | 0x67 | 0x6f | 0x73)
+            || !matches!(self.opcode, 0x03 | 0x0f | 0x13 | 0x17 | 0x23 | 0x33 | 0x37)
+    }
+}
+
 pub struct Machine {
     pub registers: [u32; 32],
     pub pc: u32,
@@ -87,7 +122,7 @@ pub struct Machine {
 }
 
 impl Machine {
-    fn new(image: &Image, input: &[u8], output_limit: u32) -> Self {
+    pub fn new(image: &Image, input: &[u8], output_limit: u32) -> Self {
         let mut registers = [0; 32];
         registers[2] = STACK_END;
         registers[10] = INPUT_START;
@@ -102,23 +137,7 @@ impl Machine {
         }
     }
 
-    pub fn run(&mut self, instruction_limit: u64) -> RunResult {
-        loop {
-            if self.retired >= instruction_limit {
-                return self.result(Termination::InstructionLimit);
-            }
-            match self.step() {
-                Ok(Step::Continue) => self.retired += 1,
-                Ok(Step::Exit(code)) => {
-                    self.retired += 1;
-                    return self.result(Termination::Exit(code));
-                }
-                Err(trap) => return self.result(Termination::Trap(trap)),
-            }
-        }
-    }
-
-    fn result(&self, termination: Termination) -> RunResult {
+    pub fn result(&self, termination: Termination) -> RunResult {
         RunResult {
             termination,
             retired: self.retired,
@@ -136,20 +155,56 @@ impl Machine {
         GuestTrap::new("IllegalInstruction", self.pc, instruction)
     }
 
-    fn step(&mut self) -> Result<Step, GuestTrap> {
-        let pc = self.pc;
+    #[inline(always)]
+    pub fn fetch_decode(&self, pc: u32) -> Result<DecodedInstruction, GuestTrap> {
         if pc & 3 != 0 {
             return Err(GuestTrap::new("InstructionAddressMisaligned", pc, pc));
         }
         self.memory
             .check(pc, 4, PERM_EXEC, "InstructionAccessFault", pc)?;
-        let instruction = self.memory.load_u32(pc);
-        let opcode = instruction & 0x7f;
-        let rd = ((instruction >> 7) & 0x1f) as usize;
-        let funct3 = (instruction >> 12) & 7;
-        let rs1 = ((instruction >> 15) & 0x1f) as usize;
-        let rs2 = ((instruction >> 20) & 0x1f) as usize;
-        let funct7 = instruction >> 25;
+        let raw = self.memory.load_u32(pc);
+        Ok(DecodedInstruction {
+            pc,
+            raw,
+            opcode: raw & 0x7f,
+            rd: ((raw >> 7) & 0x1f) as usize,
+            funct3: (raw >> 12) & 7,
+            rs1: ((raw >> 15) & 0x1f) as usize,
+            rs2: ((raw >> 20) & 0x1f) as usize,
+            funct7: raw >> 25,
+        })
+    }
+
+    #[inline(always)]
+    pub fn execute_one(
+        &mut self,
+        instruction: Result<DecodedInstruction, GuestTrap>,
+    ) -> Option<Termination> {
+        match instruction.and_then(|instruction| self.execute(instruction)) {
+            Ok(Step::Continue) => {
+                self.retired += 1;
+                None
+            }
+            Ok(Step::Exit(code)) => {
+                self.retired += 1;
+                Some(Termination::Exit(code))
+            }
+            Err(trap) => Some(Termination::Trap(trap)),
+        }
+    }
+
+    #[inline(always)]
+    fn execute(&mut self, decoded: DecodedInstruction) -> Result<Step, GuestTrap> {
+        let DecodedInstruction {
+            pc,
+            raw: instruction,
+            opcode,
+            rd,
+            funct3,
+            rs1,
+            rs2,
+            funct7,
+        } = decoded;
         let next_pc = pc.wrapping_add(4);
 
         match opcode {
@@ -367,21 +422,20 @@ fn signed_remainder(left: u32, right: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoadedProgram, Termination};
+    use super::{Machine, Termination};
+    use crate::elf::load;
     use crate::elf::tests::executable;
     use crate::memory::{IMAGE_START, INPUT_START};
 
     #[test]
-    fn instruction_limit_precedes_fetch_and_exit_retires() {
-        let program = LoadedProgram::new(&executable(&[0x0000_0073])).unwrap();
-
-        let mut limited = program.machine(&[], 0);
-        assert_eq!(limited.run(0).termination, Termination::InstructionLimit);
-        assert_eq!(limited.pc, IMAGE_START);
-        assert_eq!(limited.retired, 0);
-
-        let mut completed = program.machine(&[], 0);
-        assert_eq!(completed.run(1).termination, Termination::Exit(INPUT_START));
+    fn exit_retires() {
+        let image = load(&executable(&[0x0000_0073])).unwrap();
+        let mut completed = Machine::new(&image, &[], 0);
+        let instruction = completed.fetch_decode(completed.pc);
+        assert_eq!(
+            completed.execute_one(instruction),
+            Some(Termination::Exit(INPUT_START))
+        );
         assert_eq!(completed.pc, IMAGE_START);
         assert_eq!(completed.retired, 1);
     }

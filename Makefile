@@ -4,6 +4,9 @@ VM_DIR_vm0 := vm_references/vm0-python-interpreter
 VM_DIR_vm1 := vm_references/vm1-python-block-interpreter
 VM_DIR_vm2 := vm_references/vm2-rust-interpreter
 PYTHON_VM_COMMON := vm_references/python-interpreter-common
+RUST_VM_COMMON := vm_references/rust-interpreter-common
+RUST_COMMON_MANIFEST := $(RUST_VM_COMMON)/Cargo.toml
+RUST_COMMON_TARGET := $(RUST_VM_COMMON)/target
 VM2_MANIFEST := $(VM_DIR_vm2)/Cargo.toml
 VM2_TARGET := $(VM_DIR_vm2)/target
 VM_BUILD_TARGETS := $(addsuffix -build,$(VM_LIST))
@@ -32,7 +35,8 @@ CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 	conformance-reproducible conformance-sources conformance-test contract \
 	contract-build contract-check contract-format contract-lint \
 	contract-reproducible contract-test harness-format harness-lint \
-	harness-test lock-check python-vm-format python-vm-lint spec-check \
+	harness-test lock-check python-vm-format python-vm-lint \
+	rust-vm-common-format rust-vm-common-lint rust-vm-common-test spec-check \
 	$(VM_LIST) $(VM_BUILD_TARGETS) $(VM_TEST_TARGETS) $(VM_FORMAT_TARGETS) \
 	$(VM_LINT_TARGETS) $(VM_CONFORMANCE_TARGETS) $(VM_CONTRACT_TARGETS) \
 	$(VM_BENCHMARK_SMOKE_TARGETS)
@@ -94,13 +98,25 @@ vm1-lint: python-vm-lint
 
 vm1: vm1-test vm1-lint
 
-vm2-test: vm2-build
+rust-vm-common-test:
+	CARGO_TARGET_DIR=$(RUST_COMMON_TARGET) cargo test --locked \
+		--manifest-path $(RUST_COMMON_MANIFEST)
+
+rust-vm-common-format:
+	cargo fmt --manifest-path $(RUST_COMMON_MANIFEST)
+
+rust-vm-common-lint:
+	cargo fmt --check --manifest-path $(RUST_COMMON_MANIFEST)
+	CARGO_TARGET_DIR=$(RUST_COMMON_TARGET) cargo clippy --locked \
+		--manifest-path $(RUST_COMMON_MANIFEST) --all-targets -- -D warnings
+
+vm2-test: vm2-build rust-vm-common-test
 	CARGO_TARGET_DIR=$(VM2_TARGET) cargo test --locked --manifest-path $(VM2_MANIFEST)
 
-vm2-format:
+vm2-format: rust-vm-common-format
 	cargo fmt --manifest-path $(VM2_MANIFEST)
 
-vm2-lint:
+vm2-lint: rust-vm-common-lint
 	cargo fmt --check --manifest-path $(VM2_MANIFEST)
 	CARGO_TARGET_DIR=$(VM2_TARGET) cargo clippy --locked --manifest-path \
 		$(VM2_MANIFEST) --all-targets -- -D warnings

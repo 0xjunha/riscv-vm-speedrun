@@ -2,7 +2,9 @@
 
 use std::io::{self, Read, Write};
 
-use crate::machine::{LoadedProgram, MAX_INPUT_LENGTH, MAX_INSTRUCTION_LIMIT, MAX_OUTPUT_LIMIT};
+use crate::machine::{
+    Engine, LoadedProgram, MAX_INPUT_LENGTH, MAX_INSTRUCTION_LIMIT, MAX_OUTPUT_LIMIT,
+};
 
 const MAGIC: &[u8; 4] = b"RV32";
 const VERSION: u8 = 1;
@@ -105,13 +107,16 @@ fn write_error<W: Write>(
     write_response(writer, opcode, request_id, status, status_message(status))
 }
 
-pub fn serve() -> Result<(), String> {
+pub fn serve<E: Engine + Default>() -> Result<(), String> {
     let stdin = io::stdin();
     let stdout = io::stdout();
-    serve_streams(&mut stdin.lock(), &mut stdout.lock())
+    serve_streams::<_, _, E>(&mut stdin.lock(), &mut stdout.lock())
 }
 
-fn serve_streams<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<(), String> {
+fn serve_streams<R: Read, W: Write, E: Engine + Default>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<(), String> {
     write_response(writer, 0, 0, OK, &[]).map_err(|error| error.to_string())?;
     let mut program = None;
 
@@ -180,7 +185,7 @@ fn serve_streams<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<()
                         .map_err(|error| error.to_string())?;
                     continue;
                 }
-                match LoadedProgram::new(&payload) {
+                match LoadedProgram::<E>::new(&payload) {
                     Ok(loaded) => program = Some(loaded),
                     Err(_) => {
                         write_error(writer, opcode, request_id, ELF_REJECTED)
@@ -209,13 +214,15 @@ fn serve_streams<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<()
                         .map_err(|error| error.to_string())?;
                     continue;
                 }
-                let Some(program) = &program else {
+                let Some(program) = &mut program else {
                     write_error(writer, opcode, request_id, INVALID_STATE)
                         .map_err(|error| error.to_string())?;
                     continue;
                 };
-                let mut machine = program.machine(&payload[RUN_HEADER_SIZE..], output_limit);
-                let result = machine.run(instruction_limit).json();
+                let completed =
+                    program.run(&payload[RUN_HEADER_SIZE..], instruction_limit, output_limit);
+                let result = completed.result.json();
+                let machine = completed.machine;
                 let mut response = Vec::with_capacity(8 + result.len() + machine.output.len());
                 response.extend_from_slice(&(result.len() as u32).to_le_bytes());
                 response.extend_from_slice(&(machine.output.len() as u32).to_le_bytes());
@@ -273,6 +280,16 @@ mod tests {
     use std::io::Cursor;
 
     use super::{HEADER_SIZE, MAGIC, OP_SHUTDOWN, VERSION, serve_streams};
+    use crate::machine::{Engine, Machine, RunResult};
+
+    #[derive(Default)]
+    struct UnusedEngine;
+
+    impl Engine for UnusedEngine {
+        fn run(&mut self, _machine: &mut Machine, _instruction_limit: u64) -> RunResult {
+            unreachable!()
+        }
+    }
 
     #[test]
     fn writes_ready_and_accepts_shutdown() {
@@ -283,7 +300,7 @@ mod tests {
         request[8..12].copy_from_slice(&7_u32.to_le_bytes());
         let mut output = Vec::new();
 
-        serve_streams(&mut Cursor::new(request), &mut output).unwrap();
+        serve_streams::<_, _, UnusedEngine>(&mut Cursor::new(request), &mut output).unwrap();
 
         assert_eq!(output.len(), HEADER_SIZE * 2);
         assert_eq!(&output[..4], MAGIC);

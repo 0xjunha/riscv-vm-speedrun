@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::machine::{
-    DEFAULT_INSTRUCTION_LIMIT, DEFAULT_OUTPUT_LIMIT, LoadedProgram, MAX_INPUT_LENGTH,
+    DEFAULT_INSTRUCTION_LIMIT, DEFAULT_OUTPUT_LIMIT, Engine, LoadedProgram, MAX_INPUT_LENGTH,
     MAX_INSTRUCTION_LIMIT, MAX_OUTPUT_LIMIT,
 };
 use crate::memory::ADDRESS_SPACE_SIZE;
@@ -26,8 +26,8 @@ struct RunArguments {
     inspect: Vec<(u32, u32)>,
 }
 
-pub fn main() -> i32 {
-    match command() {
+pub fn main<E: Engine + Default>() -> i32 {
+    match command::<E>() {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("rv32vm: {error}");
@@ -36,11 +36,11 @@ pub fn main() -> i32 {
     }
 }
 
-fn command() -> Result<(), String> {
+fn command<E: Engine + Default>() -> Result<(), String> {
     let mut arguments = env::args_os().skip(1);
     match arguments.next().as_deref().and_then(|value| value.to_str()) {
-        Some("run") => run(parse_run(arguments.collect())?),
-        Some("serve") if arguments.next().is_none() => protocol::serve(),
+        Some("run") => run::<E>(parse_run(arguments.collect())?),
+        Some("serve") if arguments.next().is_none() => protocol::serve::<E>(),
         Some("serve") => Err("serve accepts no arguments".into()),
         _ => Err("expected `run` or `serve`".into()),
     }
@@ -158,7 +158,7 @@ fn required_path(value: Option<PathBuf>, option: &str) -> Result<PathBuf, String
     value.ok_or_else(|| format!("{option} is required"))
 }
 
-fn run(arguments: RunArguments) -> Result<(), String> {
+fn run<E: Engine + Default>(arguments: RunArguments) -> Result<(), String> {
     let instruction_limit = arguments
         .instruction_limit
         .unwrap_or(DEFAULT_INSTRUCTION_LIMIT);
@@ -188,9 +188,10 @@ fn run(arguments: RunArguments) -> Result<(), String> {
         return Err("input exceeds 4194304 bytes".into());
     }
 
-    let program = LoadedProgram::new(&elf)?;
-    let mut machine = program.machine(&input, output_limit);
-    let result = machine.run(instruction_limit).json();
+    let mut program = LoadedProgram::<E>::new(&elf)?;
+    let completed = program.run(&input, instruction_limit, output_limit);
+    let result = completed.result.json();
+    let machine = completed.machine;
 
     let state = if arguments.state.is_some() {
         Some(state_json(&machine, &arguments.inspect)?)

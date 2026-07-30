@@ -5,10 +5,3 @@ version = 4
 [[package]]
 name = "rv32vm-rust-common"
 version = "0.1.0"
-
-[[package]]
-name = "rv32vm-rust-interpreter"
-version = "0.1.0"
-dependencies = [
- "rv32vm-rust-common",
-]

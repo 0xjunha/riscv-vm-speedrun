@@ -1,10 +1,5 @@
-mod cli;
-mod elf;
-mod error;
-mod machine;
-mod memory;
-mod protocol;
+mod engine;
 
 fn main() {
-    std::process::exit(cli::main());
+    std::process::exit(rv32vm_rust_common::command_main::<engine::Interpreter>());
 }
