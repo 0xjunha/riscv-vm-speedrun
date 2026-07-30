@@ -357,8 +357,8 @@ contract-reproducible: conformance-image
 		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
 		python3 contracts/build.py reproduce
 
-check: lock-check spec-check $(VM_LIST) native-vm-runtime-status \
-	harness-lint harness-test benchmark-check \
+check: lock-check spec-check $(VM_LIST) vm4-x86-check vm5-x86-check \
+	native-vm-runtime-status harness-lint harness-test benchmark-check \
 	benchmark-lint benchmark-test conformance-lint conformance-test contract-lint \
 	contract-test $(VM_RUNTIME_CONFORMANCE_TARGETS) $(VM_RUNTIME_CONTRACT_TARGETS) \
 	$(VM_RUNTIME_BENCHMARK_SMOKE_TARGETS)
