@@ -61,7 +61,8 @@ CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 	harness-test lock-check python-vm-format python-vm-lint \
 	rust-vm-common-format rust-vm-common-lint rust-vm-common-test \
 	rust-x86-compiler-format rust-x86-compiler-lint rust-x86-compiler-test \
-	native-vm-runtime-status spec-check vm4-platform-test vm4-x86-check \
+	native-vm-runtime-status native-x86-test spec-check \
+	vm4-platform-test vm4-x86-check \
 	vm5-platform-test vm5-x86-check \
 	$(VM_LIST) $(VM_BUILD_TARGETS) $(VM_TEST_TARGETS) $(VM_FORMAT_TARGETS) \
 	$(VM_LINT_TARGETS) $(VM_CONFORMANCE_TARGETS) $(VM_CONTRACT_TARGETS) \
@@ -193,6 +194,9 @@ native-vm-runtime-status:
 ifneq ($(HOST_PLATFORM),Linux-x86_64)
 	@echo "VM4 and VM5 runtime checks skipped: x86-64 Linux required"
 endif
+
+native-x86-test: benchmark-image
+	./scripts/test-native-x86.sh "$(BENCHMARK_IMAGE)"
 
 vm4-platform-test: vm4-build
 ifneq ($(HOST_PLATFORM),Linux-x86_64)

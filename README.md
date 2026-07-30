@@ -24,6 +24,13 @@ make check
 every host. Their native conformance, contract, and benchmark-smoke tests
 execute only on x86-64 Linux; cross-compilation does not run the native code.
 
+Run the shared compiler, VM4, and VM5 native unit tests in a Linux/amd64
+container:
+
+```sh
+make native-x86-test
+```
+
 Run the public benchmarks against a compatible VM:
 
 ```sh
