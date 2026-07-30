@@ -1,8 +1,8 @@
 VM_LIST := vm0 vm1
 BASELINE_VM := vm0
-VM_DIR_vm0 := vm/00-python-interpreter
-VM_DIR_vm1 := vm/01-python-block-interpreter
-PYTHON_VM_COMMON := vm/python-interpreter-common
+VM_DIR_vm0 := vm_references/00-python-interpreter
+VM_DIR_vm1 := vm_references/01-python-block-interpreter
+PYTHON_VM_COMMON := vm_references/python-interpreter-common
 VM_BUILD_TARGETS := $(addsuffix -build,$(VM_LIST))
 VM_TEST_TARGETS := $(addsuffix -test,$(VM_LIST))
 VM_FORMAT_TARGETS := $(addsuffix -format,$(VM_LIST))

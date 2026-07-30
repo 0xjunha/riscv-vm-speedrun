@@ -11,7 +11,7 @@ A minimal RV32IM VM interface, correctness test suite, and performance benchmark
 - `benchmarks/` builds public guest workloads and their expected outputs.
 - `third_party/` contains pinned RISC-V ISA manuals, the Sail formal spec model,
   and upstream ACT4 and `riscv-tests` conformance sources.
-- `vm/` contains reference VM implementations.
+- `vm_references/` contains reference VM implementations.
 
 Run the complete local validation gate:
 
