@@ -1,0 +1,19 @@
+[package]
+name = "rv32vm-rust-interpreter"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[[bin]]
+name = "rv32vm"
+path = "src/main.rs"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "symbols"
+
+[lints.rust]
+unsafe_code = "forbid"

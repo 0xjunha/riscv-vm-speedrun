@@ -1,8 +1,11 @@
-VM_LIST := vm0 vm1
+VM_LIST := vm0 vm1 vm2
 BASELINE_VM := vm0
 VM_DIR_vm0 := vm_references/vm0-python-interpreter
 VM_DIR_vm1 := vm_references/vm1-python-block-interpreter
+VM_DIR_vm2 := vm_references/vm2-rust-interpreter
 PYTHON_VM_COMMON := vm_references/python-interpreter-common
+VM2_MANIFEST := $(VM_DIR_vm2)/Cargo.toml
+VM2_TARGET := $(VM_DIR_vm2)/target
 VM_BUILD_TARGETS := $(addsuffix -build,$(VM_LIST))
 VM_TEST_TARGETS := $(addsuffix -test,$(VM_LIST))
 VM_FORMAT_TARGETS := $(addsuffix -format,$(VM_LIST))
@@ -90,6 +93,19 @@ vm1-lint: python-vm-lint
 	uv run --locked ruff check $(VM_DIR_vm1)
 
 vm1: vm1-test vm1-lint
+
+vm2-test: vm2-build
+	CARGO_TARGET_DIR=$(VM2_TARGET) cargo test --locked --manifest-path $(VM2_MANIFEST)
+
+vm2-format:
+	cargo fmt --manifest-path $(VM2_MANIFEST)
+
+vm2-lint:
+	cargo fmt --check --manifest-path $(VM2_MANIFEST)
+	CARGO_TARGET_DIR=$(VM2_TARGET) cargo clippy --locked --manifest-path \
+		$(VM2_MANIFEST) --all-targets -- -D warnings
+
+vm2: vm2-test vm2-lint
 
 harness-test:
 	PYTHONDONTWRITEBYTECODE=1 uv run --locked --package $(HARNESS_PACKAGE) \
