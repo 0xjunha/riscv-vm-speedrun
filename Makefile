@@ -1,14 +1,17 @@
-VM_LIST := vm0 vm1 vm2
+VM_LIST := vm0 vm1 vm2 vm3
 BASELINE_VM := vm0
 VM_DIR_vm0 := vm_references/vm0-python-interpreter
 VM_DIR_vm1 := vm_references/vm1-python-block-interpreter
 VM_DIR_vm2 := vm_references/vm2-rust-interpreter
+VM_DIR_vm3 := vm_references/vm3-rust-block-interpreter
 PYTHON_VM_COMMON := vm_references/python-interpreter-common
 RUST_VM_COMMON := vm_references/rust-interpreter-common
 RUST_COMMON_MANIFEST := $(RUST_VM_COMMON)/Cargo.toml
 RUST_COMMON_TARGET := $(RUST_VM_COMMON)/target
 VM2_MANIFEST := $(VM_DIR_vm2)/Cargo.toml
 VM2_TARGET := $(VM_DIR_vm2)/target
+VM3_MANIFEST := $(VM_DIR_vm3)/Cargo.toml
+VM3_TARGET := $(VM_DIR_vm3)/target
 VM_BUILD_TARGETS := $(addsuffix -build,$(VM_LIST))
 VM_TEST_TARGETS := $(addsuffix -test,$(VM_LIST))
 VM_FORMAT_TARGETS := $(addsuffix -format,$(VM_LIST))
@@ -122,6 +125,19 @@ vm2-lint: rust-vm-common-lint
 		$(VM2_MANIFEST) --all-targets -- -D warnings
 
 vm2: vm2-test vm2-lint
+
+vm3-test: vm3-build rust-vm-common-test
+	CARGO_TARGET_DIR=$(VM3_TARGET) cargo test --locked --manifest-path $(VM3_MANIFEST)
+
+vm3-format: rust-vm-common-format
+	cargo fmt --manifest-path $(VM3_MANIFEST)
+
+vm3-lint: rust-vm-common-lint
+	cargo fmt --check --manifest-path $(VM3_MANIFEST)
+	CARGO_TARGET_DIR=$(VM3_TARGET) cargo clippy --locked --manifest-path \
+		$(VM3_MANIFEST) --all-targets -- -D warnings
+
+vm3: vm3-test vm3-lint
 
 harness-test:
 	PYTHONDONTWRITEBYTECODE=1 uv run --locked --package $(HARNESS_PACKAGE) \
