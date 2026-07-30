@@ -1,4 +1,5 @@
 VM_LIST := vm0 vm1
+BASELINE_VM := vm0
 VM_DIR_vm0 := vm/00-python-interpreter
 VM_DIR_vm1 := vm/01-python-block-interpreter
 PYTHON_VM_COMMON := vm/python-interpreter-common
@@ -9,17 +10,19 @@ VM_LINT_TARGETS := $(addsuffix -lint,$(VM_LIST))
 VM_CONFORMANCE_TARGETS := $(addsuffix -conformance,$(VM_LIST))
 VM_CONTRACT_TARGETS := $(addsuffix -contract,$(VM_LIST))
 VM_BENCHMARK_SMOKE_TARGETS := $(addsuffix -benchmark-smoke,$(VM_LIST))
+VM_COMPARE_ARGS = $(foreach vm,$(VM_LIST),--vm $(vm)=$(VM_DIR_$(vm))/out/rv32vm)
 HARNESS_PACKAGE := rv32im-harness
 HARNESS_SOURCE := harness/src
 HARNESS_TESTS := harness/tests
 BENCHMARK_IMAGE := rv32im-benchmark-builder:local
 BENCHMARK_MANIFEST := benchmarks/artifacts/manifest.json
+BENCHMARK_COMPARE_OUTPUT ?= benchmarks/out/comparison.json
 CONFORMANCE_IMAGE := rv32im-conformance-builder:local
 CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolchain.env)
 CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 
-.PHONY: benchmark benchmark-build benchmark-check benchmark-format \
+.PHONY: benchmark benchmark-build benchmark-check benchmark-compare benchmark-format \
 	benchmark-guest-lint benchmark-image benchmark-lint benchmark-reproducible \
 	benchmark-test check conformance conformance-build conformance-check \
 	conformance-format conformance-image conformance-lint \
@@ -141,6 +144,13 @@ benchmark: benchmark-check
 	@test -n "$(VM)" || (echo "usage: make benchmark VM=/path/to/rv32vm" >&2; exit 2)
 	uv run --locked --package $(HARNESS_PACKAGE) \
 		rv32im-benchmark "$(VM)" $(BENCHMARK_MANIFEST) $(BENCHMARK_ARGS)
+
+benchmark-compare: $(VM_BUILD_TARGETS) benchmark-check
+	uv run --locked --package $(HARNESS_PACKAGE) \
+		rv32im-benchmark-compare $(BENCHMARK_MANIFEST) \
+		$(VM_COMPARE_ARGS) \
+		--baseline $(BASELINE_VM) --output "$(BENCHMARK_COMPARE_OUTPUT)" \
+		$(BENCHMARK_COMPARE_ARGS)
 
 conformance-sources:
 	PYTHONDONTWRITEBYTECODE=1 python3 conformance/build.py check-sources

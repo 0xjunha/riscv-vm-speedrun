@@ -7,6 +7,7 @@ dependencies = []
 
 [project.scripts]
 rv32im-benchmark = "rv32im_harness.benchmark:main"
+rv32im-benchmark-compare = "rv32im_harness.benchmark_compare:main"
 rv32im-conformance = "rv32im_harness.conformance:main"
 rv32im-contract = "rv32im_harness.contract_runner:main"
 
