@@ -1,4 +1,4 @@
-"""Sparse, page-permission-aware memory for the 64 MiB guest space."""
+"""Shared sparse memory for the 64 MiB guest address space."""
 
 from __future__ import annotations
 

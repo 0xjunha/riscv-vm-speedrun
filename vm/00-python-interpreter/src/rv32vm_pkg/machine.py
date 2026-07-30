@@ -9,6 +9,7 @@ from .constants import (
     PERM_READ,
     STACK_END,
 )
+from .elf import load_elf
 from .errors import GuestTrap
 
 _CONTINUE = object()
@@ -42,6 +43,18 @@ def _result(
         "retired_instructions": retired,
         "output_length": output_length,
     }
+
+
+class LoadedProgram:
+    """A loaded ELF image used to create a fresh machine for each run."""
+
+    __slots__ = ("image",)
+
+    def __init__(self, elf_data: bytes) -> None:
+        self.image = load_elf(elf_data)
+
+    def new_machine(self, input_data: bytes, output_limit: int) -> Machine:
+        return Machine(self.image, input_data, output_limit)
 
 
 class Machine:

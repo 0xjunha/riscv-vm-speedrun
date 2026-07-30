@@ -16,8 +16,8 @@ from .constants import (
     MAX_INSTRUCTION_LIMIT,
     MAX_OUTPUT_LIMIT,
 )
-from .elf import ElfError, load_elf
-from .machine import Machine
+from .elf import ElfError
+from .machine import LoadedProgram
 from .protocol import MAX_PAYLOAD, result_bytes, serve
 
 MAX_INSPECTION_COUNT = 1024
@@ -93,8 +93,8 @@ def _run_once(arguments) -> int:
     input_data = Path(arguments.input).read_bytes()
     if len(input_data) > MAX_INPUT_LENGTH:
         raise ValueError("input exceeds 4194304 bytes")
-    image = load_elf(elf_data)
-    machine = Machine(image, input_data, output_limit)
+    program = LoadedProgram(elf_data)
+    machine = program.new_machine(input_data, output_limit)
     result = machine.run(instruction_limit)
 
     state_bytes = None

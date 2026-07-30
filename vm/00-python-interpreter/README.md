@@ -2,4 +2,5 @@
 
 An RV32IM interpreter written in Python.
 
-`build.sh` packages `src/` as `out/rv32vm`. `tests/` checks the VM contract.
+`build.sh` packages the shared Python runtime and this directory's execution
+engine as the standalone `out/rv32vm`. `tests/` checks the VM contract.

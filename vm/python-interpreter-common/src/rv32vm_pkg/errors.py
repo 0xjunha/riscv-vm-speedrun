@@ -1,4 +1,4 @@
-"""Typed errors kept out of the instruction execution hot path."""
+"""Shared typed errors kept out of the execution hot path."""
 
 
 class ElfError(ValueError):

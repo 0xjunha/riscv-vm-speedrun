@@ -1,4 +1,4 @@
-"""Strict ELF32/RISC-V static executable loader."""
+"""Shared strict ELF32/RISC-V static executable loader."""
 
 from __future__ import annotations
 

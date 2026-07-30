@@ -1,4 +1,5 @@
 VM0 := vm/00-python-interpreter
+PYTHON_VM_COMMON := vm/python-interpreter-common
 HARNESS_PACKAGE := rv32im-harness
 HARNESS_SOURCE := harness/src
 HARNESS_TESTS := harness/tests
@@ -16,8 +17,9 @@ CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 	conformance-reproducible conformance-sources conformance-test contract \
 	contract-build contract-check contract-format contract-lint \
 	contract-reproducible contract-test harness-format harness-lint \
-	harness-test lock-check spec-check vm0 vm0-benchmark-smoke \
-	vm0-build vm0-conformance vm0-contract vm0-format vm0-lint vm0-test
+	harness-test lock-check python-vm-format python-vm-lint spec-check \
+	vm0 vm0-benchmark-smoke vm0-build vm0-conformance vm0-contract vm0-format \
+	vm0-lint vm0-test
 
 lock-check:
 	uv lock --check
@@ -28,17 +30,24 @@ spec-check:
 vm0-build:
 	./$(VM0)/build.sh
 
-vm0-test:
-	PYTHONPATH=$(VM0)/src uv run --locked pytest $(VM0)/tests
+vm0-test: vm0-build
+	PYTHONPATH=$(VM0)/out uv run --locked pytest $(VM0)/tests
 
-vm0-format:
+python-vm-format:
+	uv run --locked ruff format $(PYTHON_VM_COMMON)
+
+python-vm-lint:
+	uv run --locked ruff format --check $(PYTHON_VM_COMMON)
+	uv run --locked ruff check $(PYTHON_VM_COMMON)
+
+vm0-format: python-vm-format
 	uv run --locked ruff format $(VM0)
 
-vm0-lint:
+vm0-lint: python-vm-lint
 	uv run --locked ruff format --check $(VM0)
 	uv run --locked ruff check $(VM0)
 
-vm0: vm0-build vm0-test vm0-lint
+vm0: vm0-test vm0-lint
 
 harness-test:
 	PYTHONDONTWRITEBYTECODE=1 uv run --locked --package $(HARNESS_PACKAGE) \

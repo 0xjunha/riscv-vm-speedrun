@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Executable entry point produced as out/rv32vm by build.sh."""
+"""Executable entry point packaged into each Python rv32vm variant."""
 
 from rv32vm_pkg.cli import main
 

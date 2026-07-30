@@ -1,4 +1,4 @@
-"""Normative EEI and candidate-interface constants."""
+"""Normative EEI and rv32vm interface constants."""
 
 ADDRESS_SPACE_SIZE = 0x0400_0000
 IMAGE_START = 0x0001_0000

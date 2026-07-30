@@ -1,4 +1,4 @@
-"""Fixed little-endian persistent candidate protocol."""
+"""Shared fixed little-endian persistent rv32vm protocol."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from .constants import (
     MAX_INSTRUCTION_LIMIT,
     MAX_OUTPUT_LIMIT,
 )
-from .elf import ElfError, load_elf
-from .machine import Machine
+from .elf import ElfError
+from .machine import LoadedProgram
 
 MAGIC = b"RV32"
 VERSION = 1
@@ -85,10 +85,25 @@ def _error(stream, opcode: int, request_id: int, status: int, message: str) -> N
     )
 
 
+def _run_response(
+    program: LoadedProgram,
+    input_data: bytes,
+    instruction_limit: int,
+    output_limit: int,
+) -> bytes:
+    machine = program.new_machine(input_data, output_limit)
+    encoded_result = result_bytes(machine.run(instruction_limit))
+    output = bytes(machine.output)
+    return (
+        RUN_RESPONSE_HEADER.pack(len(encoded_result), len(output))
+        + encoded_result
+        + output
+    )
+
+
 def serve(input_stream, output_stream) -> int:
     """Serve frames until a valid SHUTDOWN request or a fatal framing error."""
-    image = None
-    last_machine = None
+    program = None
     _write_response(output_stream, OP_READY, 0, STATUS_OK)
 
     while True:
@@ -174,7 +189,7 @@ def serve(input_stream, output_stream) -> int:
                         "invalid payload",
                     )
                     continue
-                if image is not None:
+                if program is not None:
                     _error(
                         output_stream,
                         opcode,
@@ -184,7 +199,7 @@ def serve(input_stream, output_stream) -> int:
                     )
                     continue
                 try:
-                    loaded = load_elf(payload)
+                    program = LoadedProgram(payload)
                 except ElfError as error:
                     _error(
                         output_stream,
@@ -194,8 +209,6 @@ def serve(input_stream, output_stream) -> int:
                         str(error),
                     )
                     continue
-                image = loaded
-                last_machine = None
                 _write_response(output_stream, opcode, request_id, STATUS_OK)
                 continue
 
@@ -248,7 +261,7 @@ def serve(input_stream, output_stream) -> int:
                         "input length exceeds 4194304",
                     )
                     continue
-                if image is None:
+                if program is None:
                     _error(
                         output_stream,
                         opcode,
@@ -257,14 +270,11 @@ def serve(input_stream, output_stream) -> int:
                         "no image is loaded",
                     )
                     continue
-                last_machine = Machine(image, payload[RUN_HEADER.size :], output_limit)
-                result = last_machine.run(instruction_limit)
-                encoded_result = result_bytes(result)
-                output = bytes(last_machine.output)
-                response = (
-                    RUN_RESPONSE_HEADER.pack(len(encoded_result), len(output))
-                    + encoded_result
-                    + output
+                response = _run_response(
+                    program,
+                    payload[RUN_HEADER.size :],
+                    instruction_limit,
+                    output_limit,
                 )
                 _write_response(output_stream, opcode, request_id, STATUS_OK, response)
                 continue
@@ -279,7 +289,7 @@ def serve(input_stream, output_stream) -> int:
                         "RESET payload must be empty",
                     )
                     continue
-                if image is None:
+                if program is None:
                     _error(
                         output_stream,
                         opcode,
@@ -288,7 +298,6 @@ def serve(input_stream, output_stream) -> int:
                         "no image is loaded",
                     )
                     continue
-                last_machine = None
                 _write_response(output_stream, opcode, request_id, STATUS_OK)
                 continue
 
@@ -302,7 +311,7 @@ def serve(input_stream, output_stream) -> int:
                         "UNLOAD payload must be empty",
                     )
                     continue
-                if image is None:
+                if program is None:
                     _error(
                         output_stream,
                         opcode,
@@ -311,8 +320,7 @@ def serve(input_stream, output_stream) -> int:
                         "no image is loaded",
                     )
                     continue
-                image = None
-                last_machine = None
+                program = None
                 _write_response(output_stream, opcode, request_id, STATUS_OK)
                 continue
 
