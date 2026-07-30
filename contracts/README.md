@@ -116,8 +116,8 @@ specification references, inputs, limits, and expected results.
 
 `artifacts/` is generated. Its manifest reproduces the authored case data and
 adds artifact paths and hashes. The build validates each parent ELF and each
-intentional invalid variant; VM0 rejection alone is not treated as proof that
-a generated case is correct.
+intentional invalid variant; rejection by one VM alone is not treated as proof
+that a generated case is correct.
 
 The build uses the repository's pinned Linux RISC-V toolchain environment.
 Artifact generation and VM execution remain separate: `build.py` only builds
@@ -134,7 +134,6 @@ make contract-build              # Regenerate ELFs and the manifest in Docker
 make contract-check              # Verify generated files without Docker
 make contract-reproducible       # Rebuild in Docker and compare every byte
 make contract VM=/path/to/rv32vm # Run the suite against a VM
-make vm0-contract                # Build VM0 and run the suite
 ```
 
 `make contract-build` reuses the same pinned Linux toolchain image as the

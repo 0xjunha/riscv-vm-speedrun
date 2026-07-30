@@ -62,7 +62,6 @@ make conformance-build          # generate all outputs
 make conformance-check          # verify sources, manifest, and hashes
 make conformance-reproducible   # rebuild and byte-compare every output
 make conformance VM=path/to/vm  # run every ELF through both VM interfaces
-make vm0-conformance            # run every ELF against the baseline VM
 ```
 
 The first build compiles the pinned GNU toolchain and can be slow under CPU

@@ -1,5 +1,14 @@
-VM0 := vm/00-python-interpreter
+VM_LIST := vm0 vm1
+VM_DIR_vm0 := vm/00-python-interpreter
+VM_DIR_vm1 := vm/01-python-block-interpreter
 PYTHON_VM_COMMON := vm/python-interpreter-common
+VM_BUILD_TARGETS := $(addsuffix -build,$(VM_LIST))
+VM_TEST_TARGETS := $(addsuffix -test,$(VM_LIST))
+VM_FORMAT_TARGETS := $(addsuffix -format,$(VM_LIST))
+VM_LINT_TARGETS := $(addsuffix -lint,$(VM_LIST))
+VM_CONFORMANCE_TARGETS := $(addsuffix -conformance,$(VM_LIST))
+VM_CONTRACT_TARGETS := $(addsuffix -contract,$(VM_LIST))
+VM_BENCHMARK_SMOKE_TARGETS := $(addsuffix -benchmark-smoke,$(VM_LIST))
 HARNESS_PACKAGE := rv32im-harness
 HARNESS_SOURCE := harness/src
 HARNESS_TESTS := harness/tests
@@ -18,8 +27,9 @@ CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 	contract-build contract-check contract-format contract-lint \
 	contract-reproducible contract-test harness-format harness-lint \
 	harness-test lock-check python-vm-format python-vm-lint spec-check \
-	vm0 vm0-benchmark-smoke vm0-build vm0-conformance vm0-contract vm0-format \
-	vm0-lint vm0-test
+	$(VM_LIST) $(VM_BUILD_TARGETS) $(VM_TEST_TARGETS) $(VM_FORMAT_TARGETS) \
+	$(VM_LINT_TARGETS) $(VM_CONFORMANCE_TARGETS) $(VM_CONTRACT_TARGETS) \
+	$(VM_BENCHMARK_SMOKE_TARGETS)
 
 lock-check:
 	uv lock --check
@@ -27,11 +37,28 @@ lock-check:
 spec-check:
 	./scripts/verify-riscv-specifications.sh
 
-vm0-build:
-	./$(VM0)/build.sh
+define VM_RULES
+$(1)-build:
+	./$$(VM_DIR_$(1))/build.sh
+
+$(1)-benchmark-smoke: $(1)-build benchmark-check
+	uv run --locked --package $$(HARNESS_PACKAGE) \
+		rv32im-benchmark $$(VM_DIR_$(1))/out/rv32vm $$(BENCHMARK_MANIFEST) \
+		--case tiny --warmups 0 --repetitions 1 --output /dev/null
+
+$(1)-conformance: $(1)-build conformance-check
+	uv run --locked --package $$(HARNESS_PACKAGE) \
+		rv32im-conformance $$(VM_DIR_$(1))/out/rv32vm $$(CONFORMANCE_MANIFEST)
+
+$(1)-contract: $(1)-build contract-check
+	uv run --locked --package $$(HARNESS_PACKAGE) \
+		rv32im-contract $$(VM_DIR_$(1))/out/rv32vm $$(CONTRACT_MANIFEST)
+endef
+
+$(foreach vm,$(VM_LIST),$(eval $(call VM_RULES,$(vm))))
 
 vm0-test: vm0-build
-	PYTHONPATH=$(VM0)/out uv run --locked pytest $(VM0)/tests
+	PYTHONPATH=$(VM_DIR_vm0)/out uv run --locked pytest $(VM_DIR_vm0)/tests
 
 python-vm-format:
 	uv run --locked ruff format $(PYTHON_VM_COMMON)
@@ -41,13 +68,25 @@ python-vm-lint:
 	uv run --locked ruff check $(PYTHON_VM_COMMON)
 
 vm0-format: python-vm-format
-	uv run --locked ruff format $(VM0)
+	uv run --locked ruff format $(VM_DIR_vm0)
 
 vm0-lint: python-vm-lint
-	uv run --locked ruff format --check $(VM0)
-	uv run --locked ruff check $(VM0)
+	uv run --locked ruff format --check $(VM_DIR_vm0)
+	uv run --locked ruff check $(VM_DIR_vm0)
 
 vm0: vm0-test vm0-lint
+
+vm1-test: vm1-build
+	PYTHONPATH=$(VM_DIR_vm1)/out uv run --locked pytest $(VM_DIR_vm1)/tests
+
+vm1-format: python-vm-format
+	uv run --locked ruff format $(VM_DIR_vm1)
+
+vm1-lint: python-vm-lint
+	uv run --locked ruff format --check $(VM_DIR_vm1)
+	uv run --locked ruff check $(VM_DIR_vm1)
+
+vm1: vm1-test vm1-lint
 
 harness-test:
 	PYTHONDONTWRITEBYTECODE=1 uv run --locked --package $(HARNESS_PACKAGE) \
@@ -103,11 +142,6 @@ benchmark: benchmark-check
 	uv run --locked --package $(HARNESS_PACKAGE) \
 		rv32im-benchmark "$(VM)" $(BENCHMARK_MANIFEST) $(BENCHMARK_ARGS)
 
-vm0-benchmark-smoke: vm0-build benchmark-check
-	uv run --locked --package $(HARNESS_PACKAGE) \
-		rv32im-benchmark $(VM0)/out/rv32vm $(BENCHMARK_MANIFEST) \
-		--case tiny --warmups 0 --repetitions 1 --output /dev/null
-
 conformance-sources:
 	PYTHONDONTWRITEBYTECODE=1 python3 conformance/build.py check-sources
 
@@ -129,10 +163,6 @@ conformance: conformance-check
 	@test -n "$(VM)" || (echo "usage: make conformance VM=/path/to/rv32vm" >&2; exit 2)
 	uv run --locked --package $(HARNESS_PACKAGE) \
 		rv32im-conformance "$(VM)" $(CONFORMANCE_MANIFEST)
-
-vm0-conformance: vm0-build conformance-check
-	uv run --locked --package $(HARNESS_PACKAGE) \
-		rv32im-conformance $(VM0)/out/rv32vm $(CONFORMANCE_MANIFEST)
 
 conformance-format:
 	uv run --locked ruff format conformance/build.py conformance/tests
@@ -164,10 +194,6 @@ contract: contract-check
 	uv run --locked --package $(HARNESS_PACKAGE) \
 		rv32im-contract "$(VM)" $(CONTRACT_MANIFEST)
 
-vm0-contract: vm0-build contract-check
-	uv run --locked --package $(HARNESS_PACKAGE) \
-		rv32im-contract $(VM0)/out/rv32vm $(CONTRACT_MANIFEST)
-
 contract-test:
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=contracts \
 		uv run --locked pytest contracts/tests
@@ -185,7 +211,7 @@ contract-reproducible: conformance-image
 		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
 		python3 contracts/build.py reproduce
 
-check: lock-check spec-check vm0 harness-lint harness-test \
+check: lock-check spec-check $(VM_LIST) harness-lint harness-test \
 	benchmark-check benchmark-lint benchmark-test conformance-lint \
-	conformance-test contract-lint contract-test vm0-conformance vm0-contract \
-	vm0-benchmark-smoke
+	conformance-test contract-lint contract-test $(VM_CONFORMANCE_TARGETS) \
+	$(VM_CONTRACT_TARGETS) $(VM_BENCHMARK_SMOKE_TARGETS)
