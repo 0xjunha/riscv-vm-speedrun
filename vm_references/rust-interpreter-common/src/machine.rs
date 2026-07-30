@@ -93,6 +93,7 @@ enum Step {
     Exit(u32),
 }
 
+/// A fetched instruction with the fields shared by Rust execution engines.
 #[derive(Clone, Copy, Debug)]
 pub struct DecodedInstruction {
     pc: u32,
@@ -106,6 +107,38 @@ pub struct DecodedInstruction {
 }
 
 impl DecodedInstruction {
+    pub const fn pc(self) -> u32 {
+        self.pc
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.raw
+    }
+
+    pub const fn opcode(self) -> u32 {
+        self.opcode
+    }
+
+    pub const fn rd(self) -> usize {
+        self.rd
+    }
+
+    pub const fn funct3(self) -> u32 {
+        self.funct3
+    }
+
+    pub const fn rs1(self) -> usize {
+        self.rs1
+    }
+
+    pub const fn rs2(self) -> usize {
+        self.rs2
+    }
+
+    pub const fn funct7(self) -> u32 {
+        self.funct7
+    }
+
     pub const fn ends_block(self) -> bool {
         matches!(self.opcode, 0x63 | 0x67 | 0x6f | 0x73)
             || !matches!(self.opcode, 0x03 | 0x0f | 0x13 | 0x17 | 0x23 | 0x33 | 0x37)

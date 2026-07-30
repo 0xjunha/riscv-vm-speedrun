@@ -1,9 +1,10 @@
-VM_LIST := vm0 vm1 vm2 vm3
+VM_LIST := vm0 vm1 vm2 vm3 vm4
 BASELINE_VM := vm0
 VM_DIR_vm0 := vm_references/vm0-python-interpreter
 VM_DIR_vm1 := vm_references/vm1-python-block-interpreter
 VM_DIR_vm2 := vm_references/vm2-rust-interpreter
 VM_DIR_vm3 := vm_references/vm3-rust-block-interpreter
+VM_DIR_vm4 := vm_references/vm4-rust-jit-compiler
 PYTHON_VM_COMMON := vm_references/python-interpreter-common
 RUST_VM_COMMON := vm_references/rust-interpreter-common
 RUST_COMMON_MANIFEST := $(RUST_VM_COMMON)/Cargo.toml
@@ -12,14 +13,26 @@ VM2_MANIFEST := $(VM_DIR_vm2)/Cargo.toml
 VM2_TARGET := $(VM_DIR_vm2)/target
 VM3_MANIFEST := $(VM_DIR_vm3)/Cargo.toml
 VM3_TARGET := $(VM_DIR_vm3)/target
+VM4_MANIFEST := $(VM_DIR_vm4)/Cargo.toml
+VM4_TARGET := $(VM_DIR_vm4)/target
+VM4_X86_TARGET := x86_64-unknown-linux-gnu
+HOST_PLATFORM := $(shell uname -s)-$(shell uname -m)
+RUNTIME_VM_LIST := $(VM_LIST)
+ifneq ($(HOST_PLATFORM),Linux-x86_64)
+RUNTIME_VM_LIST := $(filter-out vm4,$(RUNTIME_VM_LIST))
+endif
 VM_BUILD_TARGETS := $(addsuffix -build,$(VM_LIST))
+VM_RUNTIME_BUILD_TARGETS := $(addsuffix -build,$(RUNTIME_VM_LIST))
 VM_TEST_TARGETS := $(addsuffix -test,$(VM_LIST))
 VM_FORMAT_TARGETS := $(addsuffix -format,$(VM_LIST))
 VM_LINT_TARGETS := $(addsuffix -lint,$(VM_LIST))
 VM_CONFORMANCE_TARGETS := $(addsuffix -conformance,$(VM_LIST))
 VM_CONTRACT_TARGETS := $(addsuffix -contract,$(VM_LIST))
 VM_BENCHMARK_SMOKE_TARGETS := $(addsuffix -benchmark-smoke,$(VM_LIST))
-VM_COMPARE_ARGS = $(foreach vm,$(VM_LIST),--vm $(vm)=$(VM_DIR_$(vm))/out/rv32vm)
+VM_RUNTIME_CONFORMANCE_TARGETS := $(addsuffix -conformance,$(RUNTIME_VM_LIST))
+VM_RUNTIME_CONTRACT_TARGETS := $(addsuffix -contract,$(RUNTIME_VM_LIST))
+VM_RUNTIME_BENCHMARK_SMOKE_TARGETS := $(addsuffix -benchmark-smoke,$(RUNTIME_VM_LIST))
+VM_COMPARE_ARGS = $(foreach vm,$(RUNTIME_VM_LIST),--vm $(vm)=$(VM_DIR_$(vm))/out/rv32vm)
 HARNESS_PACKAGE := rv32im-harness
 HARNESS_SOURCE := harness/src
 HARNESS_TESTS := harness/tests
@@ -40,6 +53,7 @@ CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 	contract-reproducible contract-test harness-format harness-lint \
 	harness-test lock-check python-vm-format python-vm-lint \
 	rust-vm-common-format rust-vm-common-lint rust-vm-common-test spec-check \
+	vm4-platform-test vm4-runtime-status vm4-x86-check \
 	$(VM_LIST) $(VM_BUILD_TARGETS) $(VM_TEST_TARGETS) $(VM_FORMAT_TARGETS) \
 	$(VM_LINT_TARGETS) $(VM_CONFORMANCE_TARGETS) $(VM_CONTRACT_TARGETS) \
 	$(VM_BENCHMARK_SMOKE_TARGETS)
@@ -139,6 +153,35 @@ vm3-lint: rust-vm-common-lint
 
 vm3: vm3-test vm3-lint
 
+vm4-test: vm4-build rust-vm-common-test
+	CARGO_TARGET_DIR=$(VM4_TARGET) cargo test --locked --manifest-path $(VM4_MANIFEST)
+
+vm4-format: rust-vm-common-format
+	cargo fmt --manifest-path $(VM4_MANIFEST)
+
+vm4-lint: rust-vm-common-lint
+	cargo fmt --check --manifest-path $(VM4_MANIFEST)
+	CARGO_TARGET_DIR=$(VM4_TARGET) cargo clippy --locked --manifest-path \
+		$(VM4_MANIFEST) --all-targets -- -D warnings
+
+vm4-x86-check:
+	CARGO_TARGET_DIR=$(VM4_TARGET) cargo clippy --locked --manifest-path \
+		$(VM4_MANIFEST) --target $(VM4_X86_TARGET) --all-targets -- -D warnings
+
+vm4-runtime-status:
+ifneq ($(HOST_PLATFORM),Linux-x86_64)
+	@echo "VM4 runtime checks skipped: x86-64 Linux required"
+endif
+
+vm4-platform-test: vm4-build
+ifneq ($(HOST_PLATFORM),Linux-x86_64)
+	@output="$$(./$(VM_DIR_vm4)/out/rv32vm serve 2>&1)"; status=$$?; \
+		test "$$status" -eq 2 && \
+		test "$$output" = "rv32vm: VM4 JIT compiler requires x86-64 Linux"
+endif
+
+vm4: vm4-test vm4-lint vm4-platform-test
+
 harness-test:
 	PYTHONDONTWRITEBYTECODE=1 uv run --locked --package $(HARNESS_PACKAGE) \
 		pytest $(HARNESS_TESTS)
@@ -193,7 +236,7 @@ benchmark: benchmark-check
 	uv run --locked --package $(HARNESS_PACKAGE) \
 		rv32im-benchmark "$(VM)" $(BENCHMARK_MANIFEST) $(BENCHMARK_ARGS)
 
-benchmark-compare: $(VM_BUILD_TARGETS) benchmark-check
+benchmark-compare: vm4-runtime-status $(VM_RUNTIME_BUILD_TARGETS) benchmark-check
 	uv run --locked --package $(HARNESS_PACKAGE) \
 		rv32im-benchmark-compare $(BENCHMARK_MANIFEST) \
 		$(VM_COMPARE_ARGS) \
@@ -269,7 +312,7 @@ contract-reproducible: conformance-image
 		-v "$(CURDIR):/repo" -w /repo $(CONFORMANCE_IMAGE) \
 		python3 contracts/build.py reproduce
 
-check: lock-check spec-check $(VM_LIST) harness-lint harness-test \
+check: lock-check spec-check $(VM_LIST) vm4-runtime-status harness-lint harness-test \
 	benchmark-check benchmark-lint benchmark-test conformance-lint \
-	conformance-test contract-lint contract-test $(VM_CONFORMANCE_TARGETS) \
-	$(VM_CONTRACT_TARGETS) $(VM_BENCHMARK_SMOKE_TARGETS)
+	conformance-test contract-lint contract-test $(VM_RUNTIME_CONFORMANCE_TARGETS) \
+	$(VM_RUNTIME_CONTRACT_TARGETS) $(VM_RUNTIME_BENCHMARK_SMOKE_TARGETS)
