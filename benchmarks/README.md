@@ -20,6 +20,8 @@ This directory provides one public case for each workload:
   settings, preserves every raw run, and compares candidates with a selected baseline.
 - `Dockerfile` pins the Linux/amd64 Rust builder. It builds guest ELFs only;
   benchmarks run directly on the host VM process.
+- `gcp/` builds all reference VMs into one native benchmark image and runs it
+  on a disposable GCP host; see [`GCP.md`](GCP.md).
 
 `guest/link.x` is the bare-metal linker script. It sets `_start` as the ELF
 entry, places the image at `0x00010000`, keeps RX code, read-only constants, and

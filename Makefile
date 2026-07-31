@@ -46,6 +46,7 @@ HARNESS_TESTS := harness/tests
 BENCHMARK_IMAGE := rv32im-benchmark-builder:local
 BENCHMARK_MANIFEST := benchmarks/artifacts/manifest.json
 BENCHMARK_COMPARE_OUTPUT ?= benchmarks/out/comparison.json
+GCP_ENV_FILE ?= .env.gcp
 CONFORMANCE_IMAGE := rv32im-conformance-builder:local
 CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolchain.env)
 CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
@@ -58,7 +59,7 @@ CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 	conformance-reproducible conformance-sources conformance-test contract \
 	contract-build contract-check contract-format contract-lint \
 	contract-reproducible contract-test harness-format harness-lint \
-	harness-test lock-check python-vm-format python-vm-lint \
+	gcp-benchmark harness-test lock-check python-vm-format python-vm-lint \
 	rust-vm-common-format rust-vm-common-lint rust-vm-common-test \
 	rust-x86-compiler-format rust-x86-compiler-lint rust-x86-compiler-test \
 	native-vm-runtime-status native-x86-test spec-check \
@@ -291,6 +292,9 @@ benchmark-compare: native-vm-runtime-status $(VM_RUNTIME_BUILD_TARGETS) benchmar
 		$(VM_COMPARE_ARGS) \
 		--baseline $(BASELINE_VM) --output "$(BENCHMARK_COMPARE_OUTPUT)" \
 		$(BENCHMARK_COMPARE_ARGS)
+
+gcp-benchmark:
+	./scripts/run-gcp-benchmark.sh "$(GCP_ENV_FILE)"
 
 conformance-sources:
 	PYTHONDONTWRITEBYTECODE=1 python3 conformance/build.py check-sources

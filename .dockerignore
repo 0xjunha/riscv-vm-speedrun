@@ -1,0 +1,15 @@
+# Keep the Docker build context limited to inputs required by the GCP benchmark image.
+**
+!benchmarks/
+!benchmarks/artifacts/
+!benchmarks/artifacts/**
+!benchmarks/gcp/
+!benchmarks/gcp/**
+!harness/
+!harness/src/
+!harness/src/**
+!vm_references/
+!vm_references/**
+**/__pycache__/
+**/out/
+**/target/
