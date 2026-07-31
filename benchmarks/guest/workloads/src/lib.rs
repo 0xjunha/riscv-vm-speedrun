@@ -1,10 +1,14 @@
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
-//! Shared input decoding and output encoding for the benchmark workloads.
+//! Shared support for the public benchmark workloads.
 
-use rv32im_guest::write_output;
+#[cfg(not(target_os = "none"))]
+pub mod native;
 
 const OUTPUT_MAGIC: u32 = 0x3142_5652; // bytes: RVB1
+
+/// Native or guest implementation of one public workload.
+pub type Workload = fn(&[u8]) -> [u8; 16];
 
 /// Little-endian 32-bit words backed by the guest input bytes.
 pub struct Words<'a> {
@@ -48,14 +52,20 @@ pub fn bounded(raw: u32, default: usize, maximum: usize) -> usize {
     value.min(maximum)
 }
 
-/// Emit the common 16-byte result record, returning zero on success.
-pub fn emit(family: u32, result: u32, auxiliary: u32) -> u32 {
+/// Encode the common 16-byte result record.
+pub fn encode_output(family: u32, result: u32, auxiliary: u32) -> [u8; 16] {
     let mut bytes = [0u8; 16];
     bytes[0..4].copy_from_slice(&OUTPUT_MAGIC.to_le_bytes());
     bytes[4..8].copy_from_slice(&family.to_le_bytes());
     bytes[8..12].copy_from_slice(&result.to_le_bytes());
     bytes[12..16].copy_from_slice(&auxiliary.to_le_bytes());
-    if write_output(&bytes) == bytes.len() as u32 {
+    bytes
+}
+
+/// Emit one result through the RV32IM execution environment.
+#[cfg(target_os = "none")]
+pub fn emit(result: &[u8; 16]) -> u32 {
+    if rv32im_guest::write_output(result) == result.len() as u32 {
         0
     } else {
         2

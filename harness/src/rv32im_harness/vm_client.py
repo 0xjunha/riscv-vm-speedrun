@@ -183,22 +183,35 @@ def _run_command(
     *,
     cwd: str | os.PathLike[str],
     timeout: float = _DEFAULT_TIMEOUT,
+    input_data: bytes | None = None,
 ) -> _CommandResult:
-    """Invoke a VM command without retaining unbounded output in memory."""
+    """Invoke an executable without retaining unbounded output in memory."""
 
     vm = _vm_path(executable)
     deadline_seconds = _positive_timeout(timeout)
     work_directory = Path(cwd)
-    try:
-        process = subprocess.Popen(
+
+    def start(input_stream: int | BinaryIO) -> subprocess.Popen[bytes]:
+        return subprocess.Popen(
             [os.fspath(vm), *arguments],
             cwd=work_directory,
             env=_environment(work_directory),
-            stdin=subprocess.DEVNULL,
+            stdin=input_stream,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
+
+    try:
+        if input_data is None:
+            process = start(subprocess.DEVNULL)
+        else:
+            if not isinstance(input_data, bytes):
+                raise TypeError("input_data must be bytes")
+            with tempfile.TemporaryFile() as input_stream:
+                input_stream.write(input_data)
+                input_stream.seek(0)
+                process = start(input_stream)
     except OSError as error:
         raise VmProcessError(f"failed to start {vm}: {error}") from error
     assert process.stdout is not None and process.stderr is not None

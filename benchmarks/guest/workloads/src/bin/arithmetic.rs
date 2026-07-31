@@ -1,12 +1,13 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(target_os = "none", no_main)]
 
 //! Compute-heavy workload exercising integer, bitwise, and loop execution.
 
+#[cfg(target_os = "none")]
 use rv32im_guest::guest_entry;
-use rv32im_workloads::{bounded, emit, Words};
+use rv32im_workloads::{bounded, encode_output, Words};
 
-fn main(input: &[u8]) -> u32 {
+fn arithmetic(input: &[u8]) -> [u8; 16] {
     let words = Words::new(input);
     let iterations = bounded(words.get(0), 24_000, 120_000);
     let mut x = words.get(1) ^ 0x243f_6a88;
@@ -22,7 +23,18 @@ fn main(input: &[u8]) -> u32 {
         step = step.wrapping_add(0x6d2b_79f5);
     }
 
-    emit(3, x, y ^ step)
+    encode_output(3, x, y ^ step)
 }
 
-guest_entry!(main);
+#[cfg(target_os = "none")]
+fn guest_main(input: &[u8]) -> u32 {
+    rv32im_workloads::emit(&arithmetic(input))
+}
+
+#[cfg(target_os = "none")]
+guest_entry!(guest_main);
+
+#[cfg(not(target_os = "none"))]
+fn main() -> std::process::ExitCode {
+    rv32im_workloads::native::main(arithmetic)
+}

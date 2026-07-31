@@ -18,11 +18,11 @@ from .benchmark import (
     BenchmarkFailure,
     run_benchmarks,
 )
+from .native_benchmark import run_native_benchmarks
 
 _MATCHING_RUN_FIELDS = (
     "schema_version",
     "manifest_sha256",
-    "interface",
     "warmups",
     "repetitions",
     "timeout_seconds",
@@ -39,11 +39,19 @@ def _valid_label(label: object) -> bool:
     )
 
 
+def _labeled_path(value: str, kind: str) -> tuple[str, str]:
+    label, separator, path = value.partition("=")
+    if not separator or not _valid_label(label) or not path:
+        raise argparse.ArgumentTypeError(f"{kind} must be LABEL=PATH")
+    return label, path
+
+
 def _vm_spec(value: str) -> tuple[str, str]:
-    label, separator, executable = value.partition("=")
-    if not separator or not _valid_label(label) or not executable:
-        raise argparse.ArgumentTypeError("VM must be LABEL=EXECUTABLE")
-    return label, executable
+    return _labeled_path(value, "VM")
+
+
+def _native_spec(value: str) -> tuple[str, str]:
+    return _labeled_path(value, "native reference")
 
 
 def _vm_mapping(specs: Sequence[tuple[str, str]]) -> dict[str, str]:
@@ -87,30 +95,38 @@ def _positive_median(value: object, label: str) -> int | float:
 
 def _comparisons(
     baseline_result: dict[str, object],
-    candidate_label: str,
-    candidate_result: dict[str, object],
+    implementation: str,
+    implementation_result: dict[str, object],
 ) -> list[dict[str, object]]:
     for field in _MATCHING_RUN_FIELDS:
-        if baseline_result.get(field) != candidate_result.get(field):
-            raise BenchmarkFailure(f"{candidate_label} run disagrees on {field}")
+        if baseline_result.get(field) != implementation_result.get(field):
+            raise BenchmarkFailure(f"{implementation} run disagrees on {field}")
 
     baseline_cases = baseline_result.get("cases")
-    candidate_cases = candidate_result.get("cases")
-    if not isinstance(baseline_cases, list) or not isinstance(candidate_cases, list):
+    implementation_cases = implementation_result.get("cases")
+    if not isinstance(baseline_cases, list) or not isinstance(
+        implementation_cases, list
+    ):
         raise BenchmarkFailure("benchmark run cases are invalid")
-    if len(baseline_cases) != len(candidate_cases):
-        raise BenchmarkFailure(f"{candidate_label} run contains a different case count")
+    if len(baseline_cases) != len(implementation_cases):
+        raise BenchmarkFailure(f"{implementation} run contains a different case count")
+
+    interface = implementation_result.get("interface")
+    if interface not in {"serve", "native"}:
+        raise BenchmarkFailure(f"{implementation} run has an invalid interface")
 
     comparisons = []
-    for index, (baseline_case, candidate_case) in enumerate(
-        zip(baseline_cases, candidate_cases, strict=True)
+    for index, (baseline_case, implementation_case) in enumerate(
+        zip(baseline_cases, implementation_cases, strict=True)
     ):
-        if not isinstance(baseline_case, dict) or not isinstance(candidate_case, dict):
+        if not isinstance(baseline_case, dict) or not isinstance(
+            implementation_case, dict
+        ):
             raise BenchmarkFailure(f"benchmark case {index} is invalid")
-        for field in ("id", "workload", "retired_instructions"):
-            if baseline_case.get(field) != candidate_case.get(field):
+        for field in ("id", "workload"):
+            if baseline_case.get(field) != implementation_case.get(field):
                 raise BenchmarkFailure(
-                    f"{candidate_label} run disagrees on case {index} {field}"
+                    f"{implementation} run disagrees on case {index} {field}"
                 )
         case_id = baseline_case.get("id")
         workload = baseline_case.get("workload")
@@ -124,21 +140,28 @@ def _comparisons(
             or retired < 0
         ):
             raise BenchmarkFailure(f"benchmark case {index} metadata is invalid")
+        if (
+            interface == "serve"
+            and implementation_case.get("retired_instructions") != retired
+        ):
+            raise BenchmarkFailure(
+                f"{implementation} run disagrees on case {index} retired_instructions"
+            )
         baseline_median = _positive_median(
             baseline_case.get("median_ns"), f"baseline {case_id}"
         )
-        candidate_median = _positive_median(
-            candidate_case.get("median_ns"), f"{candidate_label} {case_id}"
+        implementation_median = _positive_median(
+            implementation_case.get("median_ns"), f"{implementation} {case_id}"
         )
         comparisons.append(
             {
-                "candidate": candidate_label,
+                "implementation": implementation,
                 "id": case_id,
                 "workload": workload,
                 "retired_instructions": retired,
                 "baseline_median_ns": baseline_median,
-                "candidate_median_ns": candidate_median,
-                "speedup": baseline_median / candidate_median,
+                "implementation_median_ns": implementation_median,
+                "speedup": baseline_median / implementation_median,
             }
         )
     return comparisons
@@ -153,13 +176,28 @@ def run_comparison(
     repetitions: int = DEFAULT_REPETITIONS,
     timeout: float = DEFAULT_TIMEOUT,
     case_ids: Sequence[str] | None = None,
+    native: tuple[str, str | os.PathLike[str]] | None = None,
 ) -> dict[str, object]:
-    """Run labeled VMs and retain complete measurements and baseline comparisons."""
+    """Run VMs and an optional native reference with shared settings."""
 
     records = _validated_executables(executables, baseline)
+    native_record = None
+    if native is not None:
+        label, directory = native
+        if not _valid_label(label):
+            raise BenchmarkFailure(f"invalid native reference label: {label!r}")
+        if label in executables:
+            raise BenchmarkFailure(f"duplicate implementation label: {label}")
+        path = os.fspath(directory)
+        if not isinstance(path, str) or not path:
+            raise BenchmarkFailure(f"{label}: native reference path is invalid")
+        native_record = (label, path)
+
     selected_cases = None if case_ids is None else tuple(case_ids)
     runs = {}
+    implementations = {}
     for label, executable in records:
+        implementations[label] = {"interface": "serve", "path": executable}
         try:
             runs[label] = run_benchmarks(
                 executable,
@@ -172,16 +210,31 @@ def run_comparison(
         except BenchmarkFailure as error:
             raise BenchmarkFailure(f"{label}: {error}") from error
 
+    if native_record is not None:
+        label, directory = native_record
+        implementations[label] = {"interface": "native", "path": directory}
+        try:
+            runs[label] = run_native_benchmarks(
+                directory,
+                manifest,
+                warmups=warmups,
+                repetitions=repetitions,
+                timeout=timeout,
+                case_ids=selected_cases,
+            )
+        except BenchmarkFailure as error:
+            raise BenchmarkFailure(f"{label}: {error}") from error
+
     baseline_result = runs[baseline]
     comparisons = []
-    for label, _executable in records:
+    for label, run in runs.items():
         if label != baseline:
-            comparisons.extend(_comparisons(baseline_result, label, runs[label]))
+            comparisons.extend(_comparisons(baseline_result, label, run))
 
     return {
         "schema_version": 1,
         "baseline": baseline,
-        "executables": dict(records),
+        "implementations": implementations,
         "runs": runs,
         "comparisons": comparisons,
     }
@@ -197,19 +250,19 @@ def _summary_text(result: dict[str, object]) -> str:
     assert isinstance(comparisons, list)
     rows = [
         (
-            str(record["candidate"]),
+            str(record["implementation"]),
             str(record["workload"]),
             str(record["baseline_median_ns"]),
-            str(record["candidate_median_ns"]),
+            str(record["implementation_median_ns"]),
             f"{record['speedup']:.3f}x",
         )
         for record in comparisons
     ]
     headers = (
-        "candidate",
+        "implementation",
         "workload",
         f"{baseline} median (ns)",
-        "candidate median (ns)",
+        "implementation median (ns)",
         "speedup",
     )
     widths = [
@@ -252,6 +305,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--baseline", required=True, help="label of the baseline VM")
     parser.add_argument(
+        "--native",
+        type=_native_spec,
+        metavar="LABEL=DIRECTORY",
+        help="add host-native workload executables from a directory",
+    )
+    parser.add_argument(
         "--warmups",
         type=int,
         default=DEFAULT_WARMUPS,
@@ -292,6 +351,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             repetitions=arguments.repetitions,
             timeout=arguments.timeout,
             case_ids=arguments.case_ids,
+            native=arguments.native,
         )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(_json_text(result), encoding="utf-8")

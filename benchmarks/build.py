@@ -22,6 +22,7 @@ REPOSITORY = ROOT.parent
 GUEST = ROOT / "guest"
 ARTIFACTS = ROOT / "artifacts"
 TARGET = "riscv32im-unknown-none-elf"
+NATIVE_TARGET = "x86_64-unknown-linux-gnu"
 WORKLOADS = ("tiny", "arithmetic", "streaming")
 MAX_INSTRUCTION_LIMIT = 100_000_000
 MAX_OUTPUT_LIMIT = 1_048_576
@@ -307,6 +308,26 @@ def _check_guest_sources(target_dir: Path) -> None:
         ],
         target_dir,
         "Clippy check",
+    )
+    _cargo(
+        [
+            "clippy",
+            "--frozen",
+            "--package",
+            "rv32im-workloads",
+            "--lib",
+            "--bins",
+            "--release",
+            "--target",
+            NATIVE_TARGET,
+            "--",
+            "-D",
+            "warnings",
+            "-D",
+            "clippy::all",
+        ],
+        target_dir,
+        "native Clippy check",
     )
 
 

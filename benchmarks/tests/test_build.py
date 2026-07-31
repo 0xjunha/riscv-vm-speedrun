@@ -78,6 +78,23 @@ def test_guest_source_checks_use_strict_targeted_commands(
             "-D",
             "clippy::all",
         ],
+        [
+            "cargo",
+            "clippy",
+            "--frozen",
+            "--package",
+            "rv32im-workloads",
+            "--lib",
+            "--bins",
+            "--release",
+            "--target",
+            build.NATIVE_TARGET,
+            "--",
+            "-D",
+            "warnings",
+            "-D",
+            "clippy::all",
+        ],
     ]
     for _, options in calls:
         assert options["cwd"] == build.GUEST

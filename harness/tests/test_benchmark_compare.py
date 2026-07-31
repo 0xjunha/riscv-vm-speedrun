@@ -35,20 +35,34 @@ def _run_result(median: int, samples: list[int]) -> dict[str, object]:
     }
 
 
-def test_run_comparison_measures_labeled_vms_and_preserves_raw_runs(
+def _native_result(median: int, samples: list[int]) -> dict[str, object]:
+    result = _run_result(median, samples)
+    result["interface"] = "native"
+    del result["cases"][0]["retired_instructions"]
+    return result
+
+
+def test_run_comparison_measures_vms_and_native_reference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     baseline_result = _run_result(300, [290, 300, 310])
     fast_result = _run_result(100, [90, 100, 110])
     other_result = _run_result(150, [140, 150, 160])
-    calls = []
+    native_result = _native_result(50, [40, 50, 60])
+    vm_calls = []
+    native_calls = []
     results = iter((baseline_result, fast_result, other_result))
 
     def fake_run(*args: object, **kwargs: object) -> dict[str, object]:
-        calls.append((args, kwargs))
+        vm_calls.append((args, kwargs))
         return next(results)
 
+    def fake_native(*args: object, **kwargs: object) -> dict[str, object]:
+        native_calls.append((args, kwargs))
+        return native_result
+
     monkeypatch.setattr(benchmark_compare, "run_benchmarks", fake_run)
+    monkeypatch.setattr(benchmark_compare, "run_native_benchmarks", fake_native)
     result = run_comparison(
         {"base": "vm0", "fast": "vm1", "other": "vm2"},
         "base",
@@ -57,9 +71,10 @@ def test_run_comparison_measures_labeled_vms_and_preserves_raw_runs(
         repetitions=3,
         timeout=10,
         case_ids=["tiny"],
+        native=("native", "/native"),
     )
 
-    assert calls == [
+    assert vm_calls == [
         (
             (executable, "manifest"),
             {
@@ -71,30 +86,58 @@ def test_run_comparison_measures_labeled_vms_and_preserves_raw_runs(
         )
         for executable in ("vm0", "vm1", "vm2")
     ]
+    assert native_calls == [
+        (
+            ("/native", "manifest"),
+            {
+                "warmups": 2,
+                "repetitions": 3,
+                "timeout": 10,
+                "case_ids": ("tiny",),
+            },
+        )
+    ]
     assert result["baseline"] == "base"
+    assert result["schema_version"] == 1
+    assert result["implementations"] == {
+        "base": {"interface": "serve", "path": "vm0"},
+        "fast": {"interface": "serve", "path": "vm1"},
+        "other": {"interface": "serve", "path": "vm2"},
+        "native": {"interface": "native", "path": "/native"},
+    }
     assert result["runs"] == {
         "base": baseline_result,
         "fast": fast_result,
         "other": other_result,
+        "native": native_result,
     }
     assert result["comparisons"] == [
         {
-            "candidate": "fast",
+            "implementation": "fast",
             "id": "tiny",
             "workload": "tiny",
             "retired_instructions": 123,
             "baseline_median_ns": 300,
-            "candidate_median_ns": 100,
+            "implementation_median_ns": 100,
             "speedup": 3.0,
         },
         {
-            "candidate": "other",
+            "implementation": "other",
             "id": "tiny",
             "workload": "tiny",
             "retired_instructions": 123,
             "baseline_median_ns": 300,
-            "candidate_median_ns": 150,
+            "implementation_median_ns": 150,
             "speedup": 2.0,
+        },
+        {
+            "implementation": "native",
+            "id": "tiny",
+            "workload": "tiny",
+            "retired_instructions": 123,
+            "baseline_median_ns": 300,
+            "implementation_median_ns": 50,
+            "speedup": 6.0,
         },
     ]
 
@@ -130,6 +173,12 @@ def test_comparison_rejects_invalid_vm_sets() -> None:
         run_comparison({"one": "vm0", "two": "vm1"}, "missing")
     with pytest.raises(BenchmarkFailure, match="duplicate VM label"):
         _vm_mapping([("same", "vm0"), ("same", "vm1")])
+    with pytest.raises(BenchmarkFailure, match="duplicate implementation label"):
+        run_comparison(
+            {"one": "vm0", "two": "vm1"},
+            "one",
+            native=("two", "/native"),
+        )
 
 
 def test_main_writes_raw_json_and_prints_summary(
@@ -141,19 +190,22 @@ def test_main_writes_raw_json_and_prints_summary(
     result = {
         "schema_version": 1,
         "baseline": "base",
-        "executables": {"base": "vm0", "fast": "vm1"},
+        "implementations": {
+            "base": {"interface": "serve", "path": "vm0"},
+            "fast": {"interface": "serve", "path": "vm1"},
+        },
         "runs": {
             "base": _run_result(300, [290, 300, 310]),
             "fast": _run_result(100, [90, 100, 110]),
         },
         "comparisons": [
             {
-                "candidate": "fast",
+                "implementation": "fast",
                 "id": "tiny",
                 "workload": "tiny",
                 "retired_instructions": 123,
                 "baseline_median_ns": 300,
-                "candidate_median_ns": 100,
+                "implementation_median_ns": 100,
                 "speedup": 3.0,
             }
         ],
@@ -176,6 +228,8 @@ def test_main_writes_raw_json_and_prints_summary(
                 "fast=vm1",
                 "--baseline",
                 "base",
+                "--native",
+                "native=/native",
                 "--warmups",
                 "0",
                 "--repetitions",
@@ -192,6 +246,7 @@ def test_main_writes_raw_json_and_prints_summary(
     assert '"samples_ns": [' in output.read_text()
     stdout = capsys.readouterr().out
     assert "base median (ns)" in stdout
+    assert "implementation median (ns)" in stdout
     assert "fast" in stdout
     assert "3.000x" in stdout
     assert str(output) in stdout
@@ -203,6 +258,7 @@ def test_main_writes_raw_json_and_prints_summary(
                 "repetitions": 3,
                 "timeout": 10.0,
                 "case_ids": ["tiny"],
+                "native": ("native", "/native"),
             },
         )
     ]

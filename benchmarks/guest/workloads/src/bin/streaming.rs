@@ -1,12 +1,13 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(target_os = "none", no_main)]
 
 //! Memory-read-heavy workload scanning guest input words sequentially.
 
+#[cfg(target_os = "none")]
 use rv32im_guest::guest_entry;
-use rv32im_workloads::{bounded, emit, Words};
+use rv32im_workloads::{bounded, encode_output, Words};
 
-fn main(input: &[u8]) -> u32 {
+fn streaming(input: &[u8]) -> [u8; 16] {
     let words = Words::new(input);
     let passes = bounded(words.get(0), 8, 32);
     let available = words.len().saturating_sub(2);
@@ -26,7 +27,18 @@ fn main(input: &[u8]) -> u32 {
         }
     }
 
-    emit(5, sum ^ xor, weighted)
+    encode_output(5, sum ^ xor, weighted)
 }
 
-guest_entry!(main);
+#[cfg(target_os = "none")]
+fn guest_main(input: &[u8]) -> u32 {
+    rv32im_workloads::emit(&streaming(input))
+}
+
+#[cfg(target_os = "none")]
+guest_entry!(guest_main);
+
+#[cfg(not(target_os = "none"))]
+fn main() -> std::process::ExitCode {
+    rv32im_workloads::native::main(streaming)
+}
