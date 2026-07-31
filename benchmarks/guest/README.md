@@ -65,6 +65,18 @@ A workload is a function with the `Workload` signature:
 `fn(&[u8]) -> [u8; 16]`. Keep it in its `workloads/src/bin/` file and use the
 shared decoding and output helpers from `rv32im-workloads`.
 
+Requirements:
+
+- Produce deterministic output without time, randomness, external I/O, or
+  mutable global state.
+- Run the same algorithm on both targets. Prefer fixed-width integers and
+  explicit wrapping arithmetic; avoid pointer-width-dependent behavior.
+- Make `result` and `auxiliary` depend on the measured work, and assign a unique,
+  stable `family` value.
+- Keep OS, EEI, and timing operations outside the workload function.
+
+Registration:
+
 - Wrap it with `guest_main` plus `guest_entry!` for RV32IM, and pass it to
   `native::main` for the host-native build.
 - Add its case to `../cases.json`, its expected-output logic to `../reference.py`,

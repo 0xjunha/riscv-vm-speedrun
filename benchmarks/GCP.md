@@ -6,9 +6,12 @@ revision and runs every implementation in the same Linux/amd64 container with on
 CPU, no network, and a 4 GiB memory limit. They share harness settings, but VM samples
 time `RUN` round trips while native samples time only the workload function.
 
+Runs execute from VM0 through VM5 sequentially, then native, with VM0 as the baseline.
+
 The host uses one hardware thread per core. It is deleted after results are
 copied and after failures; a four-hour maximum lifetime also deletes it if
-local cleanup is interrupted.
+local cleanup is interrupted. Separate instances can use different physical
+hosts, so instance and CPU information is retained with the results.
 
 ## Prerequisites
 

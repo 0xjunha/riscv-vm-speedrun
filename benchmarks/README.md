@@ -35,6 +35,8 @@ BSS/image-bound symbols, rejects images reaching the EEI input region at
 For each VM case, the host runner starts a fresh persistent server process, loads
 the ELF, checks one untimed run, performs the requested untimed warmups, then
 times and validates each `RUN` round trip. Process startup and `LOAD` are excluded.
+The retired-instruction count must remain identical across repetitions and VM
+implementations or the comparison fails.
 
 The native reference follows the same correctness-run, warmup, and repetition
 counts, but times only the shared workload function. Input reading, process
