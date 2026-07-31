@@ -40,7 +40,8 @@ make benchmark VM=/path/to/rv32vm
 See [`benchmarks/README.md`](benchmarks/README.md) for benchmark construction,
 measurement semantics, and reproducibility commands.
 
-Run VM0 through VM5 on a disposable GCP benchmark host:
+Run VM0 through VM5 and the x86-64 host-native reference on a disposable GCP
+benchmark host:
 
 ```sh
 cp .env.gcp.example .env.gcp

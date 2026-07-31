@@ -1,9 +1,10 @@
 # VM Performance Benchmarks on GCP
 
-`make gcp-benchmark` runs VM0 through VM5 on one disposable Google Compute
-Engine host. It builds one image from a clean repository revision and runs all
-implementations in the same Linux/amd64 container with identical harness
-settings, one pinned CPU, no network, and a 4 GiB memory limit.
+`make gcp-benchmark` runs VM0 through VM5 and the x86-64 host-native workload reference
+on one disposable Google Compute Engine host. It builds one image from a clean repository
+revision and runs every implementation in the same Linux/amd64 container with one pinned
+CPU, no network, and a 4 GiB memory limit. They share harness settings, but VM samples
+time `RUN` round trips while native samples time only the workload function.
 
 The host uses one hardware thread per core. It is deleted after results are
 copied and after failures; a four-hour maximum lifetime also deletes it if

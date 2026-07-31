@@ -3,6 +3,8 @@
 !benchmarks/
 !benchmarks/artifacts/
 !benchmarks/artifacts/**
+!benchmarks/guest/
+!benchmarks/guest/**
 !benchmarks/gcp/
 !benchmarks/gcp/**
 !harness/

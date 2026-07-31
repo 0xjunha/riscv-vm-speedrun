@@ -77,7 +77,7 @@ else
     tags_flag=
 fi
 
-for command in awk gcloud git; do
+for command in awk gcloud git python3; do
     if ! command -v "$command" >/dev/null 2>&1; then
         echo "required command not found: $command" >&2
         exit 2
@@ -89,6 +89,7 @@ if [ -n "$(git status --porcelain)" ]; then
     echo "GCP benchmarks require a clean worktree" >&2
     exit 2
 fi
+PYTHONDONTWRITEBYTECODE=1 python3 benchmarks/build.py check
 
 revision=$(git rev-parse HEAD)
 timestamp=$(date -u +%Y%m%d-%H%M%S)
