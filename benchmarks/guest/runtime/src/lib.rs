@@ -58,8 +58,12 @@ fn exit(code: u32) -> ! {
             "ecall",
             in("a0") code,
             in("a7") SYSCALL_EXIT,
-            options(noreturn, nostack)
+            options(nostack)
         );
+    }
+    // A fallback loop to prevent guest execution from resuming if the exit ECALL returns.
+    loop {
+        unsafe { asm!("", options(nomem, nostack)) }
     }
 }
 

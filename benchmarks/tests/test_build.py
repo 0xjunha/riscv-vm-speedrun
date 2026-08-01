@@ -24,6 +24,12 @@ def test_reference_records_are_stable() -> None:
         "tiny": "525642310100000024bb34a108000000",
         "arithmetic": "5256423103000000b45a03028dac6b0e",
         "streaming": "52564231050000001eb9132b00d8beff",
+        "sha256": "52564231070000002b7fa3a8f050c784",
+        "heatshrink": "5256423109000000a599a52541de76c0",
+        "depthconv": "525642310b0000003e48b268c2e8ec02",
+        "dijkstra": "525642310d0000002ec00100de5dd2b4",
+        "sort_records": "525642310f0000001f22b550eb0131eb",
+        "qrcode": "5256423111000000a80400007d9fde3e",
     }
     for case in build.load_cases():
         data = reference.input_for(case.workload, case.parameters)
@@ -60,7 +66,16 @@ def test_guest_source_checks_use_strict_targeted_commands(
     build._check_guest_sources(tmp_path)
 
     assert [command for command, _ in calls] == [
-        ["cargo", "fmt", "--all", "--", "--check"],
+        [
+            "cargo",
+            "fmt",
+            "--package",
+            "rv32im-guest",
+            "--package",
+            "rv32im-workloads",
+            "--",
+            "--check",
+        ],
         [
             "cargo",
             "clippy",
@@ -136,6 +151,33 @@ def test_cases_reject_unknown_fields(tmp_path: Path) -> None:
 
     with pytest.raises(build.BuildError, match="fields"):
         build.load_cases(path)
+
+
+def test_heatshrink_limit_is_checked_before_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(records: int, seed: int) -> bytes:
+        raise AssertionError(f"generated {records=} with {seed=}")
+
+    monkeypatch.setattr(reference, "_telemetry", fail_if_called)
+    records = reference.HEATSHRINK_MAX_PAYLOAD // reference.TELEMETRY_RECORD_SIZE + 1
+
+    with pytest.raises(ValueError, match="16 KiB"):
+        reference.input_for("heatshrink", {"records": records, "seed": 0})
+
+
+def test_third_party_inputs_exclude_standalone_cargo_state(tmp_path: Path) -> None:
+    crate = tmp_path / "dependency"
+    source = crate / "src/lib.rs"
+    generated = crate / "target/debug/build/generated.rs"
+    for path in (crate / "Cargo.toml", source, crate / "Cargo.lock", generated):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+
+    assert build._third_party_input_paths(tmp_path) == (
+        crate / "Cargo.toml",
+        source,
+    )
 
 
 def test_check_rejects_extra_artifacts(tmp_path: Path) -> None:

@@ -52,7 +52,8 @@ CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolc
 CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 
-.PHONY: benchmark benchmark-build benchmark-check benchmark-compare benchmark-format \
+.PHONY: benchmark benchmark-build benchmark-check benchmark-compare \
+	benchmark-correctness benchmark-format \
 	benchmark-guest-lint benchmark-image benchmark-lint benchmark-reproducible \
 	benchmark-test check conformance conformance-build conformance-check \
 	conformance-format conformance-image conformance-lint \
@@ -259,6 +260,11 @@ benchmark-build: benchmark-image
 benchmark-check:
 	PYTHONDONTWRITEBYTECODE=1 python3 benchmarks/build.py check
 
+benchmark-correctness: vm2-build benchmark-check
+	uv run --locked --package $(HARNESS_PACKAGE) \
+		rv32im-benchmark $(VM_DIR_vm2)/out/rv32vm $(BENCHMARK_MANIFEST) \
+		--warmups 0 --repetitions 1 --output /dev/null
+
 benchmark-test:
 	PYTHONDONTWRITEBYTECODE=1 uv run --locked pytest benchmarks/tests
 
@@ -367,6 +373,7 @@ contract-reproducible: conformance-image
 
 check: lock-check spec-check $(VM_LIST) vm4-x86-check vm5-x86-check \
 	native-vm-runtime-status harness-lint harness-test benchmark-check \
-	benchmark-lint benchmark-test conformance-lint conformance-test contract-lint \
+	benchmark-correctness benchmark-lint benchmark-test conformance-lint \
+	conformance-test contract-lint \
 	contract-test $(VM_RUNTIME_CONFORMANCE_TARGETS) $(VM_RUNTIME_CONTRACT_TARGETS) \
 	$(VM_RUNTIME_BENCHMARK_SMOKE_TARGETS)

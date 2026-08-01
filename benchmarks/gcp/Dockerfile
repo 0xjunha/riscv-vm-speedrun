@@ -4,6 +4,7 @@ ENV CARGO_NET_OFFLINE=true
 WORKDIR /source
 COPY vm_references vm_references
 COPY benchmarks/guest benchmarks/guest
+COPY benchmarks/third_party benchmarks/third_party
 
 RUN vm_references/vm0-python-interpreter/build.sh \
     && vm_references/vm1-python-block-interpreter/build.sh \
@@ -17,7 +18,10 @@ RUN vm_references/vm0-python-interpreter/build.sh \
         --manifest-path benchmarks/guest/Cargo.toml \
         --package rv32im-workloads \
         --bins \
-        --target x86_64-unknown-linux-gnu
+        --target x86_64-unknown-linux-gnu \
+    && mkdir /native \
+    && find /native-target/x86_64-unknown-linux-gnu/release \
+        -maxdepth 1 -type f -perm -111 -exec cp '{}' /native/ ';'
 
 FROM python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
 
@@ -37,9 +41,7 @@ COPY --from=build /source/vm_references/vm2-rust-interpreter/out /opt/rv32im/vms
 COPY --from=build /source/vm_references/vm3-rust-block-interpreter/out /opt/rv32im/vms/vm3
 COPY --from=build /source/vm_references/vm4-rust-jit-compiler/out /opt/rv32im/vms/vm4
 COPY --from=build /source/vm_references/vm5-rust-aot-compiler/out /opt/rv32im/vms/vm5
-COPY --from=build /native-target/x86_64-unknown-linux-gnu/release/tiny /opt/rv32im/native/tiny
-COPY --from=build /native-target/x86_64-unknown-linux-gnu/release/arithmetic /opt/rv32im/native/arithmetic
-COPY --from=build /native-target/x86_64-unknown-linux-gnu/release/streaming /opt/rv32im/native/streaming
+COPY --from=build /native /opt/rv32im/native
 COPY harness/src /opt/rv32im/harness
 COPY benchmarks/artifacts /opt/rv32im/benchmarks
 COPY benchmarks/gcp/run-benchmark.sh /usr/local/bin/run-benchmark

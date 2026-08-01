@@ -62,6 +62,19 @@ pub fn encode_output(family: u32, result: u32, auxiliary: u32) -> [u8; 16] {
     bytes
 }
 
+/// Compute the IEEE CRC-32 of a byte slice.
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
+}
+
 /// Emit one result through the RV32IM execution environment.
 #[cfg(target_os = "none")]
 pub fn emit(result: &[u8; 16]) -> u32 {

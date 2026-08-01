@@ -4,5 +4,9 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[dependencies]
+heatshrink-lib = { path = "../../third_party/heatshrink" }
+qrcodegen = { path = "../../third_party/qrcodegen" }
+
 [target.'cfg(target_os = "none")'.dependencies]
 rv32im-guest = { path = "../runtime" }

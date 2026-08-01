@@ -23,7 +23,9 @@ GUEST = ROOT / "guest"
 ARTIFACTS = ROOT / "artifacts"
 TARGET = "riscv32im-unknown-none-elf"
 NATIVE_TARGET = "x86_64-unknown-linux-gnu"
-WORKLOADS = ("tiny", "arithmetic", "streaming")
+WORKLOADS = tuple(
+    path.stem for path in sorted((GUEST / "workloads/src/bin").glob("*.rs"))
+)
 MAX_INSTRUCTION_LIMIT = 100_000_000
 MAX_OUTPUT_LIMIT = 1_048_576
 BUILDER_METADATA = {
@@ -136,8 +138,10 @@ def load_cases(path: Path = ROOT / "cases.json") -> tuple[Case, ...]:
         cases.append(case)
         seen.add(case_id)
 
-    if tuple(case.workload for case in cases) != WORKLOADS:
-        raise BuildError(f"cases must contain exactly {', '.join(WORKLOADS)} in order")
+    covered = {case.workload for case in cases}
+    missing = sorted(set(WORKLOADS) - covered)
+    if missing:
+        raise BuildError(f"workloads without cases: {', '.join(missing)}")
     return tuple(cases)
 
 
@@ -163,7 +167,31 @@ def _project_input_paths() -> tuple[Path, ...]:
         for source_root in (GUEST / "runtime/src", GUEST / "workloads/src")
         for path in source_root.rglob("*.rs")
     )
-    return tuple(sorted((*fixed, *guest_configuration, *guest_sources)))
+    third_party_inputs = _third_party_input_paths(ROOT / "third_party")
+    guest_notices = tuple(
+        path
+        for source_root in (GUEST / "licenses",)
+        for path in source_root.rglob("*")
+        if path.is_file()
+    )
+    return tuple(
+        sorted(
+            (
+                *fixed,
+                *guest_configuration,
+                GUEST / "THIRD_PARTY_NOTICES.md",
+                *guest_notices,
+                *guest_sources,
+                *third_party_inputs,
+            )
+        )
+    )
+
+
+def _third_party_input_paths(root: Path) -> tuple[Path, ...]:
+    """Return authored Rust crate inputs, excluding standalone Cargo state."""
+
+    return tuple(sorted((*root.glob("*/Cargo.toml"), *root.glob("*/src/**/*.rs"))))
 
 
 def _project_inputs() -> dict[str, str]:
@@ -288,7 +316,19 @@ def _cargo(
 
 
 def _check_guest_sources(target_dir: Path) -> None:
-    _cargo(["fmt", "--all", "--", "--check"], target_dir, "format check")
+    _cargo(
+        [
+            "fmt",
+            "--package",
+            "rv32im-guest",
+            "--package",
+            "rv32im-workloads",
+            "--",
+            "--check",
+        ],
+        target_dir,
+        "format check",
+    )
     _cargo(
         [
             "clippy",

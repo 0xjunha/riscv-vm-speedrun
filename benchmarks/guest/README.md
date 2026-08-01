@@ -29,9 +29,10 @@ exits with code 101.
 
 - `runtime/` is linked into every guest ELF and provides `_start`, `guest_entry!`,
   output, exit, and panic handling.
-- `workloads/` contains the benchmark binaries and their shared input/output
-  logic. RV32IM builds wrap that logic in the guest runtime; native builds read
-  input from standard input and report in-process timing samples.
+- `workloads/` contains the benchmark binaries and shared input/output logic.
+  RV32IM builds wrap the workload logic in the guest runtime;
+  native builds read input from standard input and report in-process timing samples.
+  Vendored third-party dependencies live in `../third_party/`.
 - `link.x` defines the VM-compatible ELF layout: entry point, page-aligned
   executable/read-only/read-write segments, global pointer, and the image
   boundary before VM input memory.
@@ -45,7 +46,8 @@ exits with code 101.
 ## Workload data contract
 
 The input is a variable-length byte slice whose meaning is workload-specific.
-The current workloads use `Words` to decode complete little-endian `u32` values.
+Headers use little-endian fixed-width integers; workloads may then consume
+words, structured records, or raw payload bytes.
 
 The output is exactly 16 bytes: four little-endian `u32` fields.
 
@@ -56,8 +58,8 @@ The output is exactly 16 bytes: four little-endian `u32` fields.
 | 8–11 | result | primary computation summary |
 | 12–15 | auxiliary | secondary computation summary |
 
-The harness validates the complete output against the independent logic in
-`../reference.py`.
+The harness compares the guest output with the expected result independently computed
+or provided as pinned data by `../reference.py`.
 
 ## Adding a workload
 
@@ -79,6 +81,9 @@ Registration:
 
 - Wrap it with `guest_main` plus `guest_entry!` for RV32IM, and pass it to
   `native::main` for the host-native build.
-- Add its case to `../cases.json`, its expected-output logic to `../reference.py`,
-  register it in `../build.py`, and copy its native binary in `../gcp/Dockerfile`.
+- Add its case to `../cases.json` and its expected-output logic to
+  `../reference.py`. The build discovers binaries from `workloads/src/bin/`, and
+  the GCP image collects the resulting native executables automatically.
+- For third-party code or test vectors, update `THIRD_PARTY_NOTICES.md`, keep the
+  applicable license under `licenses/`, and pin the exact source revision.
 - Run `make benchmark-build` to regenerate and verify the checked-in artifacts.

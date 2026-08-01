@@ -7,6 +7,8 @@
 !benchmarks/guest/**
 !benchmarks/gcp/
 !benchmarks/gcp/**
+!benchmarks/third_party/
+!benchmarks/third_party/**
 !harness/
 !harness/src/
 !harness/src/**
@@ -15,3 +17,4 @@
 **/__pycache__/
 **/out/
 **/target/
+benchmarks/third_party/**/Cargo.lock

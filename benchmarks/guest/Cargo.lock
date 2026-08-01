@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "heatshrink-lib"
+version = "1.0.0"
+
+[[package]]
+name = "qrcodegen"
+version = "1.8.0"
+
+[[package]]
 name = "rv32im-guest"
 version = "0.1.0"
 
@@ -10,5 +18,7 @@ version = "0.1.0"
 name = "rv32im-workloads"
 version = "0.1.0"
 dependencies = [
+ "heatshrink-lib",
+ "qrcodegen",
  "rv32im-guest",
 ]
