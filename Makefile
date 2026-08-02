@@ -215,15 +215,15 @@ endif
 
 vm4: vm4-test vm4-lint vm4-platform-test
 
-vm5-test: vm5-build rust-x86-compiler-test
+vm5-test: vm5-build rust-vm-common-test
 	CARGO_TARGET_DIR=$(VM5_TARGET) cargo test --locked --manifest-path $(VM5_MANIFEST)
 	CARGO_TARGET_DIR=$(VM5_TARGET) cargo test --locked --manifest-path $(VM5_MANIFEST) \
 		--all-features
 
-vm5-format: rust-x86-compiler-format
+vm5-format: rust-vm-common-format
 	cargo fmt --manifest-path $(VM5_MANIFEST)
 
-vm5-lint: rust-x86-compiler-lint
+vm5-lint: rust-vm-common-lint
 	cargo fmt --check --manifest-path $(VM5_MANIFEST)
 	CARGO_TARGET_DIR=$(VM5_TARGET) cargo clippy --locked --manifest-path \
 		$(VM5_MANIFEST) --all-targets -- -D warnings

@@ -10,7 +10,6 @@ use std::collections::BTreeMap;
 use rv32vm_rust_common::memory::{
     ADDRESS_SPACE_SIZE, PAGE_SHIFT, PAGE_SIZE, PERM_READ, PERM_WRITE,
 };
-use rv32vm_rust_x86_block_compiler::BlockInstruction;
 
 mod dispatch;
 mod executable_memory;
@@ -23,7 +22,7 @@ mod tests;
 
 use dispatch::DispatchTable;
 use executable_memory::ExecutableMemory;
-pub(crate) use lowering::{BlockFlow, Condition, LinkedBlock};
+pub(crate) use lowering::{BlockFlow, BlockInstruction, Condition, LinkedBlock};
 use lowering::{ImmediateOperation, Lowering, MemoryWidth, RegisterOperation};
 pub(crate) use program::{LinkedEntry, LinkedProgram};
 #[cfg(feature = "profile")]

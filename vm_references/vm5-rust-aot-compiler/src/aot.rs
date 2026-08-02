@@ -2,15 +2,13 @@
 
 use std::{collections::VecDeque, num::NonZeroU32};
 
+use crate::linked::{BlockInstruction, LinkedBlock, LinkedEntry, LinkedProgram, MAX_LINKED_BLOCKS};
+#[cfg(feature = "profile")]
+use crate::profile::{GeneratedBlockProfile, LoadProfile};
 use rv32vm_rust_common::{
     machine::Machine,
     memory::{ADDRESS_SPACE_SIZE, Image, PAGE_COUNT, PAGE_SHIFT, PAGE_SIZE},
 };
-use rv32vm_rust_x86_block_compiler::BlockInstruction;
-
-use crate::linked::{LinkedBlock, LinkedEntry, LinkedProgram, MAX_LINKED_BLOCKS};
-#[cfg(feature = "profile")]
-use crate::profile::{GeneratedBlockProfile, LoadProfile};
 
 const INSTRUCTIONS_PER_PAGE: usize = PAGE_SIZE / 4;
 /// Longest native candidate formed by the eager compiler.

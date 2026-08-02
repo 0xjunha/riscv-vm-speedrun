@@ -366,10 +366,10 @@ mod tests {
     };
 
     use super::{BlockFlow, GeneratedBlockProfile, LoadProfile, OpcodeCounts, RunProfile};
-    use crate::linked::LinkedBlock;
+    use crate::linked::{BlockInstruction, LinkedBlock};
     use crate::test_support::{addi, beq, image_with_code_at, lw};
 
-    fn decoded(code: &[u32]) -> Vec<rv32vm_rust_x86_block_compiler::BlockInstruction> {
+    fn decoded(code: &[u32]) -> Vec<BlockInstruction> {
         let image = image_with_code_at(code, IMAGE_START);
         let machine = Machine::new(&image, &[], 0);
         (0..code.len())

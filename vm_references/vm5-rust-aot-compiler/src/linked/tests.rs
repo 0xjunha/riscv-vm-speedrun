@@ -10,7 +10,6 @@ use rv32vm_rust_common::{
     machine::Machine,
     memory::{IMAGE_START, PAGE_COUNT},
 };
-use rv32vm_rust_x86_block_compiler::BlockInstruction;
 
 use super::dispatch::{INSTRUCTIONS_PER_PAGE, MAX_DISPATCH_BYTES};
 use super::executable_memory::mapping_length;
@@ -22,8 +21,8 @@ use super::executable_memory::mapping_length;
 use super::program::NativeStop;
 use super::register_cache::{MAX_CACHED_REGISTERS, MIN_WEIGHTED_CACHE_ACCESSES};
 use super::{
-    BUDGET_VENEER_BYTES, BinaryOperation32, DispatchTable, EDGE_SLOT_BYTES, ENTRY_BYTES,
-    EXIT_BUDGET, EXIT_INTERPRET_ONE, EXIT_MISSING, EXTERNAL_THUNK_BYTES, Emitter,
+    BUDGET_VENEER_BYTES, BinaryOperation32, BlockInstruction, DispatchTable, EDGE_SLOT_BYTES,
+    ENTRY_BYTES, EXIT_BUDGET, EXIT_INTERPRET_ONE, EXIT_MISSING, EXTERNAL_THUNK_BYTES, Emitter,
     INTERPRET_ONE_VENEER_BYTES, LinkedBlock, LinkedProgram, MAX_EXIT_TRAMPOLINE_BYTES,
     MAX_FIXED_CODE_BYTES, MAX_SHARED_PROLOGUE_BYTES, MISSING_VENEER_BYTES, MemoryWidth, Operand32,
     Register32, RegisterCache,

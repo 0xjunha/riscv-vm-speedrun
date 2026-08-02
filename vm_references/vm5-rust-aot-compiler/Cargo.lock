@@ -7,16 +7,8 @@ name = "rv32vm-rust-aot-compiler"
 version = "0.1.0"
 dependencies = [
  "rv32vm-rust-common",
- "rv32vm-rust-x86-block-compiler",
 ]
 
 [[package]]
 name = "rv32vm-rust-common"
 version = "0.1.0"
-
-[[package]]
-name = "rv32vm-rust-x86-block-compiler"
-version = "0.1.0"
-dependencies = [
- "rv32vm-rust-common",
-]

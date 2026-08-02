@@ -1,7 +1,8 @@
 //! RV32IM decoding and mapping-independent block lowering.
 
-use rv32vm_rust_common::machine::DecodedInstruction;
-use rv32vm_rust_x86_block_compiler::BlockInstruction;
+use rv32vm_rust_common::{GuestTrap, machine::DecodedInstruction};
+
+pub(crate) type BlockInstruction = Result<DecodedInstruction, GuestTrap>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BlockFlow {
