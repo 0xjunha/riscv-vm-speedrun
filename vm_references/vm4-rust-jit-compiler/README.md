@@ -1,59 +1,114 @@
 # RV32IM Rust JIT Compiler
 
-A demand-driven RV32IM interpreter that compiles frequently executed blocks
-into native x86-64 code, then forms bounded regions along strongly dominant
-cached paths. A unique physical path that closes back to its head is emitted as
-a budgeted counted native loop; if loop validation rejects it, VM4 retains the
-bounded finite-region fallback.
+VM4 is a demand-driven just-in-time (JIT) compiler for RV32IM programs. It
+starts by interpreting code, compiles hot blocks and paths during `RUN`, and
+reuses the resulting x86-64 code for the loaded ELF.
 
-Checked memory operations and RV32M execute natively. Syscalls, precise native
-side exits, short instruction budgets, and unsupported instructions use the
-shared interpreter.
+VM4 runs only on x86-64 Linux.
 
-The engine starts compiling a cached block on its third complete execution.
-After a native head edge is observed at least eight times with at least 7/8
-dominance, VM4 follows the dominant native path for up to eight blocks and 256
-instructions, and prefers the first head-closing prefix, including a self-loop.
-Otherwise it compiles the longest valid prefix of at least two blocks. Counted
-loops retain a separate four-block, 128-instruction bound and emit one logical
-guest cycle per host-loop iteration. They execute only complete cycles within
-the remaining instruction budget and return to the normal dispatcher for an
-exact short-budget tail, where the original block entry remains available.
-Finished or nondominant bounded profiles stop mutating during steady dispatch.
-Basic and region entries share packed executable cohorts and the same exact
-mapped-code budget.
-The cache is capped at 8,192 blocks, 262,144 decoded instructions, and 16 MiB
-of native mappings. It belongs to one loaded ELF and is released by `UNLOAD`.
+## How it works
 
-Executable memory is written first and then changed to read-execute; it is
-never writable and executable at the same time.
+- **`LOAD`:** create an empty, image-scoped block and native-code cache.
+- **`RUN`:** interpret cold blocks, compile hot blocks, then form larger native
+  regions and loops from observed control flow.
+- **Later `RUN`s:** reuse the decoded and compiled code for the same ELF.
+- **`UNLOAD`:** discard the cache and all native mappings.
+- **Fallback:** use the shared interpreter for system instructions, unsupported
+  code, precise side exits, and short instruction-budget tails.
 
-The VM executable runs only on x86-64 Linux.
+A **basic block** contains up to 64 guest instructions and never crosses a
+4 KiB page boundary. VM4 natively handles common RV32I integer and control-flow
+instructions, RV32M arithmetic, and checked integer loads and stores.
 
-## Profile counters
+## Main performance choices
 
-Build with `--features profile` to collect VM4-only diagnostics. When a loaded
-image is dropped (including `UNLOAD`), VM4 writes one compact JSON object to
-standard error with schema `rv32vm.vm4.profile`. Standard output and protocol
-responses are unchanged.
+### 1. Compile only hot blocks
 
-The record includes aggregate native/interpreted retirement, dispatch and
-cache activity, compilation outcomes, emitted and mapped code bytes,
-compile-and-publish time, native side exits, and sparse interpreted, fallback,
-and side-exit opcode counts. Region calls, retirement, completed paths, guard
-exits, side exits, budget fallbacks, and compilation outcomes are reported
-separately while remaining included in the aggregate native totals. Counted
-loop retirement, calls, completed logical cycles, budget completions, guard and
-side exits, short-budget fallbacks, compile outcomes, and emitted bytes are a
-subset of those region and aggregate counters. Its `recent_runs` array contains
-chronological deltas for the most recent 64 runs, which separates initial
-tiering from steady-state execution without unbounded memory use.
-`interpreted_instructions` counts attempted interpreter execution;
-`interpreted_retired` excludes trapping instructions. Fallback opcode counts
-are the interpreted instructions unsupported by the native lowering.
+- A cached block starts compilation after its third complete interpreted
+  execution.
+- Cold, uncached, or untranslatable code stays in the interpreter.
+- Compiled blocks remain available for later dispatches and `RUN`s.
 
-Without the feature, the profile state and all recording calls are removed at
-compile time.
+**Benefit:** VM4 spends compilation time only on code that is actually reused.
+
+### 2. Combine dominant paths into native regions
+
+- VM4 starts a region when a native head edge has at least 8 observations and
+  one target accounts for at least 7/8 of them.
+- It follows dominant native edges for up to 8 blocks and 256 instructions.
+- It compiles the longest valid prefix containing at least 2 blocks.
+- A branch that leaves the predicted path exits at an exact block boundary.
+- Profiles stop changing after a region is selected or after 64 observations
+  fail to produce a dominant edge.
+
+**Benefit:** common paths cross fewer Rust dispatch boundaries and share one
+register and memory-check plan.
+
+### 3. Turn stable cycles into counted native loops
+
+- If the first head-closing prefix is a valid unique cycle, including a
+  self-loop, VM4 emits one native cycle with a host backedge.
+- Loops retain a tighter limit of 4 blocks and 128 instructions.
+- One native call executes as many complete cycles as the remaining instruction
+  budget permits; a shorter tail returns to normal dispatch.
+- If loop validation fails, VM4 keeps the finite-region fallback.
+
+**Benefit:** hot loops stay in machine code across guest iterations without
+losing exact instruction-budget accounting.
+
+### 4. Chain stable native successors
+
+- Once an edge profile is frozen, VM4 can continue directly into its exact
+  compiled successor.
+- A chain may follow up to 32 basic or region successor hops before returning
+  to the main dispatcher.
+- Profiling edges, missing targets, side exits, and insufficient budgets stop
+  the chain safely.
+
+**Benefit:** already-compiled paths avoid repeated top-level cache lookup and
+dispatch work.
+
+### 5. Reduce work inside generated code
+
+- Frequently reused guest registers stay in host registers: up to 3 in bounded
+  entries and up to 6 in counted loops.
+- Arithmetic reads cached or canonical guest operands directly.
+- Complementary shifts may become one rotate, with dead intermediate shifts
+  removed.
+- Checked loads and stores access flat guest memory directly and reuse
+  dominating alignment and permission checks when it is safe.
+
+**Benefit:** native paths perform fewer register-file accesses, host
+instructions, and repeated memory guards.
+
+### 6. Pack native entries into executable cohorts
+
+- Compiled blocks and regions are staged together in near-page-sized cohorts.
+- Basic and region entries share the same exact native-mapping budget.
+- Published code is immutable and reused until `UNLOAD`.
+
+**Benefit:** VM4 reduces mapping overhead and wasted executable memory.
+
+## Correctness and safety
+
+- Native exits report the exact committed instruction prefix.
+- A failing memory operation remains uncommitted and is retried precisely by
+  the interpreter.
+- Counted loops execute only complete cycles within the instruction budget.
+- System instructions and unsupported operations remain interpreted.
+- Executable memory changes from writable to read-execute when published. It is
+  never writable and executable at the same time.
+
+## Resource limits
+
+- **64 guest instructions** per basic block.
+- **8 blocks / 256 instructions** per finite region.
+- **4 blocks / 128 instructions** per counted loop.
+- **8,192 cached blocks** and **262,144 decoded instructions** per ELF.
+- **16 MiB** total native mappings per ELF.
+- Code beyond these limits remains interpreted.
+
+## Build and verification
 
 ```sh
 make vm4
@@ -62,3 +117,27 @@ make vm4-contract
 make vm4-benchmark-smoke
 make vm4-x86-check
 ```
+
+## Optional profiler
+
+The `profile` feature builds a diagnostic VM4. Its state and recording calls
+are absent from normal builds.
+
+```sh
+cargo build --locked --release --features profile \
+  --manifest-path vm_references/vm4-rust-jit-compiler/Cargo.toml
+```
+
+When the loaded image is dropped, including on `UNLOAD`, the diagnostic build
+writes one JSON record to standard error. Records use
+`schema: "rv32vm.vm4.profile"` and `schema_version: 1` and summarize:
+
+- native and interpreted retirement;
+- dispatch, cache, compilation, mapping, and compile-time activity;
+- continuation, region, and counted-loop behavior;
+- native side exits and sparse interpreted and fallback opcode counts; and
+- per-run deltas for the most recent 64 runs.
+
+Standard output and protocol responses are unchanged. Attempted interpreted
+instructions include traps, while retired counts do not. Fallback opcode counts
+cover instructions unsupported by native lowering.
