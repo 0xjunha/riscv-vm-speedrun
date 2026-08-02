@@ -151,7 +151,8 @@ mod tests {
         target_pointer_width = "64"
     ))]
     use rv32vm_rust_common::memory::{
-        ADDRESS_SPACE_SIZE, INPUT_START, PAGE_SHIFT, PAGE_SIZE, PERM_READ, PERM_WRITE, STACK_START,
+        ADDRESS_SPACE_SIZE, INPUT_START, Image, PAGE_SHIFT, PAGE_SIZE, PERM_READ, PERM_WRITE,
+        STACK_START,
     };
     use rv32vm_rust_common::{
         machine::{Engine, Machine, Termination},
@@ -159,6 +160,12 @@ mod tests {
     };
 
     use super::AotCompiler;
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    use crate::test_support::jalr;
     use crate::test_support::{addi, image_with_code_at, lw, machine_with_code_at};
 
     #[cfg(any(
@@ -188,6 +195,28 @@ mod tests {
             | 0x23
     }
 
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    fn singleton_control_flow_image() -> Image {
+        use crate::test_support::{beq, jal};
+
+        image_with_code_at(
+            &[
+                lw(5, 10, 0),
+                beq(5, 0, 8),
+                0x0000_0073,
+                jal(6, 8),
+                0x0000_0073,
+                addi(7, 7, 1),
+                0x0000_0073,
+            ],
+            IMAGE_START,
+        )
+    }
+
     #[test]
     fn exact_budget_stops_at_the_requested_instruction() {
         let image = image_with_code_at(&[addi(5, 5, 1), addi(5, 5, 1), addi(5, 5, 1)], IMAGE_START);
@@ -200,6 +229,89 @@ mod tests {
         assert_eq!(result.termination, Termination::InstructionLimit);
         assert_eq!(machine.pc, IMAGE_START + 8);
         assert_eq!(machine.registers[5], 2);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn singleton_arithmetic_observes_exact_zero_and_one_budgets() {
+        let image = image_with_code_at(&[addi(5, 5, 1), 0x0000_0073], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+
+        let mut zero = Machine::new(&image, &[], 0);
+        let zero_result = engine.run(&mut zero, 0);
+        assert_eq!(zero_result.termination, Termination::InstructionLimit);
+        assert_eq!(zero.pc, IMAGE_START);
+        assert_eq!(zero.registers[5], 0);
+        assert_eq!(zero.retired, 0);
+        assert_eq!(engine.native_retired(), 0);
+
+        let mut one = Machine::new(&image, &[], 0);
+        let one_result = engine.run(&mut one, 1);
+        assert_eq!(one_result.termination, Termination::InstructionLimit);
+        assert_eq!(one.pc, IMAGE_START + 4);
+        assert_eq!(one.registers[5], 1);
+        assert_eq!(one.retired, 1);
+        assert_eq!(engine.native_retired(), 1);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn singleton_branch_and_jal_link_after_checked_memory() {
+        let image = singleton_control_flow_image();
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+
+        let result = engine.run(&mut machine, 4);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(machine.pc, IMAGE_START + 24);
+        assert_eq!(machine.registers[5], 0);
+        assert_eq!(machine.registers[6], IMAGE_START + 16);
+        assert_eq!(machine.registers[7], 1);
+        assert_eq!(machine.retired, 4);
+        assert_eq!(engine.native_retired(), 4);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn short_successor_budget_falls_back_at_the_exact_linked_pc() {
+        use crate::test_support::jal;
+
+        let image = image_with_code_at(
+            &[
+                jal(0, 4),
+                addi(6, 6, 1),
+                addi(6, 6, 1),
+                addi(6, 6, 1),
+                0x0000_0073,
+            ],
+            IMAGE_START,
+        );
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+
+        let result = engine.run(&mut machine, 2);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(machine.pc, IMAGE_START + 8);
+        assert_eq!(machine.retired, 2);
+        assert_eq!(machine.registers[6], 1);
+        assert_eq!(engine.native_retired(), 1);
     }
 
     #[test]
@@ -291,12 +403,12 @@ mod tests {
         target_pointer_width = "64"
     ))]
     #[test]
-    fn reenters_native_after_exactly_one_fallback_instruction() {
+    fn links_native_jalr_without_interpreter_reentry() {
         let image = image_with_code_at(
             &[
                 addi(5, 5, 1),
                 addi(5, 5, 1),
-                (10 << 15) | (6 << 7) | 0x67, // jalr x6, 0(x10)
+                jalr(6, 10, 0),
                 addi(7, 7, 1),
                 addi(7, 7, 1),
                 0x0000_0073,
@@ -316,7 +428,324 @@ mod tests {
         assert_eq!(machine.registers[5], 2);
         assert_eq!(machine.registers[6], IMAGE_START + 12);
         assert_eq!(machine.registers[7], 2);
-        assert_eq!(engine.native_retired(), 4);
+        assert_eq!(engine.native_retired(), 5);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn jalr_uses_the_old_aliasing_source_and_clears_bit_zero() {
+        let image = image_with_code_at(
+            &[jalr(5, 5, 0), 0x0000_0073, addi(6, 6, 1), 0x0000_0073],
+            IMAGE_START,
+        );
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[5] = IMAGE_START + 9;
+
+        let result = engine.run(&mut machine, 2);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(machine.pc, IMAGE_START + 12);
+        assert_eq!(machine.registers[5], IMAGE_START + 4);
+        assert_eq!(machine.registers[6], 1);
+        assert_eq!(machine.retired, 2);
+        assert_eq!(engine.native_retired(), 2);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn misaligned_jalr_traps_before_link_write_or_retirement() {
+        use rv32vm_rust_common::GuestTrap;
+
+        let image = image_with_code_at(&[addi(7, 7, 1), jalr(5, 10, 0), 0x0000_0073], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[5] = 0xfeed_face;
+        machine.registers[10] = IMAGE_START + 3;
+
+        let result = engine.run(&mut machine, 3);
+
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new(
+                "InstructionAddressMisaligned",
+                IMAGE_START + 4,
+                IMAGE_START + 2,
+            ))
+        );
+        assert_eq!(machine.pc, IMAGE_START + 4);
+        assert_eq!(machine.registers[5], 0xfeed_face);
+        assert_eq!(machine.registers[7], 1);
+        assert_eq!(machine.retired, 1);
+        assert_eq!(engine.native_retired(), 1);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn committed_jalr_observes_limit_before_invalid_target_fetch() {
+        use rv32vm_rust_common::GuestTrap;
+
+        let image = image_with_code_at(&[jalr(5, 10, 0)], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+
+        let mut limited = Machine::new(&image, &[], 0);
+        limited.registers[10] = ADDRESS_SPACE_SIZE;
+        let limited_result = engine.run(&mut limited, 1);
+        assert_eq!(limited_result.termination, Termination::InstructionLimit);
+        assert_eq!(limited.pc, ADDRESS_SPACE_SIZE);
+        assert_eq!(limited.registers[5], IMAGE_START + 4);
+        assert_eq!(limited.retired, 1);
+
+        let mut trapping = Machine::new(&image, &[], 0);
+        trapping.registers[10] = ADDRESS_SPACE_SIZE;
+        let trapping_result = engine.run(&mut trapping, 2);
+        assert_eq!(
+            trapping_result.termination,
+            Termination::Trap(GuestTrap::new(
+                "InstructionAccessFault",
+                ADDRESS_SPACE_SIZE,
+                ADDRESS_SPACE_SIZE,
+            ))
+        );
+        assert_eq!(trapping.pc, ADDRESS_SPACE_SIZE);
+        assert_eq!(trapping.registers[5], IMAGE_START + 4);
+        assert_eq!(trapping.retired, 1);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn uncompiled_interior_jalr_target_exits_after_committing() {
+        let image = image_with_code_at(
+            &[jalr(5, 10, 0), addi(6, 6, 1), addi(7, 7, 1), 0x0000_0073],
+            IMAGE_START,
+        );
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[10] = IMAGE_START + 8;
+
+        let result = engine.run(&mut machine, 2);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(machine.pc, IMAGE_START + 12);
+        assert_eq!(machine.registers[5], IMAGE_START + 4);
+        assert_eq!(machine.registers[6], 0);
+        assert_eq!(machine.registers[7], 1);
+        assert_eq!(machine.retired, 2);
+        assert_eq!(engine.native_retired(), 1);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn jalr_differential_matrix_matches_the_interpreter() {
+        struct Case {
+            name: &'static str,
+            instruction: u32,
+            source: u32,
+            limit: u64,
+        }
+
+        fn run_interpreter(machine: &mut Machine, instruction_limit: u64) -> Termination {
+            loop {
+                if machine.retired >= instruction_limit {
+                    return Termination::InstructionLimit;
+                }
+                let instruction = machine.fetch_decode(machine.pc);
+                if let Some(termination) = machine.execute_one(instruction) {
+                    return termination;
+                }
+            }
+        }
+
+        let target = IMAGE_START + 4;
+        let cases = [
+            Case {
+                name: "rd_x0",
+                instruction: jalr(0, 10, 0),
+                source: target,
+                limit: 2,
+            },
+            Case {
+                name: "minimum_immediate",
+                instruction: jalr(5, 10, -2_048),
+                source: target.wrapping_add(2_048),
+                limit: 2,
+            },
+            Case {
+                name: "maximum_immediate",
+                instruction: jalr(5, 10, 2_047),
+                source: target.wrapping_sub(2_047),
+                limit: 2,
+            },
+            Case {
+                name: "wrapping_target",
+                instruction: jalr(5, 10, 1),
+                source: u32::MAX,
+                limit: 2,
+            },
+            Case {
+                name: "self_hit",
+                instruction: jalr(5, 10, 0),
+                source: IMAGE_START,
+                limit: 3,
+            },
+            Case {
+                name: "zero_budget",
+                instruction: jalr(5, 10, 0),
+                source: target,
+                limit: 0,
+            },
+            Case {
+                name: "one_instruction_budget",
+                instruction: jalr(5, 10, 0),
+                source: target,
+                limit: 1,
+            },
+            Case {
+                name: "short_target_budget",
+                instruction: jalr(5, 10, 0),
+                source: target,
+                limit: 2,
+            },
+            Case {
+                name: "invalid_funct3",
+                instruction: jalr(5, 10, 0) | (1 << 12),
+                source: target,
+                limit: 1,
+            },
+        ];
+
+        for case in cases {
+            let image = image_with_code_at(
+                &[case.instruction, addi(6, 6, 1), addi(7, 7, 1), 0x0000_0073],
+                IMAGE_START,
+            );
+            let mut expected = Machine::new(&image, &[], 0);
+            let mut actual = Machine::new(&image, &[], 0);
+            expected.registers[5] = 0xfeed_face;
+            actual.registers[5] = 0xfeed_face;
+            expected.registers[10] = case.source;
+            actual.registers[10] = case.source;
+
+            let expected_termination = run_interpreter(&mut expected, case.limit);
+            let mut engine = AotCompiler::default();
+            engine.prepare(&image).unwrap();
+            let actual_result = engine.run(&mut actual, case.limit);
+
+            assert_eq!(
+                actual_result.termination, expected_termination,
+                "termination: {}",
+                case.name
+            );
+            assert_eq!(actual.pc, expected.pc, "pc: {}", case.name);
+            assert_eq!(actual.retired, expected.retired, "retired: {}", case.name);
+            assert_eq!(
+                actual.registers, expected.registers,
+                "registers: {}",
+                case.name
+            );
+        }
+    }
+
+    #[cfg(all(
+        feature = "profile",
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn jalr_profile_distinguishes_hit_miss_and_precise_retry() {
+        let hit_image = image_with_code_at(
+            &[jalr(5, 10, 0), 0x0000_0073, addi(6, 6, 1), 0x0000_0073],
+            IMAGE_START,
+        );
+        let mut hit_engine = AotCompiler::default();
+        hit_engine.prepare(&hit_image).unwrap();
+        let mut hit_machine = Machine::new(&hit_image, &[], 0);
+        hit_machine.registers[10] = IMAGE_START + 8;
+
+        let (hit_result, hit) = hit_engine.run_profiled(&mut hit_machine, 2);
+
+        assert_eq!(hit_result.termination, Termination::InstructionLimit);
+        assert_eq!(hit.native_retired, 2);
+        assert_eq!(hit.fallback_retired, 0);
+        assert_eq!(hit.native_dispatches, 2);
+        assert_eq!(hit.native_indirect_link_hits, 1);
+        assert_eq!(hit.native_indirect_link_misses, 0);
+        assert_eq!(hit.native_indirect_jump_dispatches, 1);
+        assert_eq!(hit.native_missing_exits, 1);
+        assert_eq!(hit.generated_guest_register_loads, 2);
+        assert_eq!(hit.generated_guest_register_stores, 2);
+        assert_eq!(hit.fallback_jalr, 0);
+
+        let miss_image = image_with_code_at(
+            &[jalr(5, 10, 0), addi(6, 6, 1), addi(7, 7, 1), 0x0000_0073],
+            IMAGE_START,
+        );
+        let mut miss_engine = AotCompiler::default();
+        miss_engine.prepare(&miss_image).unwrap();
+        let mut miss_machine = Machine::new(&miss_image, &[], 0);
+        miss_machine.registers[10] = IMAGE_START + 8;
+
+        let (miss_result, miss) = miss_engine.run_profiled(&mut miss_machine, 2);
+
+        assert_eq!(miss_result.termination, Termination::InstructionLimit);
+        assert_eq!(miss.native_retired, 1);
+        assert_eq!(miss.fallback_retired, 1);
+        assert_eq!(miss.native_dispatches, 1);
+        assert_eq!(miss.native_indirect_link_hits, 0);
+        assert_eq!(miss.native_indirect_link_misses, 1);
+        assert_eq!(miss.native_indirect_jump_dispatches, 1);
+        assert_eq!(miss.native_missing_exits, 1);
+        assert_eq!(miss.lookup_fallbacks, 1);
+        assert_eq!(miss.generated_guest_register_loads, 1);
+        assert_eq!(miss.generated_guest_register_stores, 1);
+        assert_eq!(miss.fallback_other, 1);
+
+        let retry_image = image_with_code_at(&[jalr(5, 10, 0)], IMAGE_START);
+        let mut retry_engine = AotCompiler::default();
+        retry_engine.prepare(&retry_image).unwrap();
+        let mut retry_machine = Machine::new(&retry_image, &[], 0);
+        retry_machine.registers[5] = 0xfeed_face;
+        retry_machine.registers[10] = IMAGE_START + 3;
+
+        let (retry_result, retry) = retry_engine.run_profiled(&mut retry_machine, 1);
+
+        assert!(matches!(retry_result.termination, Termination::Trap(_)));
+        assert_eq!(retry.native_retired, 0);
+        assert_eq!(retry.fallback_retired, 0);
+        assert_eq!(retry.native_dispatches, 1);
+        assert_eq!(retry.native_indirect_link_hits, 0);
+        assert_eq!(retry.native_indirect_link_misses, 0);
+        assert_eq!(retry.native_indirect_jump_dispatches, 0);
+        assert_eq!(retry.native_interpret_one_exits, 1);
+        assert_eq!(retry.generated_guest_register_loads, 1);
+        assert_eq!(retry.generated_guest_register_stores, 0);
+        assert_eq!(retry.fallback_jalr, 1);
+        assert_eq!(retry_machine.registers[5], 0xfeed_face);
     }
 
     #[cfg(all(
@@ -1042,6 +1471,40 @@ mod tests {
         assert_eq!(profile.native_fallthrough_dispatches, 1);
         assert_eq!(profile.generated_guest_register_loads, 5);
         assert_eq!(profile.generated_guest_register_stores, 3);
+    }
+
+    #[cfg(all(
+        feature = "profile",
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn profile_counts_the_singleton_memory_branch_jal_chain() {
+        let image = singleton_control_flow_image();
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let load_profile = engine.native.load_profile();
+        assert_eq!(load_profile.compiled_blocks, 4);
+        assert_eq!(load_profile.native_guest_instructions, 4);
+        assert_eq!(load_profile.fallthrough_blocks, 2);
+        assert_eq!(load_profile.branch_blocks, 1);
+        assert_eq!(load_profile.direct_jump_blocks, 1);
+
+        let mut machine = Machine::new(&image, &[], 0);
+        let (result, profile) = engine.run_profiled(&mut machine, 4);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(profile.native_retired, 4);
+        assert_eq!(profile.fallback_retired, 0);
+        assert_eq!(profile.native_invocations, 1);
+        assert_eq!(profile.native_dispatches, 4);
+        assert_eq!(profile.native_direct_link_hits, 3);
+        assert_eq!(profile.native_missing_exits, 1);
+        assert_eq!(profile.native_memory_loads, 1);
+        assert_eq!(profile.native_fallthrough_dispatches, 2);
+        assert_eq!(profile.native_branch_dispatches, 1);
+        assert_eq!(profile.native_direct_jump_dispatches, 1);
     }
 
     #[cfg(all(

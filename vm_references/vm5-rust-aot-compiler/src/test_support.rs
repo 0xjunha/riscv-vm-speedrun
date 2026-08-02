@@ -32,6 +32,10 @@ pub(crate) fn jal(rd: u32, offset: i32) -> u32 {
         | 0x6f
 }
 
+pub(crate) fn jalr(rd: u32, rs1: u32, immediate: i32) -> u32 {
+    ((immediate as u32 & 0xfff) << 20) | (rs1 << 15) | (rd << 7) | 0x67
+}
+
 pub(crate) fn image_with_code_at(code: &[u32], start: u32) -> Image {
     let mut permissions = vec![0; PAGE_COUNT];
     let mut pages = std::iter::repeat_with(|| None)

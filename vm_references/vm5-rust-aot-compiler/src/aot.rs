@@ -1,6 +1,6 @@
 //! Builds and owns the native blocks for one loaded ELF image.
 
-use std::num::NonZeroU32;
+use std::{collections::VecDeque, num::NonZeroU32};
 
 use rv32vm_rust_common::{
     machine::Machine,
@@ -8,19 +8,15 @@ use rv32vm_rust_common::{
 };
 use rv32vm_rust_x86_block_compiler::BlockInstruction;
 
-use crate::linked::{LinkedBlock, LinkedEntry, LinkedProgram};
+use crate::linked::{LinkedBlock, LinkedEntry, LinkedProgram, MAX_LINKED_BLOCKS};
 #[cfg(feature = "profile")]
 use crate::profile::{GeneratedBlockProfile, LoadProfile};
 
 const INSTRUCTIONS_PER_PAGE: usize = PAGE_SIZE / 4;
 /// Longest native candidate formed by the eager compiler.
 const MAX_NATIVE_INSTRUCTIONS: usize = 64;
-/// Shortest native prefix worth retaining in the eager image.
-const MIN_NATIVE_INSTRUCTIONS: usize = 2;
-/// Largest executable input scanned during `LOAD`.
+/// Largest cold executable input scanned during `LOAD`.
 const MAX_SCANNED_INSTRUCTIONS: usize = 262_144;
-/// Largest number of native blocks retained for one image.
-const MAX_NATIVE_BLOCKS: usize = 8_192;
 /// Largest total executable mapping size retained for one image (32 MiB).
 const MAX_CODE_BYTES: usize = 32 * 1024 * 1024;
 
@@ -34,7 +30,7 @@ struct PreparationLimits {
 impl PreparationLimits {
     const PRODUCTION: Self = Self {
         scanned_instructions: MAX_SCANNED_INSTRUCTIONS,
-        native_blocks: MAX_NATIVE_BLOCKS,
+        native_blocks: MAX_LINKED_BLOCKS,
         code_bytes: MAX_CODE_BYTES,
     };
 
@@ -113,14 +109,23 @@ impl NativeImage {
 
     fn prepare_with_limits(image: &Image, limits: PreparationLimits) -> Self {
         debug_assert!(limits.scanned_instructions <= MAX_SCANNED_INSTRUCTIONS);
-        debug_assert!(limits.native_blocks <= MAX_NATIVE_BLOCKS);
+        debug_assert!(limits.native_blocks <= MAX_LINKED_BLOCKS);
         debug_assert!(limits.code_bytes <= MAX_CODE_BYTES);
 
         let machine = Machine::new(image, &[], 0);
         let mut native = Self::default();
         let mut blocks = Vec::new();
-        let mut code_bytes = 0;
-        native.try_compile(&machine, image.entry, limits, &mut blocks, &mut code_bytes);
+        let mut reserved_code_bytes = 0;
+        // Only a newly admitted block contributes its at-most-two direct
+        // successors, so the native-block cap also bounds this queue's work.
+        let mut reachable = VecDeque::from([image.entry]);
+        while let Some(pc) = reachable.pop_front() {
+            if let Some(successors) =
+                native.try_compile(&machine, pc, limits, &mut blocks, &mut reserved_code_bytes)
+            {
+                reachable.extend(successors.into_iter().flatten());
+            }
+        }
 
         let mut scanned = 0;
         'ranges: for range in &image.executable_file_ranges {
@@ -139,7 +144,13 @@ impl NativeImage {
                 }
 
                 if begins_block {
-                    native.try_compile(&machine, pc, limits, &mut blocks, &mut code_bytes);
+                    let _ = native.try_compile(
+                        &machine,
+                        pc,
+                        limits,
+                        &mut blocks,
+                        &mut reserved_code_bytes,
+                    );
                 }
 
                 let Ok(instruction) = machine.fetch_decode(pc) else {
@@ -149,7 +160,13 @@ impl NativeImage {
                     continue;
                 };
                 if let Some(target) = instruction.direct_target() {
-                    native.try_compile(&machine, target, limits, &mut blocks, &mut code_bytes);
+                    let _ = native.try_compile(
+                        &machine,
+                        target,
+                        limits,
+                        &mut blocks,
+                        &mut reserved_code_bytes,
+                    );
                 }
 
                 if LinkedBlock::supports(instruction) && !LinkedBlock::ends_block(instruction) {
@@ -170,14 +187,27 @@ impl NativeImage {
         {
             native.staged_block_count = blocks.len();
         }
-        native.program = LinkedProgram::publish(blocks, limits.code_bytes);
+        let publication = LinkedProgram::publish_with_code_len(blocks, limits.code_bytes);
+        native.program = publication.0;
         #[cfg(feature = "profile")]
         {
-            native.load_profile.code_bytes = code_bytes as u64;
+            native.load_profile.code_bytes = publication.1 as u64;
             native.load_profile.mapped_bytes = native
                 .program
                 .as_ref()
                 .map_or(0, |program| program.mapped_len() as u64);
+            native.load_profile.dispatch_table_entries = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.dispatch_entries() as u64);
+            native.load_profile.dispatch_table_pages = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.dispatch_pages() as u64);
+            native.load_profile.dispatch_table_bytes = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.dispatch_bytes() as u64);
         }
         native
     }
@@ -195,38 +225,43 @@ impl NativeImage {
         pc: u32,
         limits: PreparationLimits,
         blocks: &mut Vec<LinkedBlock>,
-        code_bytes: &mut usize,
-    ) {
+        reserved_code_bytes: &mut usize,
+    ) -> Option<[Option<u32>; 2]> {
         if pc & 3 != 0
             || pc >= ADDRESS_SPACE_SIZE
             || blocks.len() == limits.native_blocks
             || !matches!(self.slot(pc), Some(Slot::Unseen))
         {
-            return;
+            return None;
         }
         let Ok(instruction) = machine.fetch_decode(pc) else {
-            return;
+            return None;
         };
         self.set_slot(pc, Slot::Unavailable);
         if !LinkedBlock::supports(instruction) {
-            return;
+            return None;
         }
 
         let instructions = native_sequence(machine, pc);
-        let Some(block) = LinkedBlock::compile(&instructions) else {
-            return;
+        let block = LinkedBlock::compile(&instructions)?;
+        let fixed_bytes = if blocks.is_empty() {
+            LinkedProgram::fixed_code_len()
+        } else {
+            0
         };
-        if block.instruction_count() < MIN_NATIVE_INSTRUCTIONS && !block.permits_singleton() {
-            return;
-        }
-        let Some(next_code_bytes) = (*code_bytes).checked_add(block.code_len()) else {
-            return;
-        };
+        // Admission reserves one ten-byte missing-target veneer per outgoing
+        // edge. Final relocation deduplicates unresolved targets and omits the
+        // reservation entirely for linked edges, so this is conservative by
+        // at most 20 bytes per retained block (160 KiB at the production cap).
+        let next_code_bytes = (*reserved_code_bytes)
+            .checked_add(fixed_bytes)?
+            .checked_add(block.reserved_code_len())?;
         if next_code_bytes > limits.code_bytes {
-            return;
+            return None;
         }
 
-        *code_bytes = next_code_bytes;
+        let successors = block.successors();
+        *reserved_code_bytes = next_code_bytes;
         let id = BlockId::new(blocks.len());
         #[cfg(feature = "profile")]
         {
@@ -235,6 +270,7 @@ impl NativeImage {
         }
         blocks.push(block);
         self.set_slot(pc, Slot::Native(id));
+        Some(successors)
     }
 
     #[cfg(feature = "profile")]
@@ -299,8 +335,8 @@ mod tests {
     use rv32vm_rust_common::{machine::Machine, memory::IMAGE_START};
 
     use super::{MAX_CODE_BYTES, NativeImage, PreparationLimits, native_sequence};
-    use crate::linked::LinkedBlock;
-    use crate::test_support::{addi, beq, image_with_code_at, lw};
+    use crate::linked::{LinkedBlock, LinkedProgram};
+    use crate::test_support::{addi, beq, image_with_code_at, jal, jalr, lw};
 
     fn register(rd: u32, rs1: u32, rs2: u32, funct3: u32, funct7: u32) -> u32 {
         (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | 0x33
@@ -346,6 +382,78 @@ mod tests {
     }
 
     #[test]
+    fn entry_reachable_blocks_win_before_the_cold_sweep_hits_its_cap() {
+        use crate::test_support::jal;
+
+        let mut image = image_with_code_at(
+            &[
+                addi(5, 5, 1),
+                0x0000_0073,
+                addi(6, 6, 1),
+                0x0000_0073,
+                jal(0, 8),
+                0x0000_0073,
+                addi(7, 7, 1),
+                0x0000_0073,
+            ],
+            IMAGE_START,
+        );
+        image.entry = IMAGE_START + 16;
+
+        let native =
+            NativeImage::prepare_with_limits(&image, PreparationLimits::new(8, 2, MAX_CODE_BYTES));
+
+        assert_eq!(native.staged_block_count(), 2);
+        assert!(native.attempted(IMAGE_START + 16));
+        assert!(native.attempted(IMAGE_START + 24));
+        assert!(!native.attempted(IMAGE_START));
+        #[cfg(feature = "profile")]
+        {
+            let profile = native.load_profile();
+            assert_eq!(profile.compiled_blocks, 2);
+            assert_eq!(profile.native_guest_instructions, 2);
+            assert_eq!(profile.fallthrough_blocks, 1);
+            assert_eq!(profile.direct_jump_blocks, 1);
+        }
+    }
+
+    #[test]
+    fn entry_reachable_cycle_is_compiled_once() {
+        use crate::test_support::jal;
+
+        let image = image_with_code_at(&[jal(0, 0)], IMAGE_START);
+        let native =
+            NativeImage::prepare_with_limits(&image, PreparationLimits::new(1, 8, MAX_CODE_BYTES));
+
+        assert_eq!(native.staged_block_count(), 1);
+        assert!(native.attempted(IMAGE_START));
+        #[cfg(feature = "profile")]
+        {
+            let profile = native.load_profile();
+            assert_eq!(profile.compiled_blocks, 1);
+            assert_eq!(profile.native_guest_instructions, 1);
+            assert_eq!(profile.direct_jump_blocks, 1);
+        }
+    }
+
+    #[test]
+    fn same_block_auipc_jalr_hint_reaches_target_without_cold_scanning() {
+        let target = IMAGE_START + 0x1000;
+        let mut code = vec![0x0000_0073; 0x1001];
+        code[0] = 0x0000_1000 | (10 << 7) | 0x17; // auipc x10, 0x1000
+        code[1] = jalr(1, 10, 0);
+        code[0x1000 / 4] = addi(5, 5, 1);
+        let image = image_with_code_at(&code, IMAGE_START);
+
+        let native =
+            NativeImage::prepare_with_limits(&image, PreparationLimits::new(0, 2, MAX_CODE_BYTES));
+
+        assert_eq!(native.staged_block_count(), 2);
+        assert!(native.attempted(IMAGE_START));
+        assert!(native.attempted(target));
+    }
+
+    #[test]
     fn prepares_every_rv32m_operation_as_one_native_sequence() {
         let code = (0..8)
             .map(|funct3| register(5, 6, 7, funct3, 1))
@@ -358,6 +466,23 @@ mod tests {
         assert_eq!(native.staged_block_count(), 1);
         #[cfg(feature = "profile")]
         assert_eq!(native.load_profile().native_guest_instructions, 8);
+    }
+
+    #[test]
+    fn retains_supported_singleton_at_entry() {
+        let image = image_with_code_at(&[addi(5, 0, 7), 0x0000_0073], IMAGE_START);
+
+        let native = NativeImage::prepare(&image);
+
+        assert!(native.attempted(IMAGE_START));
+        assert_eq!(native.staged_block_count(), 1);
+        #[cfg(feature = "profile")]
+        {
+            let profile = native.load_profile();
+            assert_eq!(profile.compiled_blocks, 1);
+            assert_eq!(profile.native_guest_instructions, 1);
+            assert_eq!(profile.fallthrough_blocks, 1);
+        }
     }
 
     #[test]
@@ -392,7 +517,11 @@ mod tests {
 
     #[test]
     fn scan_limit_stops_at_the_exact_word() {
-        let image = image_with_code_at(&[lw(5, 0, 0), lw(6, 0, 0), lw(7, 0, 0)], IMAGE_START);
+        let mut image = image_with_code_at(
+            &[lw(5, 0, 0), lw(6, 0, 0), lw(7, 0, 0), 0x0000_0073],
+            IMAGE_START,
+        );
+        image.entry = IMAGE_START + 12;
         let limits = PreparationLimits::new(2, 8, MAX_CODE_BYTES);
 
         let native = NativeImage::prepare_with_limits(&image, limits);
@@ -431,17 +560,79 @@ mod tests {
     fn emitted_code_limit_accepts_an_exact_fit() {
         let image = image_with_code_at(&[addi(5, 5, 1), addi(5, 5, 1), lw(6, 0, 0)], IMAGE_START);
         let machine = Machine::new(&image, &[], 0);
-        let code_len = LinkedBlock::compile(&native_sequence(&machine, IMAGE_START))
+        let reserved_code_len = LinkedBlock::compile(&native_sequence(&machine, IMAGE_START))
             .unwrap()
-            .code_len();
+            .reserved_code_len()
+            + LinkedProgram::fixed_code_len();
 
-        let exact =
-            NativeImage::prepare_with_limits(&image, PreparationLimits::new(3, 1, code_len));
-        let short =
-            NativeImage::prepare_with_limits(&image, PreparationLimits::new(3, 1, code_len - 1));
+        let exact = NativeImage::prepare_with_limits(
+            &image,
+            PreparationLimits::new(3, 1, reserved_code_len),
+        );
+        let short = NativeImage::prepare_with_limits(
+            &image,
+            PreparationLimits::new(3, 1, reserved_code_len - 1),
+        );
 
         assert_eq!(exact.staged_block_count(), 1);
         assert_eq!(short.staged_block_count(), 0);
+    }
+
+    #[test]
+    fn edge_admission_is_conservative_but_final_code_bytes_are_exact() {
+        let image = image_with_code_at(&[jal(0, 4), addi(5, 5, 1), 0x0000_0073], IMAGE_START);
+        let machine = Machine::new(&image, &[], 0);
+        let first = LinkedBlock::compile(&native_sequence(&machine, IMAGE_START)).unwrap();
+        let second = LinkedBlock::compile(&native_sequence(&machine, IMAGE_START + 4)).unwrap();
+        let reserved_code_len = LinkedProgram::fixed_code_len()
+            + first.reserved_code_len()
+            + second.reserved_code_len();
+        let (_, actual_code_len) =
+            LinkedProgram::publish_with_code_len(vec![first, second], usize::MAX);
+        assert!(actual_code_len < reserved_code_len);
+
+        let actual_limit =
+            NativeImage::prepare_with_limits(&image, PreparationLimits::new(3, 2, actual_code_len));
+        let reserved_limit = NativeImage::prepare_with_limits(
+            &image,
+            PreparationLimits::new(3, 2, reserved_code_len),
+        );
+
+        assert_eq!(actual_limit.staged_block_count(), 1);
+        assert_eq!(reserved_limit.staged_block_count(), 2);
+        #[cfg(feature = "profile")]
+        assert_eq!(
+            reserved_limit.load_profile().code_bytes,
+            actual_code_len as u64
+        );
+    }
+
+    #[test]
+    fn singleton_respects_exact_block_and_code_limits() {
+        let image = image_with_code_at(&[addi(5, 5, 1), 0x0000_0073], IMAGE_START);
+        let machine = Machine::new(&image, &[], 0);
+        let reserved_code_len = LinkedBlock::compile(&native_sequence(&machine, IMAGE_START))
+            .unwrap()
+            .reserved_code_len()
+            + LinkedProgram::fixed_code_len();
+
+        let no_blocks =
+            NativeImage::prepare_with_limits(&image, PreparationLimits::new(2, 0, MAX_CODE_BYTES));
+        let one_block =
+            NativeImage::prepare_with_limits(&image, PreparationLimits::new(2, 1, MAX_CODE_BYTES));
+        let exact_code = NativeImage::prepare_with_limits(
+            &image,
+            PreparationLimits::new(2, 1, reserved_code_len),
+        );
+        let short_code = NativeImage::prepare_with_limits(
+            &image,
+            PreparationLimits::new(2, 1, reserved_code_len - 1),
+        );
+
+        assert_eq!(no_blocks.staged_block_count(), 0);
+        assert_eq!(one_block.staged_block_count(), 1);
+        assert_eq!(exact_code.staged_block_count(), 1);
+        assert_eq!(short_code.staged_block_count(), 0);
     }
 
     #[cfg(feature = "profile")]

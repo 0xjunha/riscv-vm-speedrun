@@ -8,35 +8,56 @@ use std::collections::BTreeMap;
 
 use rv32vm_rust_common::{
     machine::DecodedInstruction,
-    memory::{ADDRESS_SPACE_SIZE, DirectMemory, PAGE_SHIFT, PAGE_SIZE, PERM_READ, PERM_WRITE},
+    memory::{
+        ADDRESS_SPACE_SIZE, DirectMemory, PAGE_COUNT, PAGE_SHIFT, PAGE_SIZE, PERM_READ, PERM_WRITE,
+    },
 };
 use rv32vm_rust_x86_block_compiler::BlockInstruction;
 
 const ENTRY_BYTES: [u8; 4] = [0xf3, 0x0f, 0x1e, 0xfa];
-const EDGE_SLOT_BYTES: usize = 16;
+#[cfg(not(feature = "profile"))]
+const EDGE_SLOT_BYTES: usize = 5;
+#[cfg(feature = "profile")]
+const EDGE_SLOT_BYTES: usize = 9;
+const BUDGET_VENEER_BYTES: usize = 14;
+const INTERPRET_ONE_VENEER_BYTES: usize = 14;
+const MISSING_VENEER_BYTES: usize = 10;
+#[cfg(not(feature = "profile"))]
+const INDIRECT_MISSING_VENEER_BYTES: usize = 7;
+#[cfg(feature = "profile")]
+const INDIRECT_MISSING_VENEER_BYTES: usize = 11;
+const EXIT_TRAMPOLINE_BYTES: usize = 33;
 const EXIT_MISSING: u32 = 1;
 const EXIT_BUDGET: u32 = 2;
 const EXIT_INTERPRET_ONE: u32 = 3;
 const _: () = assert!(PAGE_SIZE.is_power_of_two());
 const _: () = assert!(PAGE_SIZE == 1_usize << PAGE_SHIFT);
+const INSTRUCTIONS_PER_PAGE: usize = PAGE_SIZE / size_of::<u32>();
+pub(crate) const MAX_LINKED_BLOCKS: usize = 8_192;
+const MAX_DISPATCH_BYTES: usize = PAGE_COUNT * size_of::<usize>()
+    + MAX_LINKED_BLOCKS * (PAGE_SIZE + size_of::<Box<[u32; INSTRUCTIONS_PER_PAGE]>>());
 #[cfg(feature = "profile")]
-const PROFILE_BLOCKS_OFFSET: u8 = 40;
+const PROFILE_BLOCKS_OFFSET: usize = 56;
 #[cfg(feature = "profile")]
-const PROFILE_DIRECT_LINKS_OFFSET: u8 = 48;
+const PROFILE_DIRECT_LINKS_OFFSET: usize = 64;
 #[cfg(feature = "profile")]
-const PROFILE_REGISTER_LOADS_OFFSET: u8 = 56;
+const PROFILE_INDIRECT_HITS_OFFSET: usize = 72;
 #[cfg(feature = "profile")]
-const PROFILE_REGISTER_STORES_OFFSET: u8 = 64;
+const PROFILE_INDIRECT_MISSES_OFFSET: usize = 80;
 #[cfg(feature = "profile")]
-const PROFILE_FALLTHROUGH_OFFSET: u8 = 72;
+const PROFILE_REGISTER_LOADS_OFFSET: usize = 88;
 #[cfg(feature = "profile")]
-const PROFILE_BRANCH_OFFSET: u8 = 80;
+const PROFILE_REGISTER_STORES_OFFSET: usize = 96;
 #[cfg(feature = "profile")]
-const PROFILE_JUMP_OFFSET: u8 = 88;
+const PROFILE_FALLTHROUGH_OFFSET: usize = 104;
 #[cfg(feature = "profile")]
-const PROFILE_MEMORY_LOADS_OFFSET: u8 = 96;
+const PROFILE_BRANCH_OFFSET: usize = 112;
 #[cfg(feature = "profile")]
-const PROFILE_MEMORY_STORES_OFFSET: u8 = 104;
+const PROFILE_JUMP_OFFSET: usize = 120;
+#[cfg(feature = "profile")]
+const PROFILE_MEMORY_LOADS_OFFSET: usize = 128;
+#[cfg(feature = "profile")]
+const PROFILE_MEMORY_STORES_OFFSET: usize = 136;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BlockFlow {
@@ -56,6 +77,9 @@ pub(crate) enum BlockFlow {
     Jump {
         pc: u32,
     },
+    IndirectJump {
+        target_hint: Option<u32>,
+    },
 }
 
 impl BlockFlow {
@@ -69,11 +93,8 @@ impl BlockFlow {
                 target,
                 ..
             } => [Some(fallthrough), Some(target)],
+            Self::IndirectJump { target_hint } => [target_hint, None],
         }
-    }
-
-    const fn permits_singleton(self) -> bool {
-        matches!(self, Self::CheckedFallthrough { .. })
     }
 }
 
@@ -82,7 +103,7 @@ pub(crate) struct LinkedBlock {
     pc: u32,
     instructions: Vec<Lowering>,
     flow: BlockFlow,
-    code_len: usize,
+    reserved_code_len: usize,
 }
 
 impl LinkedBlock {
@@ -121,7 +142,14 @@ impl LinkedBlock {
                 break;
             };
             next_pc = next_pc.wrapping_add(4);
-            let terminal = lowering.flow(next_pc);
+            let terminal = match lowering {
+                Lowering::IndirectJump {
+                    source, immediate, ..
+                } => Some(BlockFlow::IndirectJump {
+                    target_hint: indirect_target_hint(&lowered, source, immediate),
+                }),
+                _ => lowering.flow(next_pc),
+            };
             lowered.push(lowering);
             if terminal.is_some() {
                 flow = terminal;
@@ -133,25 +161,29 @@ impl LinkedBlock {
             return None;
         }
         let flow = flow.unwrap_or(BlockFlow::Fallthrough { pc: next_pc });
-        let code_len = emitted_len(&lowered, flow)?;
+        let reserved_code_len = reserved_len(&lowered, flow)?;
         Some(Self {
             pc,
             instructions: lowered,
             flow,
-            code_len,
+            reserved_code_len,
         })
     }
 
+    #[cfg(feature = "profile")]
     pub(crate) fn instruction_count(&self) -> usize {
         self.instructions.len()
     }
 
-    pub(crate) const fn code_len(&self) -> usize {
-        self.code_len
+    /// Conservative admission charge for this block. Every outgoing edge
+    /// reserves a cold missing-successor veneer even though resolved edges omit
+    /// it from the finalized image.
+    pub(crate) const fn reserved_code_len(&self) -> usize {
+        self.reserved_code_len
     }
 
-    pub(crate) fn permits_singleton(&self) -> bool {
-        self.flow.permits_singleton()
+    pub(crate) const fn successors(&self) -> [Option<u32>; 2] {
+        self.flow.successors()
     }
 
     #[cfg(feature = "profile")]
@@ -170,6 +202,13 @@ enum Lowering {
         destination: usize,
         link: u32,
         target: u32,
+    },
+    IndirectJump {
+        pc: u32,
+        destination: usize,
+        source: usize,
+        immediate: u32,
+        link: u32,
     },
     Branch {
         left: usize,
@@ -228,6 +267,13 @@ impl Lowering {
                     target,
                 })
             }
+            0x67 if instruction.funct3() == 0 => Some(Self::IndirectJump {
+                pc: instruction.pc(),
+                destination: instruction.rd(),
+                source: instruction.rs1(),
+                immediate: sign_extend(instruction.raw() >> 20, 12),
+                link: instruction.pc().wrapping_add(4),
+            }),
             0x63 => {
                 let condition = match instruction.funct3() {
                     0 => Condition::Equal,
@@ -311,6 +357,7 @@ impl Lowering {
                 fallthrough,
                 target,
             }),
+            Self::IndirectJump { .. } => Some(BlockFlow::IndirectJump { target_hint: None }),
             Self::Load { pc, .. } | Self::Store { pc, .. } => Some(BlockFlow::CheckedFallthrough {
                 pc: pc.wrapping_add(4),
             }),
@@ -338,10 +385,23 @@ impl Lowering {
             // Checked memory traffic is counted at its exact dynamic point:
             // attempted source reads happen before validation, while a load's
             // destination write happens only after the fast path succeeds.
-            Self::Load { .. } | Self::Store { .. } => (0, 0),
+            Self::Load { .. } | Self::Store { .. } | Self::IndirectJump { .. } => (0, 0),
             Self::Fence => (0, 0),
         }
     }
+}
+
+fn indirect_target_hint(preceding: &[Lowering], source: usize, immediate: u32) -> Option<u32> {
+    let base = if source == 0 {
+        0
+    } else {
+        let Lowering::WriteImmediate { destination, value } = *preceding.last()? else {
+            return None;
+        };
+        (destination == source).then_some(value)?
+    };
+    let target = base.wrapping_add(immediate) & !1;
+    target.is_multiple_of(4).then_some(target)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -467,22 +527,37 @@ const fn sign_extend(value: u32, bits: u32) -> u32 {
     ((value << (32 - bits)) as i32 >> (32 - bits)) as u32
 }
 
-fn emitted_len(instructions: &[Lowering], flow: BlockFlow) -> Option<usize> {
+fn reserved_len(instructions: &[Lowering], flow: BlockFlow) -> Option<usize> {
     let mut emitter = Emitter::new();
     emitter.emit_block(instructions, flow, 0)?;
-    Some(emitter.code.len())
+    emitter.reserved_code_len()
 }
 
 #[derive(Clone, Copy)]
 struct EntryMetadata {
     external_offset: usize,
+    indirect_offset: usize,
     hot_offset: usize,
 }
+
+type ResolvedImage = (Vec<u8>, Vec<(u32, EntryMetadata)>);
 
 #[derive(Clone, Copy)]
 struct EdgeRelocation {
     slot_offset: usize,
     target_pc: u32,
+}
+
+#[derive(Clone, Copy)]
+struct BudgetRelocation {
+    branch: LocalFixup,
+    pc: u32,
+    count: u8,
+}
+
+struct InterpretOneRelocation {
+    branches: Vec<LocalFixup>,
+    pc: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -495,6 +570,9 @@ struct Emitter {
     code: Vec<u8>,
     entries: Vec<(u32, EntryMetadata)>,
     edges: Vec<EdgeRelocation>,
+    budget_exits: Vec<BudgetRelocation>,
+    interpret_one_exits: Vec<InterpretOneRelocation>,
+    indirect_misses: Vec<LocalFixup>,
     local_fixups: Vec<LocalFixup>,
 }
 
@@ -504,24 +582,48 @@ impl Emitter {
             code: Vec::new(),
             entries: Vec::new(),
             edges: Vec::new(),
+            budget_exits: Vec::new(),
+            interpret_one_exits: Vec::new(),
+            indirect_misses: Vec::new(),
             local_fixups: Vec::new(),
         }
+    }
+
+    fn reserved_code_len(&self) -> Option<usize> {
+        self.code
+            .len()
+            .checked_add(self.budget_exits.len().checked_mul(BUDGET_VENEER_BYTES)?)?
+            .checked_add(
+                self.interpret_one_exits
+                    .len()
+                    .checked_mul(INTERPRET_ONE_VENEER_BYTES)?,
+            )?
+            .checked_add(
+                usize::from(!self.indirect_misses.is_empty())
+                    .checked_mul(INDIRECT_MISSING_VENEER_BYTES)?,
+            )?
+            .checked_add(self.edges.len().checked_mul(MISSING_VENEER_BYTES)?)
     }
 
     fn emit_block(&mut self, instructions: &[Lowering], flow: BlockFlow, pc: u32) -> Option<()> {
         let external_offset = self.code.len();
         self.code.extend_from_slice(&ENTRY_BYTES);
-        // The external entry is the only indirect host target. Direct guest
-        // edges enter at `hot_offset` and retain RSI as the register-file base
-        // plus R8/R9 as run-local memory metadata anchors.
+        // External Rust dispatch reloads the private ABI. In-image indirect
+        // dispatch instead lands at the second ENDBR64 below, retaining the
+        // live register, memory, and R10 budget anchors. Direct edges skip both
+        // entry pads and enter at `hot_offset`.
         self.code.extend_from_slice(&[0x48, 0x8b, 0x37]); // mov rsi, [rdi]
         self.code.extend_from_slice(&[0x4c, 0x8b, 0x47, 0x18]); // mov r8, [rdi+24]
         self.code.extend_from_slice(&[0x4c, 0x8b, 0x4f, 0x20]); // mov r9, [rdi+32]
+        self.code.extend_from_slice(&[0x4c, 0x8b, 0x57, 0x08]); // mov r10, [rdi+8]
+        let indirect_offset = self.code.len();
+        self.code.extend_from_slice(&ENTRY_BYTES);
         let hot_offset = self.code.len();
         self.entries.push((
             pc,
             EntryMetadata {
                 external_offset,
+                indirect_offset,
                 hot_offset,
             },
         ));
@@ -531,13 +633,12 @@ impl Emitter {
             return None;
         }
         // Reserve the entire non-trapping block before any guest-visible
-        // effect. A short block is returned untouched for one-step fallback.
-        self.code
-            .extend_from_slice(&[0x48, 0x83, 0x7f, 0x08, count]); // cmp [rdi+8], count
-        self.code.extend_from_slice(&[0x73, EDGE_SLOT_BYTES as u8]); // jae reserved
-        self.exit_slot(pc, EXIT_BUDGET)?;
-        self.code
-            .extend_from_slice(&[0x48, 0x83, 0x6f, 0x08, count]); // sub [rdi+8], count
+        // effect. Unsigned underflow branches to a cold veneer which restores
+        // R10 before returning the untouched block for one-step fallback.
+        self.code.extend_from_slice(&[0x49, 0x83, 0xea, count]); // sub r10, count
+        let branch = self.cold_jcc(0x82)?; // jb budget exit
+        self.budget_exits
+            .push(BudgetRelocation { branch, pc, count });
         #[cfg(feature = "profile")]
         self.profile_block(instructions, flow)?;
 
@@ -554,6 +655,13 @@ impl Emitter {
                     self.write_immediate(destination, link);
                     self.edge_slot(target)?;
                 }
+                Lowering::IndirectJump {
+                    pc,
+                    destination,
+                    source,
+                    immediate,
+                    link,
+                } => self.indirect_jump(pc, destination, source, immediate, link)?,
                 Lowering::Branch {
                     left,
                     right,
@@ -639,21 +747,43 @@ impl Emitter {
             BlockFlow::CheckedFallthrough { .. } => {}
             BlockFlow::Branch { .. } => self.increment_context(PROFILE_BRANCH_OFFSET),
             BlockFlow::Jump { .. } => self.increment_context(PROFILE_JUMP_OFFSET),
+            BlockFlow::IndirectJump { .. } => {}
         }
         Some(())
     }
 
     #[cfg(feature = "profile")]
-    fn increment_context(&mut self, offset: u8) {
-        self.code.extend_from_slice(&[0x48, 0xff, 0x47, offset]);
+    fn increment_context(&mut self, offset: usize) {
+        if let Some(offset) = u8::try_from(offset)
+            .ok()
+            .filter(|offset| *offset <= i8::MAX as u8)
+        {
+            self.code.extend_from_slice(&[0x48, 0xff, 0x47, offset]);
+        } else {
+            self.code.extend_from_slice(&[0x48, 0xff, 0x87]);
+            self.code.extend_from_slice(
+                &u32::try_from(offset)
+                    .expect("RunContext profile offset fits in u32")
+                    .to_le_bytes(),
+            );
+        }
     }
 
     #[cfg(feature = "profile")]
-    fn add_context(&mut self, offset: u8, value: usize) -> Option<()> {
+    fn add_context(&mut self, offset: usize, value: usize) -> Option<()> {
         if value == 0 {
             return Some(());
         }
-        self.code.extend_from_slice(&[0x48, 0x81, 0x47, offset]);
+        if let Some(offset) = u8::try_from(offset)
+            .ok()
+            .filter(|offset| *offset <= i8::MAX as u8)
+        {
+            self.code.extend_from_slice(&[0x48, 0x81, 0x47, offset]);
+        } else {
+            self.code.extend_from_slice(&[0x48, 0x81, 0x87]);
+            self.code
+                .extend_from_slice(&u32::try_from(offset).ok()?.to_le_bytes());
+        }
         self.code
             .extend_from_slice(&u32::try_from(value).ok()?.to_le_bytes());
         Some(())
@@ -735,6 +865,67 @@ impl Emitter {
         Some(())
     }
 
+    fn indirect_jump(
+        &mut self,
+        pc: u32,
+        destination: usize,
+        source: usize,
+        immediate: u32,
+        link: u32,
+    ) -> Option<()> {
+        // Compute the target from the old source before a possibly aliasing rd
+        // write. ECX retains the committed guest PC through every table check.
+        self.load_eax(source);
+        #[cfg(feature = "profile")]
+        self.increment_context(PROFILE_REGISTER_LOADS_OFFSET);
+        if immediate != 0 {
+            self.eax_immediate(0x05, immediate);
+        }
+        self.code.extend_from_slice(&[0x83, 0xe0, 0xfe]); // and eax, -2
+        self.code.extend_from_slice(&[0xa8, 0x02]); // test al, 2
+        let misaligned = self.cold_jcc(0x85)?; // jnz precise slow path
+        self.code.extend_from_slice(&[0x89, 0xc1]); // mov ecx, eax
+
+        if destination != 0 {
+            self.store_immediate(destination, link);
+            #[cfg(feature = "profile")]
+            self.increment_context(PROFILE_REGISTER_STORES_OFFSET);
+        }
+
+        // JALR itself commits any aligned target. Range and fetch permission
+        // failures belong to the next instruction, after the engine's limit
+        // check, so every dispatch failure uses the committed missing exit.
+        self.code.push(0x3d); // cmp eax, ADDRESS_SPACE_SIZE
+        self.code
+            .extend_from_slice(&ADDRESS_SPACE_SIZE.to_le_bytes());
+        let mut misses = Vec::with_capacity(3);
+        misses.push(self.cold_jcc(0x83)?); // jae missing
+        self.code.extend_from_slice(&[0x89, 0xc2]); // mov edx, eax
+        self.code
+            .extend_from_slice(&[0xc1, 0xea, u8::try_from(PAGE_SHIFT).ok()?]);
+        self.code.extend_from_slice(&[0x4c, 0x8b, 0x5f, 0x28]); // mov r11, [rdi+40]
+        self.code.extend_from_slice(&[0x4d, 0x8b, 0x1c, 0xd3]); // mov r11, [r11+rdx*8]
+        self.code.extend_from_slice(&[0x4d, 0x85, 0xdb]); // test r11, r11
+        misses.push(self.cold_jcc(0x84)?); // jz missing
+
+        let page_mask = u32::try_from(PAGE_SIZE.checked_sub(4)?).ok()?;
+        self.code.push(0x25); // and eax, PAGE_SIZE - 4
+        self.code.extend_from_slice(&page_mask.to_le_bytes());
+        self.code.extend_from_slice(&[0xc1, 0xe8, 0x02]); // shr eax, 2
+        self.code.extend_from_slice(&[0x41, 0x8b, 0x04, 0x83]); // mov eax, [r11+rax*4]
+        self.code.extend_from_slice(&[0x85, 0xc0]); // test eax, eax
+        misses.push(self.cold_jcc(0x84)?); // jz missing
+        self.code.extend_from_slice(&[0xff, 0xc8]); // dec eax
+        self.code.extend_from_slice(&[0x4c, 0x8b, 0x5f, 0x30]); // mov r11, [rdi+48]
+        self.code.extend_from_slice(&[0x49, 0x01, 0xc3]); // add r11, rax
+        #[cfg(feature = "profile")]
+        self.increment_context(PROFILE_INDIRECT_HITS_OFFSET);
+        self.code.extend_from_slice(&[0x41, 0xff, 0xe3]); // jmp r11
+
+        self.indirect_misses.extend(misses);
+        self.interpret_one_exit(vec![misaligned], pc)
+    }
+
     fn checked_load(
         &mut self,
         successor: u32,
@@ -745,7 +936,7 @@ impl Emitter {
         signed: bool,
     ) -> Option<()> {
         let pc = successor.wrapping_sub(4);
-        let mut failures = self.checked_memory_address(base, immediate, width, PERM_READ, None)?;
+        let failures = self.checked_memory_address(base, immediate, width, PERM_READ, None)?;
 
         // A readable sparse page has the architecturally defined value zero.
         self.code.extend_from_slice(&[0x48, 0x85, 0xd2]); // test rdx, rdx
@@ -783,9 +974,7 @@ impl Emitter {
             self.increment_context(PROFILE_FALLTHROUGH_OFFSET);
         }
         self.edge_slot(successor)?;
-
-        self.bind_all(&mut failures)?;
-        self.interpret_one_exit(pc)
+        self.interpret_one_exit(failures, pc)
     }
 
     fn checked_store(
@@ -800,7 +989,7 @@ impl Emitter {
         let mut failures =
             self.checked_memory_address(base, immediate, width, PERM_WRITE, Some(source))?;
         self.code.extend_from_slice(&[0x48, 0x85, 0xd2]); // test rdx, rdx
-        failures.push(self.local_jcc(0x84)?); // sparse stores allocate in Rust
+        failures.push(self.cold_jcc(0x84)?); // sparse stores allocate in Rust
         self.mask_page_offset()?;
         match width {
             MemoryWidth::Byte => self.code.extend_from_slice(&[0x88, 0x0c, 0x02]),
@@ -813,9 +1002,7 @@ impl Emitter {
             self.increment_context(PROFILE_FALLTHROUGH_OFFSET);
         }
         self.edge_slot(successor)?;
-
-        self.bind_all(&mut failures)?;
-        self.interpret_one_exit(pc)
+        self.interpret_one_exit(failures, pc)
     }
 
     /// Computes EAX = wrapping guest address and RDX = resident page base.
@@ -845,20 +1032,20 @@ impl Emitter {
         let alignment_mask = width.bytes() - 1;
         if alignment_mask != 0 {
             self.code.extend_from_slice(&[0xa8, alignment_mask as u8]); // test al, mask
-            failures.push(self.local_jcc(0x85)?); // jnz slow
+            failures.push(self.cold_jcc(0x85)?); // jnz slow
         }
 
         self.code.push(0x3d); // cmp eax, last valid start address
         self.code
             .extend_from_slice(&(ADDRESS_SPACE_SIZE - width.bytes()).to_le_bytes());
-        failures.push(self.local_jcc(0x87)?); // ja slow
+        failures.push(self.cold_jcc(0x87)?); // ja slow
 
         self.code.extend_from_slice(&[0x89, 0xc2]); // mov edx, eax
         let page_shift = u8::try_from(PAGE_SHIFT).ok()?;
         self.code.extend_from_slice(&[0xc1, 0xea, page_shift]); // shr edx, PAGE_SHIFT
         self.code
             .extend_from_slice(&[0x41, 0xf6, 0x04, 0x10, permission]); // test [r8+rdx], perm
-        failures.push(self.local_jcc(0x84)?); // jz slow
+        failures.push(self.cold_jcc(0x84)?); // jz slow
         self.code.extend_from_slice(&[0x49, 0x8b, 0x14, 0xd1]); // mov rdx, [r9+rdx*8]
         Some(failures)
     }
@@ -870,18 +1057,11 @@ impl Emitter {
         Some(())
     }
 
-    fn bind_all(&mut self, fixups: &mut Vec<LocalFixup>) -> Option<()> {
-        for fixup in fixups.drain(..) {
-            self.bind_local(fixup)?;
-        }
-        Some(())
-    }
-
-    fn interpret_one_exit(&mut self, pc: u32) -> Option<()> {
-        // The terminal memory instruction has not committed. Refund exactly
-        // that instruction from the block reservation before Rust retries it.
-        self.code.extend_from_slice(&[0x48, 0x83, 0x47, 0x08, 0x01]); // add [rdi+8], 1
-        self.exit_slot(pc, EXIT_INTERPRET_ONE)
+    fn interpret_one_exit(&mut self, branches: Vec<LocalFixup>, pc: u32) -> Option<()> {
+        (!branches.is_empty()).then(|| {
+            self.interpret_one_exits
+                .push(InterpretOneRelocation { branches, pc });
+        })
     }
 
     fn divide_signed(&mut self) -> Option<()> {
@@ -949,6 +1129,12 @@ impl Emitter {
         }
     }
 
+    fn store_immediate(&mut self, register: usize, value: u32) {
+        self.code
+            .extend_from_slice(&[0xc7, 0x46, register_offset(register)]);
+        self.code.extend_from_slice(&value.to_le_bytes());
+    }
+
     fn load_eax(&mut self, register: usize) {
         self.code
             .extend_from_slice(&[0x8b, 0x46, register_offset(register)]);
@@ -993,15 +1179,19 @@ impl Emitter {
     }
 
     fn local_jcc(&mut self, condition: u8) -> Option<LocalFixup> {
+        let fixup = self.cold_jcc(condition)?;
+        self.local_fixups.push(fixup);
+        Some(fixup)
+    }
+
+    fn cold_jcc(&mut self, condition: u8) -> Option<LocalFixup> {
         let displacement_offset = self.code.len().checked_add(2)?;
         let instruction_end = self.code.len().checked_add(6)?;
         self.code.extend_from_slice(&[0x0f, condition, 0, 0, 0, 0]);
-        let fixup = LocalFixup {
+        Some(LocalFixup {
             displacement_offset,
             instruction_end,
-        };
-        self.local_fixups.push(fixup);
-        Some(fixup)
+        })
     }
 
     fn local_jump(&mut self) -> Option<LocalFixup> {
@@ -1033,7 +1223,8 @@ impl Emitter {
 
     fn edge_slot(&mut self, pc: u32) -> Option<()> {
         let slot_offset = self.code.len();
-        self.exit_slot(pc, EXIT_MISSING)?;
+        let end = slot_offset.checked_add(EDGE_SLOT_BYTES)?;
+        self.code.resize(end, 0x90);
         self.edges.push(EdgeRelocation {
             slot_offset,
             target_pc: pc,
@@ -1041,19 +1232,101 @@ impl Emitter {
         Some(())
     }
 
-    fn exit_slot(&mut self, pc: u32, reason: u32) -> Option<()> {
-        let start = self.code.len();
-        self.code.extend_from_slice(&[0xc7, 0x47, 0x10]);
-        self.code.extend_from_slice(&pc.to_le_bytes());
-        self.code.extend_from_slice(&[0xc7, 0x47, 0x14]);
-        self.code.extend_from_slice(&reason.to_le_bytes());
-        self.code.push(0xc3);
-        let end = start.checked_add(EDGE_SLOT_BYTES)?;
-        self.code.resize(end, 0x90);
-        Some(())
+    fn cold_jump(&mut self) -> Option<LocalFixup> {
+        let displacement_offset = self.code.len().checked_add(1)?;
+        let instruction_end = self.code.len().checked_add(5)?;
+        self.code.extend_from_slice(&[0xe9, 0, 0, 0, 0]);
+        Some(LocalFixup {
+            displacement_offset,
+            instruction_end,
+        })
     }
 
-    fn resolve(mut self) -> Option<(Vec<u8>, Vec<EntryMetadata>)> {
+    fn emit_exit_trampolines(&mut self) -> Option<ExitTargets> {
+        let start = self.code.len();
+        let interpret_one = self.code.len();
+        self.store_exit_reason(EXIT_INTERPRET_ONE);
+        self.code.extend_from_slice(&[0xeb, 0x10]); // jmp common tail
+        let budget = self.code.len();
+        self.store_exit_reason(EXIT_BUDGET);
+        self.code.extend_from_slice(&[0xeb, 0x07]); // jmp common tail
+        let missing = self.code.len();
+        self.store_exit_reason(EXIT_MISSING);
+        // Missing-successor exits dominate the normal cold paths, so let that
+        // head fall through to the shared state-commit tail.
+        self.code.extend_from_slice(&[0x4c, 0x89, 0x57, 0x08]); // mov [rdi+8], r10
+        self.code.extend_from_slice(&[0x89, 0x47, 0x10]); // mov [rdi+16], eax
+        self.code.push(0xc3);
+        (self.code.len().checked_sub(start)? == EXIT_TRAMPOLINE_BYTES).then_some(ExitTargets {
+            missing,
+            budget,
+            interpret_one,
+        })
+    }
+
+    fn store_exit_reason(&mut self, reason: u32) {
+        self.code.extend_from_slice(&[0xc7, 0x47, 0x14]);
+        self.code.extend_from_slice(&reason.to_le_bytes());
+    }
+
+    fn emit_budget_veneer(&mut self, relocation: BudgetRelocation, target: usize) -> Option<()> {
+        let start = self.code.len();
+        patch_relative(&mut self.code, relocation.branch, start)?;
+        self.code
+            .extend_from_slice(&[0x49, 0x83, 0xc2, relocation.count]); // add r10, count
+        self.mov_eax(relocation.pc);
+        let jump = self.cold_jump()?;
+        patch_relative(&mut self.code, jump, target)?;
+        (self.code.len().checked_sub(start)? == BUDGET_VENEER_BYTES).then_some(())
+    }
+
+    fn emit_interpret_one_veneer(
+        &mut self,
+        relocation: InterpretOneRelocation,
+        target: usize,
+    ) -> Option<()> {
+        let start = self.code.len();
+        for branch in relocation.branches {
+            patch_relative(&mut self.code, branch, start)?;
+        }
+        // The terminal memory instruction has not committed. Refund exactly
+        // that instruction from the block reservation before Rust retries it.
+        self.code.extend_from_slice(&[0x49, 0x83, 0xc2, 0x01]); // add r10, 1
+        self.mov_eax(relocation.pc);
+        let jump = self.cold_jump()?;
+        patch_relative(&mut self.code, jump, target)?;
+        (self.code.len().checked_sub(start)? == INTERPRET_ONE_VENEER_BYTES).then_some(())
+    }
+
+    fn emit_indirect_missing_veneer(
+        &mut self,
+        branches: Vec<LocalFixup>,
+        target: usize,
+    ) -> Option<()> {
+        if branches.is_empty() {
+            return Some(());
+        }
+        let start = self.code.len();
+        for branch in branches {
+            patch_relative(&mut self.code, branch, start)?;
+        }
+        #[cfg(feature = "profile")]
+        self.increment_context(PROFILE_INDIRECT_MISSES_OFFSET);
+        self.code.extend_from_slice(&[0x89, 0xc8]); // mov eax, ecx
+        let jump = self.cold_jump()?;
+        patch_relative(&mut self.code, jump, target)?;
+        (self.code.len().checked_sub(start)? == INDIRECT_MISSING_VENEER_BYTES).then_some(())
+    }
+
+    fn emit_missing_veneer(&mut self, pc: u32, target: usize) -> Option<usize> {
+        let start = self.code.len();
+        self.mov_eax(pc);
+        let jump = self.cold_jump()?;
+        patch_relative(&mut self.code, jump, target)?;
+        (self.code.len().checked_sub(start)? == MISSING_VENEER_BYTES).then_some(start)
+    }
+
+    fn resolve(mut self) -> Option<ResolvedImage> {
         if !self.local_fixups.is_empty() {
             return None;
         }
@@ -1064,17 +1337,62 @@ impl Emitter {
             }
         }
 
-        for edge in &self.edges {
-            let Some(&target) = hot_by_pc.get(&edge.target_pc) else {
-                continue;
-            };
-            patch_edge(&mut self.code, edge.slot_offset, target)?;
+        if self.entries.is_empty() {
+            return self.code.is_empty().then_some((self.code, Vec::new()));
         }
-        Some((
-            self.code,
-            self.entries.into_iter().map(|(_, entry)| entry).collect(),
-        ))
+
+        let exit_targets = self.emit_exit_trampolines()?;
+        for relocation in std::mem::take(&mut self.budget_exits) {
+            self.emit_budget_veneer(relocation, exit_targets.budget)?;
+        }
+        for relocation in std::mem::take(&mut self.interpret_one_exits) {
+            self.emit_interpret_one_veneer(relocation, exit_targets.interpret_one)?;
+        }
+        let indirect_misses = std::mem::take(&mut self.indirect_misses);
+        self.emit_indirect_missing_veneer(indirect_misses, exit_targets.missing)?;
+        let mut missing_by_pc = BTreeMap::new();
+        for edge in self.edges.clone() {
+            if let Some(&target) = hot_by_pc.get(&edge.target_pc) {
+                patch_edge(&mut self.code, edge.slot_offset, target)?;
+            } else {
+                let target = if let Some(&target) = missing_by_pc.get(&edge.target_pc) {
+                    target
+                } else {
+                    let target = self.emit_missing_veneer(edge.target_pc, exit_targets.missing)?;
+                    missing_by_pc.insert(edge.target_pc, target);
+                    target
+                };
+                patch_edge_jump(&mut self.code, edge.slot_offset, target)?;
+            }
+        }
+        Some((self.code, self.entries))
     }
+}
+
+#[derive(Clone, Copy)]
+struct ExitTargets {
+    missing: usize,
+    budget: usize,
+    interpret_one: usize,
+}
+
+fn patch_relative(code: &mut [u8], fixup: LocalFixup, target_offset: usize) -> Option<()> {
+    let displacement =
+        i64::try_from(target_offset).ok()? - i64::try_from(fixup.instruction_end).ok()?;
+    let displacement = i32::try_from(displacement).ok()?;
+    code.get_mut(fixup.displacement_offset..fixup.displacement_offset.checked_add(4)?)?
+        .copy_from_slice(&displacement.to_le_bytes());
+    Some(())
+}
+
+fn patch_edge_jump(code: &mut [u8], slot_offset: usize, target_offset: usize) -> Option<()> {
+    let slot = code.get_mut(slot_offset..slot_offset.checked_add(EDGE_SLOT_BYTES)?)?;
+    slot.fill(0x90);
+    slot[0] = 0xe9;
+    let instruction_end = slot_offset.checked_add(5)?;
+    let displacement = i64::try_from(target_offset).ok()? - i64::try_from(instruction_end).ok()?;
+    slot[1..5].copy_from_slice(&i32::try_from(displacement).ok()?.to_le_bytes());
+    Some(())
 }
 
 fn patch_edge(code: &mut [u8], slot_offset: usize, target_offset: usize) -> Option<()> {
@@ -1089,7 +1407,12 @@ fn patch_edge(code: &mut [u8], slot_offset: usize, target_offset: usize) -> Opti
     slot.fill(0x90);
     #[cfg(feature = "profile")]
     {
-        slot[..4].copy_from_slice(&[0x48, 0xff, 0x47, PROFILE_DIRECT_LINKS_OFFSET]);
+        slot[..4].copy_from_slice(&[
+            0x48,
+            0xff,
+            0x47,
+            u8::try_from(PROFILE_DIRECT_LINKS_OFFSET).ok()?,
+        ]);
     }
     let jump = jump_offset - slot_offset;
     slot[jump] = 0xe9;
@@ -1101,6 +1424,102 @@ const fn register_offset(register: usize) -> u8 {
     (register * size_of::<u32>()) as u8
 }
 
+/// Sparse immutable guest-PC to native-entry offsets used only by in-image
+/// indirect dispatch. Leaves store offset-plus-one so zero remains a miss.
+struct DispatchTable {
+    roots: Box<[usize]>,
+    _leaves: Vec<Box<[u32; INSTRUCTIONS_PER_PAGE]>>,
+    _entries: usize,
+    _bytes: usize,
+}
+
+impl DispatchTable {
+    fn build(code: &[u8], entries: &[(u32, EntryMetadata)]) -> Option<Self> {
+        if entries.is_empty() || entries.len() > MAX_LINKED_BLOCKS {
+            return None;
+        }
+        let mut staged = BTreeMap::<usize, Box<[u32; INSTRUCTIONS_PER_PAGE]>>::new();
+        for &(pc, metadata) in entries {
+            if pc & 3 != 0 || pc >= ADDRESS_SPACE_SIZE {
+                return None;
+            }
+            let end = metadata.indirect_offset.checked_add(ENTRY_BYTES.len())?;
+            if code.get(metadata.indirect_offset..end)? != ENTRY_BYTES {
+                return None;
+            }
+            let encoded = u32::try_from(metadata.indirect_offset)
+                .ok()?
+                .checked_add(1)?;
+            let page_number = (pc >> PAGE_SHIFT) as usize;
+            let slot = (pc as usize & (PAGE_SIZE - 1)) / size_of::<u32>();
+            let page = staged
+                .entry(page_number)
+                .or_insert_with(|| Box::new([0; INSTRUCTIONS_PER_PAGE]));
+            if std::mem::replace(&mut page[slot], encoded) != 0 {
+                return None;
+            }
+        }
+
+        let mut roots = vec![0; PAGE_COUNT].into_boxed_slice();
+        let mut leaves = Vec::with_capacity(staged.len());
+        for (page_number, page) in staged {
+            roots[page_number] = page.as_ptr() as usize;
+            leaves.push(page);
+        }
+        let root_bytes = roots.len().checked_mul(size_of::<usize>())?;
+        let leaf_bytes = leaves.len().checked_mul(PAGE_SIZE)?;
+        let owner_bytes = leaves
+            .capacity()
+            .checked_mul(size_of::<Box<[u32; INSTRUCTIONS_PER_PAGE]>>())?;
+        let bytes = root_bytes
+            .checked_add(leaf_bytes)?
+            .checked_add(owner_bytes)?;
+        if bytes > MAX_DISPATCH_BYTES {
+            return None;
+        }
+        Some(Self {
+            roots,
+            _leaves: leaves,
+            _entries: entries.len(),
+            _bytes: bytes,
+        })
+    }
+
+    const fn roots_ptr(&self) -> *const usize {
+        self.roots.as_ptr()
+    }
+
+    #[cfg(any(test, feature = "profile"))]
+    const fn page_count(&self) -> usize {
+        self._leaves.len()
+    }
+
+    #[cfg(any(test, feature = "profile"))]
+    const fn entry_count(&self) -> usize {
+        self._entries
+    }
+
+    #[cfg(any(test, feature = "profile"))]
+    const fn bytes(&self) -> usize {
+        self._bytes
+    }
+
+    #[cfg(test)]
+    fn encoded_entry(&self, pc: u32) -> Option<u32> {
+        if pc & 3 != 0 || pc >= ADDRESS_SPACE_SIZE {
+            return None;
+        }
+        let page = *self.roots.get((pc >> PAGE_SHIFT) as usize)?;
+        if page == 0 {
+            return Some(0);
+        }
+        let slot = (pc as usize & (PAGE_SIZE - 1)) / size_of::<u32>();
+        // SAFETY: Every nonzero root was derived from one still-owned leaf and
+        // the checked slot is within that fixed-size allocation.
+        Some(unsafe { *(page as *const u32).add(slot) })
+    }
+}
+
 #[repr(C)]
 struct RunContext {
     registers: *mut u32,
@@ -1109,10 +1528,16 @@ struct RunContext {
     exit: u32,
     permissions: *const u8,
     page_addresses: *const usize,
+    dispatch_pages: *const usize,
+    code_base: *const u8,
     #[cfg(feature = "profile")]
     blocks: u64,
     #[cfg(feature = "profile")]
     direct_links: u64,
+    #[cfg(feature = "profile")]
+    indirect_hits: u64,
+    #[cfg(feature = "profile")]
+    indirect_misses: u64,
     #[cfg(feature = "profile")]
     register_loads: u64,
     #[cfg(feature = "profile")]
@@ -1135,24 +1560,30 @@ const _: () = assert!(std::mem::offset_of!(RunContext, pc) == 16);
 const _: () = assert!(std::mem::offset_of!(RunContext, exit) == 20);
 const _: () = assert!(std::mem::offset_of!(RunContext, permissions) == 24);
 const _: () = assert!(std::mem::offset_of!(RunContext, page_addresses) == 32);
+const _: () = assert!(std::mem::offset_of!(RunContext, dispatch_pages) == 40);
+const _: () = assert!(std::mem::offset_of!(RunContext, code_base) == 48);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, blocks) == 40);
+const _: () = assert!(std::mem::offset_of!(RunContext, blocks) == 56);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, direct_links) == 48);
+const _: () = assert!(std::mem::offset_of!(RunContext, direct_links) == 64);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, register_loads) == 56);
+const _: () = assert!(std::mem::offset_of!(RunContext, indirect_hits) == 72);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, register_stores) == 64);
+const _: () = assert!(std::mem::offset_of!(RunContext, indirect_misses) == 80);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, fallthrough_blocks) == 72);
+const _: () = assert!(std::mem::offset_of!(RunContext, register_loads) == 88);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, branch_blocks) == 80);
+const _: () = assert!(std::mem::offset_of!(RunContext, register_stores) == 96);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, jump_blocks) == 88);
+const _: () = assert!(std::mem::offset_of!(RunContext, fallthrough_blocks) == 104);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, memory_loads) == 96);
+const _: () = assert!(std::mem::offset_of!(RunContext, branch_blocks) == 112);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, memory_stores) == 104);
+const _: () = assert!(std::mem::offset_of!(RunContext, jump_blocks) == 120);
+#[cfg(feature = "profile")]
+const _: () = assert!(std::mem::offset_of!(RunContext, memory_loads) == 128);
+#[cfg(feature = "profile")]
+const _: () = assert!(std::mem::offset_of!(RunContext, memory_stores) == 136);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeStop {
@@ -1175,6 +1606,8 @@ pub(crate) struct NativeRun {
 pub(crate) struct NativeRunProfile {
     pub(crate) blocks: u64,
     pub(crate) direct_links: u64,
+    pub(crate) indirect_hits: u64,
+    pub(crate) indirect_misses: u64,
     pub(crate) register_loads: u64,
     pub(crate) register_stores: u64,
     pub(crate) fallthrough_blocks: u64,
@@ -1188,20 +1621,65 @@ pub(crate) struct NativeRunProfile {
 pub(crate) struct LinkedProgram {
     memory: ExecutableMemory,
     entries: Vec<EntryMetadata>,
+    dispatch: DispatchTable,
 }
 
 impl LinkedProgram {
+    pub(crate) const fn fixed_code_len() -> usize {
+        EXIT_TRAMPOLINE_BYTES
+    }
+
+    #[cfg(test)]
     pub(crate) fn publish(blocks: Vec<LinkedBlock>, code_budget: usize) -> Option<Self> {
+        Self::publish_with_code_len(blocks, code_budget).0
+    }
+
+    pub(crate) fn publish_with_code_len(
+        blocks: Vec<LinkedBlock>,
+        code_budget: usize,
+    ) -> (Option<Self>, usize) {
+        let reserved_len = if blocks.is_empty() {
+            0
+        } else {
+            let Some(length) = blocks
+                .iter()
+                .try_fold(Self::fixed_code_len(), |total, block| {
+                    total.checked_add(block.reserved_code_len())
+                })
+            else {
+                return (None, 0);
+            };
+            length
+        };
         let mut emitter = Emitter::new();
         for block in &blocks {
-            emitter.emit_block(&block.instructions, block.flow, block.pc)?;
+            if emitter
+                .emit_block(&block.instructions, block.flow, block.pc)
+                .is_none()
+            {
+                return (None, 0);
+            }
         }
-        let (code, entries) = emitter.resolve()?;
-        if code.len() > code_budget {
-            return None;
+        let Some((code, resolved_entries)) = emitter.resolve() else {
+            return (None, 0);
+        };
+        let code_len = code.len();
+        if code_len > reserved_len || code_len > code_budget {
+            return (None, code_len);
         }
-        let memory = ExecutableMemory::publish(&code, code_budget)?;
-        Some(Self { memory, entries })
+        let Some(dispatch) = DispatchTable::build(&code, &resolved_entries) else {
+            return (None, code_len);
+        };
+        let entries = resolved_entries
+            .into_iter()
+            .map(|(_, metadata)| metadata)
+            .collect();
+        let program = ExecutableMemory::publish(&code, code_budget).map(|memory| Self {
+            memory,
+            entries,
+            dispatch,
+        });
+        (program, code_len)
     }
 
     pub(crate) fn entry(&self, index: usize) -> Option<LinkedEntry<'_>> {
@@ -1214,6 +1692,21 @@ impl LinkedProgram {
     #[cfg(feature = "profile")]
     pub(crate) const fn mapped_len(&self) -> usize {
         self.memory.len()
+    }
+
+    #[cfg(feature = "profile")]
+    pub(crate) const fn dispatch_pages(&self) -> usize {
+        self.dispatch.page_count()
+    }
+
+    #[cfg(feature = "profile")]
+    pub(crate) const fn dispatch_entries(&self) -> usize {
+        self.dispatch.entry_count()
+    }
+
+    #[cfg(feature = "profile")]
+    pub(crate) const fn dispatch_bytes(&self) -> usize {
+        self.dispatch.bytes()
     }
 }
 
@@ -1270,10 +1763,16 @@ impl LinkedEntry<'_> {
             exit: 0,
             permissions: direct_memory.permissions_ptr(),
             page_addresses: direct_memory.page_addresses_ptr(),
+            dispatch_pages: self.program.dispatch.roots_ptr(),
+            code_base: self.program.memory.address(),
             #[cfg(feature = "profile")]
             blocks: 0,
             #[cfg(feature = "profile")]
             direct_links: 0,
+            #[cfg(feature = "profile")]
+            indirect_hits: 0,
+            #[cfg(feature = "profile")]
+            indirect_misses: 0,
             #[cfg(feature = "profile")]
             register_loads: 0,
             #[cfg(feature = "profile")]
@@ -1308,6 +1807,8 @@ impl LinkedEntry<'_> {
             profile: NativeRunProfile {
                 blocks: context.blocks,
                 direct_links: context.direct_links,
+                indirect_hits: context.indirect_hits,
+                indirect_misses: context.indirect_misses,
                 register_loads: context.register_loads,
                 register_stores: context.register_stores,
                 fallthrough_blocks: context.fallthrough_blocks,
@@ -1481,20 +1982,25 @@ mod tests {
     use rv32vm_rust_common::{machine::Machine, memory::IMAGE_START};
     use rv32vm_rust_x86_block_compiler::BlockInstruction;
 
-    use super::{ENTRY_BYTES, LinkedBlock, mapping_length};
     #[cfg(all(
         target_arch = "x86_64",
         target_os = "linux",
         target_pointer_width = "64"
     ))]
-    use super::{LinkedProgram, NativeStop};
+    use super::NativeStop;
+    use super::{
+        BUDGET_VENEER_BYTES, DispatchTable, EDGE_SLOT_BYTES, ENTRY_BYTES, EXIT_BUDGET,
+        EXIT_INTERPRET_ONE, EXIT_MISSING, EXIT_TRAMPOLINE_BYTES, Emitter,
+        INTERPRET_ONE_VENEER_BYTES, LinkedBlock, LinkedProgram, MISSING_VENEER_BYTES,
+        mapping_length,
+    };
     #[cfg(all(
         target_arch = "x86_64",
         target_os = "linux",
         target_pointer_width = "64"
     ))]
     use crate::test_support::beq;
-    use crate::test_support::{addi, image_with_code_at, jal, lw};
+    use crate::test_support::{addi, image_with_code_at, jal, jalr, lw};
 
     fn decoded(machine: &Machine, start: u32, count: usize) -> Vec<BlockInstruction> {
         (0..count)
@@ -1504,6 +2010,15 @@ mod tests {
 
     fn block(machine: &Machine, start: u32, count: usize) -> LinkedBlock {
         LinkedBlock::compile(&decoded(machine, start, count)).unwrap()
+    }
+
+    fn relative_target(code: &[u8], displacement_offset: usize, instruction_end: usize) -> usize {
+        let displacement = i32::from_le_bytes(
+            code[displacement_offset..displacement_offset + 4]
+                .try_into()
+                .unwrap(),
+        );
+        usize::try_from(i64::try_from(instruction_end).unwrap() + i64::from(displacement)).unwrap()
     }
 
     fn branch(funct3: u32, rs1: u32, rs2: u32, offset: i32) -> u32 {
@@ -1918,7 +2433,7 @@ mod tests {
     }
 
     #[test]
-    fn every_external_entry_is_cet_landing_pad() {
+    fn every_external_and_indirect_entry_is_a_cet_landing_pad() {
         let code = [addi(5, 5, 1), addi(6, 6, 1)];
         let image = image_with_code_at(&code, IMAGE_START);
         let machine = Machine::new(&image, &[], 0);
@@ -1937,7 +2452,410 @@ mod tests {
                 &emitter.code[entry.external_offset..entry.external_offset + ENTRY_BYTES.len()],
                 &ENTRY_BYTES
             );
+            assert_eq!(
+                &emitter.code[entry.indirect_offset - 4..entry.indirect_offset],
+                &[0x4c, 0x8b, 0x57, 0x08]
+            );
+            assert_eq!(
+                &emitter.code[entry.indirect_offset..entry.hot_offset],
+                &ENTRY_BYTES
+            );
         }
+    }
+
+    #[test]
+    fn dispatch_table_encodes_internal_pads_while_direct_edges_target_hot_code() {
+        let code = [addi(5, 5, 1), addi(6, 6, 1)];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let machine = Machine::new(&image, &[], 0);
+        let blocks = [
+            block(&machine, IMAGE_START, 1),
+            block(&machine, IMAGE_START + 4, 1),
+        ];
+        let mut emitter = Emitter::new();
+        for block in &blocks {
+            emitter
+                .emit_block(&block.instructions, block.flow, block.pc)
+                .unwrap();
+        }
+        let first_edge = emitter.edges[0];
+        let (code, entries) = emitter.resolve().unwrap();
+        let table = DispatchTable::build(&code, &entries).unwrap();
+
+        assert_eq!(table.page_count(), 1);
+        assert_eq!(table.entry_count(), 2);
+        assert_eq!(
+            table.bytes(),
+            super::PAGE_COUNT * size_of::<usize>()
+                + super::PAGE_SIZE
+                + size_of::<Box<[u32; super::INSTRUCTIONS_PER_PAGE]>>()
+        );
+        for &(pc, entry) in &entries {
+            assert_eq!(
+                table.encoded_entry(pc),
+                Some(u32::try_from(entry.indirect_offset).unwrap() + 1)
+            );
+            assert_eq!(
+                &code[entry.indirect_offset..entry.indirect_offset + ENTRY_BYTES.len()],
+                &ENTRY_BYTES
+            );
+        }
+        assert_eq!(table.encoded_entry(IMAGE_START + 8), Some(0));
+
+        #[cfg(feature = "profile")]
+        let jump_offset = first_edge.slot_offset + 4;
+        #[cfg(not(feature = "profile"))]
+        let jump_offset = first_edge.slot_offset;
+        assert_eq!(code[jump_offset], 0xe9);
+        assert_eq!(
+            relative_target(&code, jump_offset + 1, jump_offset + 5),
+            entries[1].1.hot_offset
+        );
+        assert_ne!(entries[1].1.hot_offset, entries[1].1.indirect_offset);
+    }
+
+    #[test]
+    fn dispatch_table_validates_keys_landings_and_sparse_page_bounds() {
+        let mut code = vec![0; ENTRY_BYTES.len() * 2];
+        code[..ENTRY_BYTES.len()].copy_from_slice(&ENTRY_BYTES);
+        code[ENTRY_BYTES.len()..].copy_from_slice(&ENTRY_BYTES);
+        let first = super::EntryMetadata {
+            external_offset: 0,
+            indirect_offset: 0,
+            hot_offset: 0,
+        };
+        let second = super::EntryMetadata {
+            external_offset: ENTRY_BYTES.len(),
+            indirect_offset: ENTRY_BYTES.len(),
+            hot_offset: ENTRY_BYTES.len(),
+        };
+        let next_page = IMAGE_START + super::PAGE_SIZE as u32;
+        let entries = [(IMAGE_START, first), (next_page, second)];
+
+        let table = DispatchTable::build(&code, &entries).unwrap();
+
+        assert_eq!(table.page_count(), 2);
+        assert_eq!(table.entry_count(), 2);
+        assert_eq!(
+            table.bytes(),
+            super::PAGE_COUNT * size_of::<usize>()
+                + 2 * super::PAGE_SIZE
+                + 2 * size_of::<Box<[u32; super::INSTRUCTIONS_PER_PAGE]>>()
+        );
+        assert!(table.bytes() <= super::MAX_DISPATCH_BYTES);
+        assert_eq!(
+            super::MAX_DISPATCH_BYTES,
+            super::PAGE_COUNT * size_of::<usize>()
+                + super::MAX_LINKED_BLOCKS
+                    * (super::PAGE_SIZE + size_of::<Box<[u32; super::INSTRUCTIONS_PER_PAGE]>>())
+        );
+        assert_eq!(table.encoded_entry(IMAGE_START), Some(1));
+        assert_eq!(
+            table.encoded_entry(next_page),
+            Some(u32::try_from(ENTRY_BYTES.len()).unwrap() + 1)
+        );
+        assert_eq!(table.encoded_entry(IMAGE_START + 4), Some(0));
+        assert_eq!(
+            table.encoded_entry(IMAGE_START + 2 * super::PAGE_SIZE as u32),
+            Some(0)
+        );
+
+        assert!(
+            DispatchTable::build(&code, &[(IMAGE_START, first), (IMAGE_START, second)]).is_none()
+        );
+        assert!(DispatchTable::build(&code, &[(IMAGE_START + 2, first)]).is_none());
+        assert!(DispatchTable::build(&code, &[(super::ADDRESS_SPACE_SIZE, first)]).is_none());
+
+        let mut invalid_code = code.clone();
+        invalid_code[first.indirect_offset] ^= 1;
+        assert!(DispatchTable::build(&invalid_code, &[(IMAGE_START, first)]).is_none());
+        let beyond_code = super::EntryMetadata {
+            indirect_offset: code.len(),
+            ..first
+        };
+        assert!(DispatchTable::build(&code, &[(IMAGE_START, beyond_code)]).is_none());
+    }
+
+    #[cfg(feature = "profile")]
+    #[test]
+    fn profile_context_offsets_use_disp32_beyond_the_signed_byte_range() {
+        let mut emitter = Emitter::new();
+
+        emitter.increment_context(127);
+        emitter.increment_context(128);
+        emitter.add_context(136, 1).unwrap();
+
+        assert_eq!(
+            emitter.code,
+            [
+                0x48, 0xff, 0x47, 0x7f, // inc qword ptr [rdi+127]
+                0x48, 0xff, 0x87, 0x80, 0x00, 0x00, 0x00, // [rdi+128]
+                0x48, 0x81, 0x87, 0x88, 0x00, 0x00, 0x00, // add [rdi+136]
+                0x01, 0x00, 0x00, 0x00,
+            ]
+        );
+    }
+
+    #[test]
+    fn jalr_slow_paths_relocate_to_precise_and_shared_committed_veneers() {
+        let image = image_with_code_at(&[jalr(5, 6, -8)], IMAGE_START);
+        let machine = Machine::new(&image, &[], 0);
+        let block = block(&machine, IMAGE_START, 1);
+        let mut emitter = Emitter::new();
+        emitter
+            .emit_block(&block.instructions, block.flow, block.pc)
+            .unwrap();
+        let hot_len = emitter.code.len();
+        let misaligned = emitter.interpret_one_exits[0].branches[0];
+        let misses = emitter.indirect_misses.clone();
+
+        let (code, _) = emitter.resolve().unwrap();
+        let interpret = hot_len + EXIT_TRAMPOLINE_BYTES + BUDGET_VENEER_BYTES;
+        let dynamic_missing = interpret + INTERPRET_ONE_VENEER_BYTES;
+
+        assert_eq!(
+            relative_target(
+                &code,
+                misaligned.displacement_offset,
+                misaligned.instruction_end,
+            ),
+            interpret
+        );
+        assert_eq!(&code[interpret..interpret + 4], &[0x49, 0x83, 0xc2, 1]);
+        assert_eq!(code[interpret + 4], 0xb8);
+        assert_eq!(
+            u32::from_le_bytes(code[interpret + 5..interpret + 9].try_into().unwrap()),
+            IMAGE_START
+        );
+        for miss in misses {
+            assert_eq!(
+                relative_target(&code, miss.displacement_offset, miss.instruction_end),
+                dynamic_missing
+            );
+        }
+        #[cfg(feature = "profile")]
+        let missing_body = dynamic_missing + 4;
+        #[cfg(not(feature = "profile"))]
+        let missing_body = dynamic_missing;
+        assert_eq!(&code[missing_body..missing_body + 2], &[0x89, 0xc8]);
+        assert_eq!(code[missing_body + 2], 0xe9);
+        assert_eq!(
+            relative_target(&code, missing_body + 3, missing_body + 7),
+            hot_len + 18
+        );
+    }
+
+    #[test]
+    fn empty_publication_does_not_allocate_a_dispatch_root() {
+        assert!(DispatchTable::build(&[], &[]).is_none());
+        assert!(LinkedProgram::publish(Vec::new(), usize::MAX).is_none());
+    }
+
+    #[test]
+    fn valid_jalr_is_private_and_invalid_funct3_is_not() {
+        let code = [jalr(5, 6, -1), jalr(5, 6, -1) | (1 << 12)];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let machine = Machine::new(&image, &[], 0);
+        let valid = machine.fetch_decode(IMAGE_START).unwrap();
+        let invalid = machine.fetch_decode(IMAGE_START + 4).unwrap();
+
+        assert!(LinkedBlock::supports(valid));
+        assert!(LinkedBlock::ends_block(valid));
+        assert!(!LinkedBlock::supports(invalid));
+    }
+
+    #[test]
+    fn compact_edges_and_cold_exits_have_exact_relocated_layout() {
+        let code = [addi(5, 5, 1), addi(6, 6, 1)];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let machine = Machine::new(&image, &[], 0);
+        let blocks = [
+            block(&machine, IMAGE_START, 1),
+            block(&machine, IMAGE_START + 4, 1),
+        ];
+        let mut emitter = Emitter::new();
+        for block in &blocks {
+            emitter
+                .emit_block(&block.instructions, block.flow, block.pc)
+                .unwrap();
+        }
+        let hot_len = emitter.code.len();
+        let first_budget = emitter.budget_exits[0];
+        let first_edge = emitter.edges[0];
+        let missing_edge = emitter.edges[1];
+        let reserved_len = blocks.iter().fold(EXIT_TRAMPOLINE_BYTES, |total, block| {
+            total + block.reserved_code_len()
+        });
+
+        let (code, entries) = emitter.resolve().unwrap();
+
+        // The first edge links natively, so its conservative ten-byte missing
+        // veneer reservation is absent from the finalized image.
+        assert_eq!(code.len() + MISSING_VENEER_BYTES, reserved_len);
+        #[cfg(not(feature = "profile"))]
+        assert_eq!(EDGE_SLOT_BYTES, 5);
+        #[cfg(feature = "profile")]
+        assert_eq!(EDGE_SLOT_BYTES, 9);
+        assert_eq!(BUDGET_VENEER_BYTES, 14);
+        assert_eq!(EXIT_TRAMPOLINE_BYTES, 33);
+        assert_eq!(&code[hot_len..hot_len + 7], &[0xc7, 0x47, 0x14, 3, 0, 0, 0]);
+        assert_eq!(
+            &code[hot_len + 9..hot_len + 16],
+            &[0xc7, 0x47, 0x14, 2, 0, 0, 0]
+        );
+        assert_eq!(&code[hot_len + 16..hot_len + 18], &[0xeb, 0x07]);
+        assert_eq!(
+            &code[hot_len + 18..hot_len + 25],
+            &[0xc7, 0x47, 0x14, 1, 0, 0, 0]
+        );
+        assert_eq!(
+            &code[hot_len + 25..hot_len + EXIT_TRAMPOLINE_BYTES],
+            &[0x4c, 0x89, 0x57, 0x08, 0x89, 0x47, 0x10, 0xc3]
+        );
+
+        let first_veneer = hot_len + EXIT_TRAMPOLINE_BYTES;
+        assert_eq!(
+            relative_target(
+                &code,
+                first_budget.branch.displacement_offset,
+                first_budget.branch.instruction_end,
+            ),
+            first_veneer
+        );
+        assert_eq!(
+            &code[first_veneer..first_veneer + 4],
+            &[0x49, 0x83, 0xc2, 1]
+        );
+        assert_eq!(code[first_veneer + 4], 0xb8);
+        assert_eq!(
+            u32::from_le_bytes(code[first_veneer + 5..first_veneer + 9].try_into().unwrap()),
+            IMAGE_START
+        );
+        assert_eq!(code[first_veneer + 9], 0xe9);
+        assert_eq!(
+            relative_target(&code, first_veneer + 10, first_veneer + 14),
+            hot_len + 9
+        );
+
+        #[cfg(feature = "profile")]
+        let direct_jump = first_edge.slot_offset + 4;
+        #[cfg(not(feature = "profile"))]
+        let direct_jump = first_edge.slot_offset;
+        #[cfg(feature = "profile")]
+        assert_eq!(
+            &code[first_edge.slot_offset..direct_jump],
+            &[0x48, 0xff, 0x47, super::PROFILE_DIRECT_LINKS_OFFSET as u8,]
+        );
+        assert_eq!(code[direct_jump], 0xe9);
+        assert_eq!(
+            relative_target(&code, direct_jump + 1, direct_jump + 5),
+            entries[1].1.hot_offset
+        );
+
+        let missing = missing_edge.slot_offset;
+        assert_eq!(code[missing], 0xe9);
+        let missing_veneer = hot_len + EXIT_TRAMPOLINE_BYTES + blocks.len() * BUDGET_VENEER_BYTES;
+        assert_eq!(
+            relative_target(&code, missing + 1, missing + 5),
+            missing_veneer
+        );
+        assert_eq!(code[missing_veneer], 0xb8);
+        assert_eq!(
+            u32::from_le_bytes(
+                code[missing_veneer + 1..missing_veneer + 5]
+                    .try_into()
+                    .unwrap()
+            ),
+            IMAGE_START + 8
+        );
+        assert_eq!(code[missing_veneer + 5], 0xe9);
+        assert_eq!(
+            relative_target(
+                &code,
+                missing_veneer + 6,
+                missing_veneer + MISSING_VENEER_BYTES
+            ),
+            hot_len + 18
+        );
+        assert_eq!(EXIT_MISSING, 1);
+        assert_eq!(EXIT_BUDGET, 2);
+        assert_eq!(EXIT_INTERPRET_ONE, 3);
+    }
+
+    #[test]
+    fn unresolved_edges_share_a_cold_veneer_by_guest_target() {
+        // Offset four makes both successors name the same unavailable PC.
+        let code = [branch(0, 0, 0, 4)];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let machine = Machine::new(&image, &[], 0);
+        let block = block(&machine, IMAGE_START, 1);
+        let reserved_len = LinkedProgram::fixed_code_len() + block.reserved_code_len();
+        let mut emitter = Emitter::new();
+        emitter
+            .emit_block(&block.instructions, block.flow, block.pc)
+            .unwrap();
+        let hot_len = emitter.code.len();
+        let edge_offsets = [emitter.edges[0].slot_offset, emitter.edges[1].slot_offset];
+
+        let (code, _) = emitter.resolve().unwrap();
+
+        // Admission reserves a veneer per edge, while final relocation emits
+        // one veneer for this unique unresolved guest PC.
+        assert_eq!(code.len() + MISSING_VENEER_BYTES, reserved_len);
+        let veneer = hot_len + EXIT_TRAMPOLINE_BYTES + BUDGET_VENEER_BYTES;
+        for slot in edge_offsets {
+            assert_eq!(code[slot], 0xe9);
+            assert_eq!(relative_target(&code, slot + 1, slot + 5), veneer);
+            #[cfg(feature = "profile")]
+            assert_eq!(&code[slot + 5..slot + EDGE_SLOT_BYTES], &[0x90; 4]);
+        }
+        assert_eq!(code[veneer], 0xb8);
+        assert_eq!(
+            u32::from_le_bytes(code[veneer + 1..veneer + 5].try_into().unwrap()),
+            IMAGE_START + 4
+        );
+        assert_eq!(code[veneer + 5], 0xe9);
+        assert_eq!(
+            relative_target(&code, veneer + 6, veneer + MISSING_VENEER_BYTES),
+            hot_len + 18
+        );
+    }
+
+    #[test]
+    fn checked_memory_failures_relocate_to_one_cold_refund_veneer() {
+        let code = [lw(5, 6, 0)];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let machine = Machine::new(&image, &[], 0);
+        let block = block(&machine, IMAGE_START, 1);
+        let reserved_len = LinkedProgram::fixed_code_len() + block.reserved_code_len();
+        let mut emitter = Emitter::new();
+        emitter
+            .emit_block(&block.instructions, block.flow, block.pc)
+            .unwrap();
+        let hot_len = emitter.code.len();
+        let failures = emitter.interpret_one_exits[0].branches.clone();
+
+        let (code, _) = emitter.resolve().unwrap();
+
+        assert_eq!(code.len(), reserved_len);
+        let veneer = hot_len + EXIT_TRAMPOLINE_BYTES + BUDGET_VENEER_BYTES;
+        for failure in failures {
+            assert_eq!(
+                relative_target(&code, failure.displacement_offset, failure.instruction_end),
+                veneer
+            );
+        }
+        assert_eq!(&code[veneer..veneer + 4], &[0x49, 0x83, 0xc2, 1]);
+        assert_eq!(code[veneer + 4], 0xb8);
+        assert_eq!(
+            u32::from_le_bytes(code[veneer + 5..veneer + 9].try_into().unwrap()),
+            IMAGE_START
+        );
+        assert_eq!(code[veneer + 9], 0xe9);
+        assert_eq!(
+            relative_target(&code, veneer + 10, veneer + INTERPRET_ONE_VENEER_BYTES),
+            hot_len
+        );
     }
 
     #[cfg(all(
@@ -2117,6 +3035,93 @@ mod tests {
             assert_eq!(result.retired, 0);
             assert_eq!(result.stop, NativeStop::Budget);
             assert_eq!(registers, [0; 32]);
+        }
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn maximum_block_budget_is_reserved_as_an_unsigned_count() {
+        let code = vec![addi(5, 5, 1); 64];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let mut machine = Machine::new(&image, &[], 0);
+        let program =
+            LinkedProgram::publish(vec![block(&machine, IMAGE_START, 64)], usize::MAX).unwrap();
+
+        let mut short = [0; 32];
+        let short_result =
+            program
+                .entry(0)
+                .unwrap()
+                .execute(&mut short, &mut machine.memory, IMAGE_START, 63);
+        assert_eq!(short_result.pc, IMAGE_START);
+        assert_eq!(short_result.retired, 0);
+        assert_eq!(short_result.stop, NativeStop::Budget);
+        assert_eq!(short[5], 0);
+
+        let mut exact = [0; 32];
+        let exact_result =
+            program
+                .entry(0)
+                .unwrap()
+                .execute(&mut exact, &mut machine.memory, IMAGE_START, 64);
+        assert_eq!(exact_result.pc, IMAGE_START + 64 * 4);
+        assert_eq!(exact_result.retired, 64);
+        assert_eq!(exact_result.stop, NativeStop::MissingSuccessor);
+        assert_eq!(exact[5], 64);
+
+        let mut huge = [0; 32];
+        let huge_result = program.entry(0).unwrap().execute(
+            &mut huge,
+            &mut machine.memory,
+            IMAGE_START,
+            u64::MAX,
+        );
+        assert_eq!(huge_result.pc, IMAGE_START + 64 * 4);
+        assert_eq!(huge_result.retired, 64);
+        assert_eq!(huge_result.stop, NativeStop::MissingSuccessor);
+        assert_eq!(huge[5], 64);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn failed_successor_reservation_preserves_the_committed_prefix_budget() {
+        let code = [addi(5, 5, 1), addi(6, 6, 1), addi(6, 6, 1), addi(6, 6, 1)];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let mut machine = Machine::new(&image, &[], 0);
+        let program = LinkedProgram::publish(
+            vec![
+                block(&machine, IMAGE_START, 1),
+                block(&machine, IMAGE_START + 4, 3),
+            ],
+            usize::MAX,
+        )
+        .unwrap();
+        let mut registers = [0; 32];
+
+        let result =
+            program
+                .entry(0)
+                .unwrap()
+                .execute(&mut registers, &mut machine.memory, IMAGE_START, 2);
+
+        assert_eq!(result.pc, IMAGE_START + 4);
+        assert_eq!(result.retired, 1);
+        assert_eq!(result.stop, NativeStop::Budget);
+        assert_eq!(registers[5], 1);
+        assert_eq!(registers[6], 0);
+        #[cfg(feature = "profile")]
+        {
+            assert_eq!(result.profile.blocks, 1);
+            assert_eq!(result.profile.direct_links, 1);
+            assert_eq!(result.profile.fallthrough_blocks, 1);
         }
     }
 

@@ -14,6 +14,7 @@ pub(crate) enum BlockFlow {
     Fallthrough,
     Branch,
     DirectJump,
+    IndirectJump,
 }
 
 /// Static properties of one generated block, weighted by dispatches at run time.
@@ -32,6 +33,7 @@ impl GeneratedBlockProfile {
             }
             LinkedBlockFlow::Branch { .. } => BlockFlow::Branch,
             LinkedBlockFlow::Jump { .. } => BlockFlow::DirectJump,
+            LinkedBlockFlow::IndirectJump { .. } => BlockFlow::IndirectJump,
         };
 
         Self {
@@ -48,9 +50,13 @@ pub(crate) struct LoadProfile {
     pub(crate) native_guest_instructions: u64,
     pub(crate) code_bytes: u64,
     pub(crate) mapped_bytes: u64,
+    pub(crate) dispatch_table_entries: u64,
+    pub(crate) dispatch_table_pages: u64,
+    pub(crate) dispatch_table_bytes: u64,
     pub(crate) fallthrough_blocks: u64,
     pub(crate) branch_blocks: u64,
     pub(crate) direct_jump_blocks: u64,
+    pub(crate) indirect_jump_blocks: u64,
 }
 
 impl LoadProfile {
@@ -61,6 +67,7 @@ impl LoadProfile {
             BlockFlow::Fallthrough => self.fallthrough_blocks += 1,
             BlockFlow::Branch => self.branch_blocks += 1,
             BlockFlow::DirectJump => self.direct_jump_blocks += 1,
+            BlockFlow::IndirectJump => self.indirect_jump_blocks += 1,
         }
     }
 }
@@ -109,6 +116,8 @@ pub(crate) struct RunProfile {
     pub(crate) native_invocations: u64,
     pub(crate) native_dispatches: u64,
     pub(crate) native_direct_link_hits: u64,
+    pub(crate) native_indirect_link_hits: u64,
+    pub(crate) native_indirect_link_misses: u64,
     pub(crate) native_missing_exits: u64,
     pub(crate) native_budget_exits: u64,
     pub(crate) native_interpret_one_exits: u64,
@@ -128,6 +137,7 @@ pub(crate) struct RunProfile {
     pub(crate) native_fallthrough_dispatches: u64,
     pub(crate) native_branch_dispatches: u64,
     pub(crate) native_direct_jump_dispatches: u64,
+    pub(crate) native_indirect_jump_dispatches: u64,
     opcodes: OpcodeCounts,
 }
 
@@ -142,6 +152,8 @@ impl RunProfile {
         self.native_invocations += 1;
         self.native_dispatches += native.blocks;
         self.native_direct_link_hits += native.direct_links;
+        self.native_indirect_link_hits += native.indirect_hits;
+        self.native_indirect_link_misses += native.indirect_misses;
         self.generated_guest_register_loads += native.register_loads;
         self.generated_guest_register_stores += native.register_stores;
         self.native_memory_loads += native.memory_loads;
@@ -149,6 +161,7 @@ impl RunProfile {
         self.native_fallthrough_dispatches += native.fallthrough_blocks;
         self.native_branch_dispatches += native.branch_blocks;
         self.native_direct_jump_dispatches += native.jump_blocks;
+        self.native_indirect_jump_dispatches += native.indirect_hits + native.indirect_misses;
         match stop {
             NativeStop::MissingSuccessor => self.native_missing_exits += 1,
             NativeStop::Budget => self.native_budget_exits += 1,
@@ -188,11 +201,12 @@ impl RunProfile {
         let mut json = String::with_capacity(1_500);
         write!(
             json,
-            "{{\"kind\":\"vm5_profile\",\"schema_version\":3,\"termination\":\"{termination}\",\
+            "{{\"kind\":\"vm5_profile\",\"schema_version\":4,\"termination\":\"{termination}\",\
              \"retired\":{{\"total\":{total_retired},\"native\":{},\"fallback\":{}}},\
              \"dispatch\":{{\"native_invocations\":{},\"native_blocks\":{},\
-             \"direct_link_hits\":{},\"lookup_fallbacks\":{},\"budget_fallbacks\":{},\
-             \"native_fallthrough\":{},\"native_branch\":{},\"native_direct_jump\":{}}},\
+             \"direct_link_hits\":{},\"indirect_link_hits\":{},\"indirect_link_misses\":{},\
+             \"lookup_fallbacks\":{},\"budget_fallbacks\":{},\"native_fallthrough\":{},\
+             \"native_branch\":{},\"native_direct_jump\":{},\"native_indirect_jump\":{}}},\
              \"native_exits\":{{\"missing_successor\":{},\"budget\":{},\"interpret_one\":{}}},\
              \"fallback_classes\":{{\"loads\":{},\"stores\":{},\"jalr\":{},\"m_ops\":{},\
              \"system\":{},\"other\":{},\"fetch_traps\":{}}},\
@@ -203,18 +217,23 @@ impl RunProfile {
              \"generated_guest_register_traffic\":{{\"loads\":{},\"stores\":{}}},\
              \"native_memory_traffic\":{{\"loads\":{},\"stores\":{}}},\
              \"load\":{{\"compiled_blocks\":{},\"native_guest_instructions\":{},\
-             \"code_bytes\":{},\"mapped_bytes\":{},\"fallthrough_blocks\":{},\
-             \"branch_blocks\":{},\"direct_jump_blocks\":{}}}}}",
+             \"code_bytes\":{},\"mapped_bytes\":{},\"dispatch_table_entries\":{},\
+             \"dispatch_table_pages\":{},\"dispatch_table_bytes\":{},\
+             \"fallthrough_blocks\":{},\"branch_blocks\":{},\"direct_jump_blocks\":{},\
+             \"indirect_jump_blocks\":{}}}}}",
             self.native_retired,
             self.fallback_retired,
             self.native_invocations,
             self.native_dispatches,
             self.native_direct_link_hits,
+            self.native_indirect_link_hits,
+            self.native_indirect_link_misses,
             self.lookup_fallbacks,
             self.budget_fallbacks,
             self.native_fallthrough_dispatches,
             self.native_branch_dispatches,
             self.native_direct_jump_dispatches,
+            self.native_indirect_jump_dispatches,
             self.native_missing_exits,
             self.native_budget_exits,
             self.native_interpret_one_exits,
@@ -246,9 +265,13 @@ impl RunProfile {
             load.native_guest_instructions,
             load.code_bytes,
             load.mapped_bytes,
+            load.dispatch_table_entries,
+            load.dispatch_table_pages,
+            load.dispatch_table_bytes,
             load.fallthrough_blocks,
             load.branch_blocks,
             load.direct_jump_blocks,
+            load.indirect_jump_blocks,
         )
         .expect("writing JSON into a String cannot fail");
         json
@@ -338,6 +361,8 @@ mod tests {
             native_invocations: 103,
             native_dispatches: 104,
             native_direct_link_hits: 105,
+            native_indirect_link_hits: 125,
+            native_indirect_link_misses: 126,
             native_missing_exits: 106,
             native_budget_exits: 107,
             native_interpret_one_exits: 122,
@@ -357,6 +382,7 @@ mod tests {
             native_fallthrough_dispatches: 119,
             native_branch_dispatches: 120,
             native_direct_jump_dispatches: 121,
+            native_indirect_jump_dispatches: 127,
             opcodes: OpcodeCounts {
                 load: 201,
                 misc_mem: 202,
@@ -380,21 +406,27 @@ mod tests {
             native_guest_instructions: 302,
             code_bytes: 303,
             mapped_bytes: 304,
+            dispatch_table_entries: 308,
+            dispatch_table_pages: 309,
+            dispatch_table_bytes: 310,
             fallthrough_blocks: 305,
             branch_blocks: 306,
             direct_jump_blocks: 307,
+            indirect_jump_blocks: 311,
         }
     }
 
     fn expected_populated_record() -> &'static str {
         concat!(
-            "{\"kind\":\"vm5_profile\",\"schema_version\":3,",
+            "{\"kind\":\"vm5_profile\",\"schema_version\":4,",
             "\"termination\":\"instruction_limit\",",
             "\"retired\":{\"total\":999,\"native\":101,\"fallback\":102},",
             "\"dispatch\":{\"native_invocations\":103,\"native_blocks\":104,",
-            "\"direct_link_hits\":105,\"lookup_fallbacks\":108,",
+            "\"direct_link_hits\":105,\"indirect_link_hits\":125,",
+            "\"indirect_link_misses\":126,\"lookup_fallbacks\":108,",
             "\"budget_fallbacks\":109,\"native_fallthrough\":119,",
-            "\"native_branch\":120,\"native_direct_jump\":121},",
+            "\"native_branch\":120,\"native_direct_jump\":121,",
+            "\"native_indirect_jump\":127},",
             "\"native_exits\":{\"missing_successor\":106,\"budget\":107,",
             "\"interpret_one\":122},",
             "\"fallback_classes\":{\"loads\":110,\"stores\":111,\"jalr\":112,",
@@ -407,13 +439,15 @@ mod tests {
             "\"generated_guest_register_traffic\":{\"loads\":117,\"stores\":118},",
             "\"native_memory_traffic\":{\"loads\":123,\"stores\":124},",
             "\"load\":{\"compiled_blocks\":301,\"native_guest_instructions\":302,",
-            "\"code_bytes\":303,\"mapped_bytes\":304,\"fallthrough_blocks\":305,",
-            "\"branch_blocks\":306,\"direct_jump_blocks\":307}}"
+            "\"code_bytes\":303,\"mapped_bytes\":304,\"dispatch_table_entries\":308,",
+            "\"dispatch_table_pages\":309,\"dispatch_table_bytes\":310,",
+            "\"fallthrough_blocks\":305,\"branch_blocks\":306,",
+            "\"direct_jump_blocks\":307,\"indirect_jump_blocks\":311}}"
         )
     }
 
     #[test]
-    fn profile_json_matches_the_complete_schema_v3_record() {
+    fn profile_json_matches_the_complete_schema_v4_record() {
         let json =
             populated_profile().json(Termination::InstructionLimit, 999, populated_load_profile());
 

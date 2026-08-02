@@ -5,17 +5,32 @@ x86-64 code when an ELF is loaded. This follows the VM interface: `LOAD`
 supplies the program, and later `RUN` requests reuse its compiled blocks until
 the image is replaced or unloaded.
 
-Supported RV32I/RV32M arithmetic and checked integer loads and stores run in
-the eager native image. Memory slow paths, indirect jumps, syscalls, traps,
-short instruction budgets, and unsupported instructions use the shared
-interpreter.
+Supported RV32I/RV32M arithmetic, checked integer loads and stores, and aligned
+JALR dispatches run in the eager native image. JALR uses an immutable,
+image-scoped two-level table to find already compiled targets without returning
+to Rust. A missing target exits only after committing the JALR; a misaligned
+target takes the precise one-instruction retry path so link-register and
+retirement semantics remain exact. Memory slow paths, syscalls, traps, short
+instruction budgets, and unsupported instructions use the shared interpreter.
 
-Translation scans at most 262,144 file-backed instructions (1 MiB of RV32
-code), retains at most 8,192 native blocks and their lookup metadata, and stores
-their page-rounded x86-64 code in one 32 MiB arena. These limits bound `LOAD`
-time and memory; code beyond them runs in the interpreter. The arena is written
-before it is changed to read-execute, so it is never writable and executable at
-the same time.
+Translation first follows direct control flow from the image entry, with at
+most two successors per admitted block, then scans at most 262,144 file-backed
+instructions (1 MiB of RV32 code) for indirect-only and otherwise unreachable
+code. It retains at most 8,192 native blocks and their lookup metadata and
+stores their page-rounded x86-64 code in one 32 MiB arena. These limits bound
+`LOAD` time and memory; code beyond them runs in the interpreter. Indirect
+dispatch adds one 128 KiB root plus one 4 KiB leaf per guest page containing a
+native entry, plus one owner pointer per leaf, bounded by 32.1875 MiB at the
+block cap. Both external and indirect native entries begin with CET-compatible
+`ENDBR64` landing pads. The code arena is written before it is changed to
+read-execute, so it is never writable and executable at the same time;
+dispatch data is separate and never executable.
+
+Code admission conservatively reserves cold budget, precise-retry, and missing
+target veneers before publishing an image. Final linking omits direct-edge
+veneers for native targets, shares unresolved direct-edge veneers by guest PC,
+and shares one generic JALR miss veneer across the image. The optional profiler
+reports exact finalized code and dispatch-table sizes.
 
 The VM executable runs only on x86-64 Linux.
 
@@ -38,20 +53,22 @@ cargo build --locked --release --features profile \
   --manifest-path vm_references/vm5-rust-aot-compiler/Cargo.toml
 ```
 
-Each record has `kind: "vm5_profile"` and `schema_version: 3`. It reports:
+Each record has `kind: "vm5_profile"` and `schema_version: 4`. It reports:
 
 - total, native, and interpreter-fallback retired instructions;
-- native invocations, executed blocks, direct linked-edge hits, native exit
-  reasons (including precise `interpret_one` memory exits), and lookup versus
-  short-budget fallbacks;
+- native invocations, executed blocks, direct linked-edge hits, indirect JALR
+  table hits and misses, native exit reasons (including precise
+  `interpret_one` memory and JALR exits), and lookup versus short-budget
+  fallbacks;
 - fallback classes (loads, stores, JALR, M operations, system, other, and fetch
   traps) and a base-opcode breakdown;
 - generated guest-register loads and stores, weighted by native block
   dispatches;
 - successful native memory loads and stores;
-- native fallthrough, conditional-branch, and direct-jump dispatches; and
+- native fallthrough, conditional-branch, direct-jump, and indirect-jump
+  dispatches; and
 - LOAD-time compiled block, native guest instruction, raw code byte, mapped
-  byte, and block control-flow counts.
+  byte, dispatch-table entry/page/byte, and block control-flow counts.
 
 Fallback class counts describe attempted interpreter instructions, so a
 trapping instruction appears in its class but not in `retired.fallback`.
