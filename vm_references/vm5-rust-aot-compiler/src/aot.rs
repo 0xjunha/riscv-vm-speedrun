@@ -316,9 +316,7 @@ impl NativeImage {
             return None;
         }
         let instructions = native_sequence(machine, pc);
-        let Some(block) = LinkedBlock::compile(&instructions) else {
-            return None;
-        };
+        let block = LinkedBlock::compile(&instructions)?;
         let fixed_bytes = if blocks.is_empty() {
             LinkedProgram::fixed_code_len()
         } else {
