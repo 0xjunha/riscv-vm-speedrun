@@ -179,6 +179,8 @@ vm3: vm3-test vm3-lint
 
 vm4-test: vm4-build rust-x86-compiler-test
 	CARGO_TARGET_DIR=$(VM4_TARGET) cargo test --locked --manifest-path $(VM4_MANIFEST)
+	CARGO_TARGET_DIR=$(VM4_TARGET) cargo test --locked --manifest-path $(VM4_MANIFEST) \
+		--all-features
 
 vm4-format: rust-x86-compiler-format
 	cargo fmt --manifest-path $(VM4_MANIFEST)
@@ -187,10 +189,14 @@ vm4-lint: rust-x86-compiler-lint
 	cargo fmt --check --manifest-path $(VM4_MANIFEST)
 	CARGO_TARGET_DIR=$(VM4_TARGET) cargo clippy --locked --manifest-path \
 		$(VM4_MANIFEST) --all-targets -- -D warnings
+	CARGO_TARGET_DIR=$(VM4_TARGET) cargo clippy --locked --manifest-path \
+		$(VM4_MANIFEST) --all-targets --all-features -- -D warnings
 
 vm4-x86-check:
 	CARGO_TARGET_DIR=$(VM4_TARGET) cargo clippy --locked --manifest-path \
 		$(VM4_MANIFEST) --target $(X86_TARGET) --all-targets -- -D warnings
+	CARGO_TARGET_DIR=$(VM4_TARGET) cargo clippy --locked --manifest-path \
+		$(VM4_MANIFEST) --target $(X86_TARGET) --all-targets --all-features -- -D warnings
 
 native-vm-runtime-status:
 ifneq ($(HOST_PLATFORM),Linux-x86_64)

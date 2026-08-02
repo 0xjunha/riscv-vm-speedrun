@@ -22,6 +22,8 @@ docker run --rm --platform linux/amd64 \
             --manifest-path vm_references/rust-x86-block-compiler/Cargo.toml
         cargo test --locked \
             --manifest-path vm_references/vm4-rust-jit-compiler/Cargo.toml
+        cargo test --locked --all-features \
+            --manifest-path vm_references/vm4-rust-jit-compiler/Cargo.toml
         cargo test --locked \
             --manifest-path vm_references/vm5-rust-aot-compiler/Cargo.toml
         cargo test --locked --all-features \
