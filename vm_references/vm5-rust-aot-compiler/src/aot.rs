@@ -250,6 +250,10 @@ impl NativeImage {
         self.program.as_ref()?.entry(id.index())
     }
 
+    pub(crate) const fn requires_direct_memory(&self) -> bool {
+        self.program.is_some()
+    }
+
     fn compile_successor_closure(
         &mut self,
         machine: &Machine,

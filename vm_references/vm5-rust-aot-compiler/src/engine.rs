@@ -27,6 +27,10 @@ impl Engine for AotCompiler {
         Ok(())
     }
 
+    fn initialize_direct_memory(&self) -> bool {
+        self.native.requires_direct_memory()
+    }
+
     fn run(&mut self, machine: &mut Machine, instruction_limit: u64) -> RunResult {
         #[cfg(feature = "profile")]
         {
@@ -372,6 +376,31 @@ mod tests {
         let fallback = image_with_code_at(&[0x0000_0073], IMAGE_START);
         engine.prepare(&fallback).unwrap();
         assert_eq!(engine.native.staged_block_count(), 0);
+    }
+
+    #[test]
+    fn unsupported_image_keeps_sparse_memory_initialization() {
+        let image = image_with_code_at(&[0x0000_0073], IMAGE_START);
+        let mut engine = AotCompiler::default();
+
+        engine.prepare(&image).unwrap();
+
+        assert!(!engine.initialize_direct_memory());
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn published_native_program_requests_direct_memory_initialization() {
+        let image = image_with_code_at(&[addi(5, 5, 1), 0x0000_0073], IMAGE_START);
+        let mut engine = AotCompiler::default();
+
+        engine.prepare(&image).unwrap();
+
+        assert!(engine.initialize_direct_memory());
     }
 
     #[cfg(all(
