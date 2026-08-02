@@ -5,7 +5,9 @@ use std::mem;
 use rv32vm_rust_common::memory::NativeMemoryView;
 
 use crate::{
-    CompiledBlock, NativeEntryKind, NativeOutcome, SIDE_EXIT_FLAG, memory::ExecutableMemory,
+    CompiledBlock, NativeEntryKind, NativeOutcome, SIDE_EXIT_FLAG,
+    emitter::{OptimizationEvent, OptimizationEventKind},
+    memory::ExecutableMemory,
 };
 
 type Entry = unsafe extern "C" fn(*mut u32, *const u8, *mut u8, u32) -> u64;
@@ -17,12 +19,15 @@ struct EntryMetadata {
     minimum_instruction_count: usize,
     loop_unroll_factor: usize,
     kind: NativeEntryKind,
+    optimization_event_start: usize,
+    optimization_event_end: usize,
 }
 
 /// Owns one executable mapping containing one or more native blocks.
 pub struct NativeProgram {
     memory: ExecutableMemory,
     entries: Vec<EntryMetadata>,
+    optimization_events: Vec<OptimizationEvent>,
 }
 
 impl NativeProgram {
@@ -36,19 +41,28 @@ impl NativeProgram {
 
         let mut code = Vec::with_capacity(code_len);
         let mut entries = Vec::with_capacity(blocks.len());
+        let mut optimization_events = Vec::new();
         for block in blocks {
+            let optimization_event_start = optimization_events.len();
+            optimization_events.extend_from_slice(&block.optimization_events);
             entries.push(EntryMetadata {
                 offset: code.len(),
                 instruction_count: block.instruction_count(),
                 minimum_instruction_count: block.minimum_instruction_count(),
                 loop_unroll_factor: block.loop_unroll_factor(),
                 kind: block.kind(),
+                optimization_event_start,
+                optimization_event_end: optimization_events.len(),
             });
             code.extend_from_slice(&block.code);
         }
 
         let memory = ExecutableMemory::publish(&code, code_budget)?;
-        Some(Self { memory, entries })
+        Some(Self {
+            memory,
+            entries,
+            optimization_events,
+        })
     }
 
     pub fn entry(&self, index: usize) -> Option<NativeEntry<'_>> {
@@ -88,6 +102,30 @@ impl NativeEntry<'_> {
 
     pub const fn kind(&self) -> NativeEntryKind {
         self.metadata.kind
+    }
+
+    /// Returns the complementary-shift fusions and dead shift writes that
+    /// actually occurred in a committed native prefix. Loop outcomes may span
+    /// multiple logical cycles; bounded guard exits count only earlier events.
+    pub fn optimization_counts(&self, retired: usize) -> (usize, usize) {
+        let instruction_count = self.instruction_count();
+        if instruction_count == 0 {
+            return (0, 0);
+        }
+        let events = &self.program.optimization_events
+            [self.metadata.optimization_event_start..self.metadata.optimization_event_end];
+        let complete_cycles = retired / instruction_count;
+        let remainder = retired % instruction_count;
+        let mut fused_rotates = 0_usize;
+        let mut elided_shifts = 0_usize;
+        for event in events {
+            let count = complete_cycles + usize::from(event.retired_offset < remainder);
+            match event.kind {
+                OptimizationEventKind::FusedRotate => fused_rotates += count,
+                OptimizationEventKind::ElidedShift => elided_shifts += count,
+            }
+        }
+        (fused_rotates, elided_shifts)
     }
 
     /// Executes the native block against the supplied current-run memory view.
@@ -544,6 +582,148 @@ rv32vm_test_call_loop_with_callee_sentinels:
         for (instruction, source) in cases {
             assert_matches_interpreter(&[instruction, NOP], &[(6, source)]);
         }
+    }
+
+    #[test]
+    fn fused_complementary_shifts_match_the_interpreter_for_aliases_and_counts() {
+        let values = [0, 1, u32::MAX, i32::MIN as u32, 0x8765_4321, 0x55aa_33cc];
+        for left_count in 1..32 {
+            let right_count = 32 - left_count;
+            for destination in [5, 6, 7, 8] {
+                let code = [
+                    immediate(6, 5, 1, left_count),
+                    addi(9, 9, 1),
+                    immediate(7, 5, 5, right_count),
+                    register(destination, 7, 6, 6, 0),
+                    addi(6, 0, 11),
+                    addi(7, 0, 12),
+                    NOP,
+                ];
+                for value in values {
+                    assert_matches_interpreter(&code, &[(5, value), (9, 41)]);
+                }
+            }
+        }
+
+        let zero_source = [
+            immediate(6, 0, 1, 8),
+            immediate(7, 0, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 11),
+            addi(7, 0, 12),
+            NOP,
+        ];
+        assert_matches_interpreter(&zero_source, &[(8, u32::MAX)]);
+    }
+
+    #[test]
+    fn optimization_events_follow_exact_retired_prefixes_and_loop_quanta() {
+        let bounded_code = [
+            immediate(6, 5, 1, 8),
+            addi(9, 9, 1),
+            immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 11),
+            addi(7, 0, 12),
+        ];
+        let bounded = native_block(&bounded_code);
+        let entry = bounded.program.entry(0).unwrap();
+        assert_eq!(entry.optimization_counts(0), (0, 0));
+        assert_eq!(entry.optimization_counts(1), (0, 1));
+        assert_eq!(entry.optimization_counts(3), (0, 2));
+        assert_eq!(entry.optimization_counts(4), (1, 2));
+        assert_eq!(entry.optimization_counts(bounded_code.len()), (1, 2));
+
+        let loop_code = [
+            immediate(6, 5, 1, 8),
+            immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 11),
+            addi(7, 0, 12),
+            jal(0, -20),
+        ];
+        let mut machine = machine_with_code(&loop_code, IMAGE_START);
+        machine.registers[5] = 0x8765_4321;
+        let grouped = native_grouped_loop(&machine, &[(IMAGE_START, loop_code.len())], 4);
+        let outcome = execute_loop(&grouped, &mut machine, 24).unwrap();
+        assert_eq!(grouped.instruction_count(), loop_code.len());
+        assert_eq!(grouped.minimum_instruction_count(), 24);
+        assert_eq!(outcome.retired(), 24);
+        assert_eq!(
+            grouped.program.entry(0).unwrap().optimization_counts(24),
+            (4, 8)
+        );
+        assert_eq!(machine.registers[8], 0x8765_4321_u32.rotate_left(8));
+    }
+
+    #[test]
+    fn elided_shifts_still_count_before_each_branch_outcome() {
+        let code = [
+            immediate(6, 5, 1, 8),
+            immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 11),
+            addi(7, 0, 12),
+            branch(0, 10, 11, 8),
+        ];
+        let native = native_block(&code);
+        for (left, right, next_pc) in [(1, 2, IMAGE_START + 24), (3, 3, IMAGE_START + 28)] {
+            let mut machine = machine_with_code(&code, IMAGE_START);
+            machine.registers[5] = 0x8765_4321;
+            machine.registers[10] = left;
+            machine.registers[11] = right;
+            let outcome = execute_native(&native, &mut machine);
+            assert_eq!(outcome.retired(), code.len() as u32);
+            assert_eq!(outcome.next_pc(), next_pc);
+            assert_eq!(machine.registers[8], 0x8765_4321_u32.rotate_left(8));
+            assert_eq!(
+                native
+                    .program
+                    .entry(0)
+                    .unwrap()
+                    .optimization_counts(code.len()),
+                (1, 2)
+            );
+        }
+    }
+
+    #[test]
+    fn region_guard_before_a_fused_span_counts_no_later_events() {
+        let code = [
+            branch(0, 10, 11, 28),
+            immediate(6, 5, 1, 8),
+            immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 11),
+            addi(7, 0, 12),
+            NOP,
+        ];
+        let template = machine_with_code(&code, IMAGE_START);
+        let native = native_region(&template, &[(IMAGE_START, 1), (IMAGE_START + 4, 6)]);
+        let entry = native.program.entry(0).unwrap();
+
+        let mut guarded = machine_with_code(&code, IMAGE_START);
+        guarded.registers[10] = 3;
+        guarded.registers[11] = 3;
+        let outcome = execute_native(&native, &mut guarded);
+        assert_eq!(outcome.retired(), 1);
+        assert_eq!(
+            entry.optimization_counts(outcome.retired() as usize),
+            (0, 0)
+        );
+        assert_eq!(guarded.registers[8], 0);
+
+        let mut completed = machine_with_code(&code, IMAGE_START);
+        completed.registers[5] = 0x8765_4321;
+        completed.registers[10] = 3;
+        completed.registers[11] = 4;
+        let outcome = execute_native(&native, &mut completed);
+        assert_eq!(outcome.retired(), code.len() as u32);
+        assert_eq!(
+            entry.optimization_counts(outcome.retired() as usize),
+            (1, 2)
+        );
+        assert_eq!(completed.registers[8], 0x8765_4321_u32.rotate_left(8));
     }
 
     #[test]

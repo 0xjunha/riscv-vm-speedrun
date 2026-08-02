@@ -343,6 +343,8 @@ impl JitInterpreter {
         #[cfg(feature = "profile")]
         {
             profile.record_native_call(retired as usize);
+            let (fused_rotates, elided_shifts) = native.optimization_counts(retired as usize);
+            profile.record_native_optimizations(fused_rotates, elided_shifts);
             if matches!(execution, NativeExecution::Region { .. }) {
                 profile.record_region_call(retired as usize);
             }

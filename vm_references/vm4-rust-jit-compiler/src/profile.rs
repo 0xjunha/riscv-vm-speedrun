@@ -19,6 +19,8 @@ struct RunMetrics {
     interpreted_retired: u64,
     native_calls: u64,
     native_side_exits: u64,
+    native_fused_rotates: u64,
+    native_elided_shifts: u64,
     continuation_attempts: u64,
     continuation_link_hits: u64,
     continuation_hops: u64,
@@ -89,6 +91,8 @@ impl RunMetrics {
             interpreted_retired: profile.interpreted_retired,
             native_calls: profile.native_calls,
             native_side_exits: profile.native_side_exits,
+            native_fused_rotates: profile.native_fused_rotates,
+            native_elided_shifts: profile.native_elided_shifts,
             continuation_attempts: profile.continuation_attempts,
             continuation_link_hits: profile.continuation_link_hits,
             continuation_hops: profile.continuation_hops,
@@ -163,6 +167,12 @@ impl RunMetrics {
             native_side_exits: self
                 .native_side_exits
                 .saturating_sub(earlier.native_side_exits),
+            native_fused_rotates: self
+                .native_fused_rotates
+                .saturating_sub(earlier.native_fused_rotates),
+            native_elided_shifts: self
+                .native_elided_shifts
+                .saturating_sub(earlier.native_elided_shifts),
             continuation_attempts: self
                 .continuation_attempts
                 .saturating_sub(earlier.continuation_attempts),
@@ -350,6 +360,8 @@ pub(crate) struct ProfileCounters {
     interpreted_retired: u64,
     native_calls: u64,
     native_side_exits: u64,
+    native_fused_rotates: u64,
+    native_elided_shifts: u64,
     continuation_attempts: u64,
     continuation_link_hits: u64,
     continuation_hops: u64,
@@ -427,6 +439,8 @@ impl Default for ProfileCounters {
             interpreted_retired: 0,
             native_calls: 0,
             native_side_exits: 0,
+            native_fused_rotates: 0,
+            native_elided_shifts: 0,
             continuation_attempts: 0,
             continuation_link_hits: 0,
             continuation_hops: 0,
@@ -532,6 +546,15 @@ impl ProfileCounters {
     pub(crate) fn record_native_call(&mut self, retired: usize) {
         increment(&mut self.native_calls, 1);
         increment(&mut self.native_retired, as_u64(retired));
+    }
+
+    pub(crate) fn record_native_optimizations(
+        &mut self,
+        fused_rotates: usize,
+        elided_shifts: usize,
+    ) {
+        increment(&mut self.native_fused_rotates, as_u64(fused_rotates));
+        increment(&mut self.native_elided_shifts, as_u64(elided_shifts));
     }
 
     pub(crate) fn record_native_side_exit(&mut self, instruction: &BlockInstruction) {
@@ -797,6 +820,7 @@ impl ProfileCounters {
             "{{\"schema\":\"rv32vm.vm4.profile\",\"schema_version\":1,\
              \"runs\":{},\"retired\":{retired},\"native_retired\":{},\
              \"interpreted_retired\":{},\"native_calls\":{},\"native_side_exits\":{},\
+             \"native_fused_rotates\":{},\"native_elided_shifts\":{},\
              \"continuation_attempts\":{},\"continuation_link_hits\":{},\
              \"continuation_hops\":{},\"continuation_profile_stops\":{},\
              \"continuation_link_misses\":{},\"continuation_target_stops\":{},\
@@ -836,6 +860,8 @@ impl ProfileCounters {
             self.interpreted_retired,
             self.native_calls,
             self.native_side_exits,
+            self.native_fused_rotates,
+            self.native_elided_shifts,
             self.continuation_attempts,
             self.continuation_link_hits,
             self.continuation_hops,
@@ -1211,6 +1237,7 @@ fn write_run_summaries(output: &mut String, summaries: &VecDeque<RunSummary>) {
             output,
             "{{\"run\":{},\"retired\":{retired},\"native_retired\":{},\
              \"interpreted_retired\":{},\"native_calls\":{},\"native_side_exits\":{},\
+             \"native_fused_rotates\":{},\"native_elided_shifts\":{},\
              \"continuation_attempts\":{},\"continuation_link_hits\":{},\
              \"continuation_hops\":{},\"continuation_profile_stops\":{},\
              \"continuation_link_misses\":{},\"continuation_target_stops\":{},\
@@ -1249,6 +1276,8 @@ fn write_run_summaries(output: &mut String, summaries: &VecDeque<RunSummary>) {
             metrics.interpreted_retired,
             metrics.native_calls,
             metrics.native_side_exits,
+            metrics.native_fused_rotates,
+            metrics.native_elided_shifts,
             metrics.continuation_attempts,
             metrics.continuation_link_hits,
             metrics.continuation_hops,
@@ -1342,6 +1371,7 @@ mod tests {
         profile.start_image();
         profile.begin_run();
         profile.record_native_call(0);
+        profile.record_native_optimizations(2, 3);
         profile.record_native_side_exit(&machine.fetch_decode(IMAGE_START));
         profile.record_interpreted_block_call();
         profile.record_interpreted_attempt(&machine.fetch_decode(IMAGE_START));
@@ -1361,6 +1391,7 @@ mod tests {
             "{\"schema\":\"rv32vm.vm4.profile\",\"schema_version\":1,\"runs\":1,\
              \"retired\":1,\"native_retired\":0,\"interpreted_retired\":1,\
              \"native_calls\":1,\"native_side_exits\":1,\
+             \"native_fused_rotates\":2,\"native_elided_shifts\":3,\
              \"continuation_attempts\":0,\"continuation_link_hits\":0,\
              \"continuation_hops\":0,\"continuation_profile_stops\":0,\
              \"continuation_link_misses\":0,\"continuation_target_stops\":0,\
@@ -1397,6 +1428,7 @@ mod tests {
              \"run_history_capacity\":64,\"run_summaries_dropped\":0,\"recent_runs\":[{\
              \"run\":1,\"retired\":1,\"native_retired\":0,\"interpreted_retired\":1,\
              \"native_calls\":1,\"native_side_exits\":1,\
+             \"native_fused_rotates\":2,\"native_elided_shifts\":3,\
              \"continuation_attempts\":0,\"continuation_link_hits\":0,\
              \"continuation_hops\":0,\"continuation_profile_stops\":0,\
              \"continuation_link_misses\":0,\"continuation_target_stops\":0,\

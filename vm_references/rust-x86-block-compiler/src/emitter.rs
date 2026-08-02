@@ -9,7 +9,10 @@ use rv32vm_rust_common::{
 
 use crate::{
     BlockInstruction, SIDE_EXIT_FLAG,
-    lowering::{BranchCondition, ImmediateOperation, Lowering, MemoryWidth, RegisterOperation},
+    lowering::{
+        BranchCondition, ImmediateOperation, Lowering, MemoryWidth, RegisterOperation,
+        RegisterUsage,
+    },
 };
 
 /// Legacy/default number of basic blocks accepted by a predicted region.
@@ -91,6 +94,387 @@ struct PreparedInstruction {
     instruction: DecodedInstruction,
     lowering: Lowering,
     preferred_successor: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RotateDirection {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy)]
+enum EmissionAction {
+    Original,
+    RotateImmediate {
+        destination: usize,
+        source: usize,
+        direction: RotateDirection,
+        count: u8,
+    },
+    ElideDeadShift,
+}
+
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    )),
+    allow(dead_code)
+)]
+pub(crate) enum OptimizationEventKind {
+    FusedRotate,
+    ElidedShift,
+}
+
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    )),
+    allow(dead_code)
+)]
+pub(crate) struct OptimizationEvent {
+    pub(crate) retired_offset: usize,
+    pub(crate) kind: OptimizationEventKind,
+}
+
+impl EmissionAction {
+    const fn register_usage(self, original: Lowering) -> RegisterUsage {
+        match self {
+            Self::Original => original.register_usage(),
+            Self::RotateImmediate { destination: 0, .. } | Self::ElideDeadShift => RegisterUsage {
+                reads: [None, None],
+                write: None,
+            },
+            Self::RotateImmediate {
+                destination,
+                source,
+                ..
+            } => RegisterUsage {
+                reads: [Some(source), None],
+                write: Some(destination),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct ValueId(usize);
+
+#[derive(Clone, Copy)]
+struct PureNode {
+    reads: [Option<ValueId>; 2],
+    written: Option<ValueId>,
+}
+
+#[derive(Clone, Copy)]
+struct ShiftDefinition {
+    value: ValueId,
+    source: usize,
+    source_value: ValueId,
+    direction: RotateDirection,
+    count: u8,
+}
+
+#[derive(Clone, Copy)]
+struct RotateCandidate {
+    instruction_index: usize,
+    destination: usize,
+    source: usize,
+    direction: RotateDirection,
+    count: u8,
+    shift_values: [ValueId; 2],
+}
+
+struct PureSpanPlan {
+    actions: Vec<EmissionAction>,
+    fused_rotates: usize,
+    elided_shifts: usize,
+}
+
+impl PureSpanPlan {
+    fn analyze(instructions: &[PreparedInstruction]) -> Self {
+        let mut plan = Self {
+            actions: vec![EmissionAction::Original; instructions.len()],
+            fused_rotates: 0,
+            elided_shifts: 0,
+        };
+        let mut start = 0;
+        while start < instructions.len() {
+            while start < instructions.len() && !is_pure(instructions[start].lowering) {
+                start += 1;
+            }
+            let mut end = start;
+            while end < instructions.len() && is_pure(instructions[end].lowering) {
+                end += 1;
+            }
+            if start < end && span_may_contain_rotate(&instructions[start..end]) {
+                plan.analyze_span(instructions, start, end);
+            }
+            start = end;
+        }
+        plan
+    }
+
+    fn analyze_span(&mut self, instructions: &[PreparedInstruction], start: usize, end: usize) {
+        let mut current: [ValueId; 32] = std::array::from_fn(ValueId);
+        let mut definitions = vec![None; 32];
+        let mut uses = vec![0_usize; 32];
+        let mut nodes = Vec::with_capacity(end - start);
+        let mut candidates = Vec::new();
+
+        for instruction_index in start..end {
+            let lowering = instructions[instruction_index].lowering;
+            let usage = lowering.register_usage();
+            let mut reads = [None; 2];
+            for (slot, register) in usage.reads.into_iter().enumerate() {
+                let Some(register) = register else {
+                    continue;
+                };
+                let value = current[register];
+                reads[slot] = Some(value);
+                uses[value.0] += 1;
+            }
+
+            if let Lowering::Register {
+                destination,
+                operation: RegisterOperation::Or,
+                ..
+            } = lowering
+                && destination != 0
+                && let (Some(left), Some(right)) = (reads[0], reads[1])
+                && left != right
+                && let (Some(left), Some(right)) = (
+                    shift_definition(
+                        instructions,
+                        start,
+                        &nodes,
+                        &definitions,
+                        left,
+                    ),
+                    shift_definition(
+                        instructions,
+                        start,
+                        &nodes,
+                        &definitions,
+                        right,
+                    ),
+                )
+                && left.direction != right.direction
+                && left.source == right.source
+                && left.source_value == right.source_value
+                && left.count != 0
+                && right.count != 0
+                && u16::from(left.count) + u16::from(right.count) == 32
+                // The synthesized rotate reads the architectural source at
+                // the OR site. Require that exact SSA value to remain there;
+                // this conservatively rejects source/temp aliasing and source
+                // clobbers while still permitting unrelated pure interleaving.
+                && current[left.source] == left.source_value
+            {
+                let (direction, count) = if left.direction == RotateDirection::Right {
+                    choose_rotate(left.count, right.count)
+                } else {
+                    choose_rotate(right.count, left.count)
+                };
+                candidates.push(RotateCandidate {
+                    instruction_index,
+                    destination,
+                    source: left.source,
+                    direction,
+                    count,
+                    shift_values: [left.value, right.value],
+                });
+            }
+
+            let written = usage
+                .write
+                .filter(|&register| register != 0)
+                .map(|register| {
+                    let value = ValueId(definitions.len());
+                    definitions.push(Some(nodes.len()));
+                    uses.push(0);
+                    current[register] = value;
+                    value
+                });
+            nodes.push(PureNode { reads, written });
+        }
+
+        let mut live_out = vec![false; definitions.len()];
+        for value in current.into_iter().skip(1) {
+            live_out[value.0] = true;
+        }
+        let mut potential_replaced_uses = vec![0_usize; definitions.len()];
+        for candidate in &candidates {
+            for value in candidate.shift_values {
+                potential_replaced_uses[value.0] += 1;
+            }
+        }
+        let potentially_elidable = (0..definitions.len())
+            .map(|value| {
+                potential_replaced_uses[value] != 0
+                    && potential_replaced_uses[value] == uses[value]
+                    && !live_out[value]
+            })
+            .collect::<Vec<_>>();
+        let mut replaced_uses = vec![0_usize; definitions.len()];
+        for candidate in candidates {
+            // A rotate is profitable only when it makes at least one producer
+            // write unobservable. Retaining both shifts and replacing just the
+            // OR can add source traffic without reducing emitted operations.
+            if !candidate
+                .shift_values
+                .into_iter()
+                .any(|value| potentially_elidable[value.0])
+            {
+                continue;
+            }
+            debug_assert!(matches!(
+                self.actions[candidate.instruction_index],
+                EmissionAction::Original
+            ));
+            self.actions[candidate.instruction_index] = EmissionAction::RotateImmediate {
+                destination: candidate.destination,
+                source: candidate.source,
+                direction: candidate.direction,
+                count: candidate.count,
+            };
+            self.fused_rotates += 1;
+            for value in candidate.shift_values {
+                replaced_uses[value.0] += 1;
+            }
+        }
+
+        for value in 32..definitions.len() {
+            if replaced_uses[value] == 0 || replaced_uses[value] != uses[value] || live_out[value] {
+                continue;
+            }
+            let relative = definitions[value].expect("written value has a definition");
+            let instruction_index = start + relative;
+            debug_assert!(matches!(
+                instructions[instruction_index].lowering,
+                Lowering::Immediate {
+                    operation: ImmediateOperation::ShiftLeft(_) | ImmediateOperation::ShiftRight(_),
+                    ..
+                }
+            ));
+            self.actions[instruction_index] = EmissionAction::ElideDeadShift;
+            self.elided_shifts += 1;
+        }
+    }
+
+    fn register_usage(&self, index: usize, original: Lowering) -> RegisterUsage {
+        self.actions[index].register_usage(original)
+    }
+
+    fn optimization_events(&self) -> Vec<OptimizationEvent> {
+        self.actions
+            .iter()
+            .enumerate()
+            .filter_map(|(retired_offset, action)| {
+                let kind = match action {
+                    EmissionAction::Original => return None,
+                    EmissionAction::RotateImmediate { .. } => OptimizationEventKind::FusedRotate,
+                    EmissionAction::ElideDeadShift => OptimizationEventKind::ElidedShift,
+                };
+                Some(OptimizationEvent {
+                    retired_offset,
+                    kind,
+                })
+            })
+            .collect()
+    }
+}
+
+fn span_may_contain_rotate(instructions: &[PreparedInstruction]) -> bool {
+    let mut shift_left = false;
+    let mut shift_right = false;
+    let mut or = false;
+    for prepared in instructions {
+        match prepared.lowering {
+            Lowering::Immediate {
+                operation: ImmediateOperation::ShiftLeft(count),
+                ..
+            } => shift_left |= count != 0,
+            Lowering::Immediate {
+                operation: ImmediateOperation::ShiftRight(count),
+                ..
+            } => shift_right |= count != 0,
+            Lowering::Register {
+                destination,
+                operation: RegisterOperation::Or,
+                ..
+            } => or |= destination != 0,
+            _ => {}
+        }
+        if shift_left && shift_right && or {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_pure(lowering: Lowering) -> bool {
+    match lowering {
+        Lowering::WriteImmediate { .. } | Lowering::Immediate { .. } => true,
+        Lowering::Register { operation, .. } => !matches!(
+            operation,
+            RegisterOperation::Divide
+                | RegisterOperation::DivideUnsigned
+                | RegisterOperation::Remainder
+                | RegisterOperation::RemainderUnsigned
+        ),
+        Lowering::Jump { .. }
+        | Lowering::JumpRegister { .. }
+        | Lowering::Branch { .. }
+        | Lowering::Load { .. }
+        | Lowering::Store { .. }
+        | Lowering::Fence => false,
+    }
+}
+
+fn shift_definition(
+    instructions: &[PreparedInstruction],
+    span_start: usize,
+    nodes: &[PureNode],
+    definitions: &[Option<usize>],
+    value: ValueId,
+) -> Option<ShiftDefinition> {
+    let relative = *definitions.get(value.0)?.as_ref()?;
+    let instruction_index = span_start.checked_add(relative)?;
+    let node = nodes.get(relative)?;
+    let Lowering::Immediate {
+        destination: _,
+        source,
+        operation,
+    } = instructions.get(instruction_index)?.lowering
+    else {
+        return None;
+    };
+    let (direction, count) = match operation {
+        ImmediateOperation::ShiftLeft(count) => (RotateDirection::Left, count),
+        ImmediateOperation::ShiftRight(count) => (RotateDirection::Right, count),
+        _ => return None,
+    };
+    Some(ShiftDefinition {
+        value: node.written.filter(|&written| written == value)?,
+        source,
+        source_value: node.reads[0]?,
+        direction,
+        count,
+    })
+}
+
+fn choose_rotate(right_count: u8, left_count: u8) -> (RotateDirection, u8) {
+    if right_count <= left_count {
+        (RotateDirection::Right, right_count)
+    } else {
+        (RotateDirection::Left, left_count)
+    }
 }
 
 /// One decoded basic block in a bounded predicted native region.
@@ -217,21 +601,25 @@ struct RegisterPlan {
 }
 
 impl RegisterPlan {
-    fn analyze(instructions: &[PreparedInstruction]) -> Self {
-        Self::analyze_with_mode(instructions, RegisterPlanningMode::Bounded)
+    fn analyze(instructions: &[PreparedInstruction], emissions: &PureSpanPlan) -> Self {
+        Self::analyze_with_mode(instructions, emissions, RegisterPlanningMode::Bounded)
     }
 
-    fn analyze_loop(instructions: &[PreparedInstruction]) -> Self {
-        Self::analyze_with_mode(instructions, RegisterPlanningMode::Loop)
+    fn analyze_loop(instructions: &[PreparedInstruction], emissions: &PureSpanPlan) -> Self {
+        Self::analyze_with_mode(instructions, emissions, RegisterPlanningMode::Loop)
     }
 
-    fn analyze_with_mode(instructions: &[PreparedInstruction], mode: RegisterPlanningMode) -> Self {
+    fn analyze_with_mode(
+        instructions: &[PreparedInstruction],
+        emissions: &PureSpanPlan,
+        mode: RegisterPlanningMode,
+    ) -> Self {
         let mut scores = [RegisterScore::default(); 32];
         let mut access_index = 0;
         let mut uncached_accesses = 0_usize;
 
-        for prepared in instructions {
-            let usage = prepared.lowering.register_usage();
+        for (index, prepared) in instructions.iter().enumerate() {
+            let usage = emissions.register_usage(index, prepared.lowering);
             for register in usage.reads.into_iter().flatten() {
                 uncached_accesses += 1;
                 if register != 0 {
@@ -297,7 +685,8 @@ impl RegisterPlan {
         // at most one initial load and one final spill on the successful path.
         let zero_reads = instructions
             .iter()
-            .flat_map(|prepared| prepared.lowering.register_usage().reads)
+            .enumerate()
+            .flat_map(|(index, prepared)| emissions.register_usage(index, prepared.lowering).reads)
             .flatten()
             .filter(|&register| register == 0)
             .count();
@@ -366,6 +755,17 @@ pub struct CompiledBlock {
     pub(crate) kind: NativeEntryKind,
     uncached_register_accesses: usize,
     cached_register_accesses: usize,
+    fused_rotate_count: usize,
+    elided_shift_count: usize,
+    #[cfg_attr(
+        not(all(
+            target_arch = "x86_64",
+            target_os = "linux",
+            target_pointer_width = "64"
+        )),
+        allow(dead_code)
+    )]
+    pub(crate) optimization_events: Vec<OptimizationEvent>,
 }
 
 impl CompiledBlock {
@@ -470,6 +870,18 @@ impl CompiledBlock {
     /// conservative two-cycle profitability horizon.
     pub const fn cached_register_accesses(&self) -> usize {
         self.cached_register_accesses
+    }
+
+    /// Number of complementary-shift ORs fused in one logical guest path or
+    /// loop cycle. Grouped loops retain the per-cycle count.
+    pub const fn fused_rotate_count(&self) -> usize {
+        self.fused_rotate_count
+    }
+
+    /// Number of dead shift writes elided in one logical guest path or loop
+    /// cycle. Grouped loops retain the per-cycle count.
+    pub const fn elided_shift_count(&self) -> usize {
+        self.elided_shift_count
     }
 }
 
@@ -656,25 +1068,27 @@ fn compile_blocks(
     }
 
     let instruction_count = prepared.len();
+    let emissions = PureSpanPlan::analyze(&prepared);
     let plan = if closes_loop {
-        RegisterPlan::analyze_loop(&prepared)
+        RegisterPlan::analyze_loop(&prepared, &emissions)
     } else {
-        RegisterPlan::analyze(&prepared)
+        RegisterPlan::analyze(&prepared, &emissions)
     };
     let uncached_register_accesses = plan.uncached_accesses;
     let cached_register_accesses = plan.cached_accesses;
 
     if closes_loop {
         debug_assert!(!final_returned);
-        return emit_counted_loop(&prepared, plan, starts[0], loop_group_factor);
+        return emit_counted_loop(&prepared, &emissions, plan, starts[0], loop_group_factor);
     }
 
     let mut emitter = Emitter::new(plan);
     for (retired, prepared) in prepared.into_iter().enumerate() {
         let preferred_successor = prepared.preferred_successor;
-        let flow = emitter.instruction(
+        let flow = emitter.emission(
             prepared.instruction,
             prepared.lowering,
+            emissions.actions[retired],
             retired,
             preferred_successor,
         )?;
@@ -695,11 +1109,15 @@ fn compile_blocks(
         kind: NativeEntryKind::Bounded,
         uncached_register_accesses,
         cached_register_accesses,
+        fused_rotate_count: emissions.fused_rotates,
+        elided_shift_count: emissions.elided_shifts,
+        optimization_events: emissions.optimization_events(),
     })
 }
 
 fn emit_counted_loop(
     prepared: &[PreparedInstruction],
+    emissions: &PureSpanPlan,
     plan: RegisterPlan,
     start: u32,
     unroll_factor: usize,
@@ -715,9 +1133,10 @@ fn emit_counted_loop(
         let retirement_base = copy.checked_mul(instruction_count)?;
         for (offset, prepared) in prepared.iter().copied().enumerate() {
             let retired = retirement_base.checked_add(offset)?;
-            let flow = emitter.instruction(
+            let flow = emitter.emission(
                 prepared.instruction,
                 prepared.lowering,
+                emissions.actions[offset],
                 retired,
                 prepared.preferred_successor,
             )?;
@@ -738,6 +1157,9 @@ fn emit_counted_loop(
         kind: NativeEntryKind::Loop,
         uncached_register_accesses,
         cached_register_accesses,
+        fused_rotate_count: emissions.fused_rotates,
+        elided_shift_count: emissions.elided_shifts,
+        optimization_events: emissions.optimization_events(),
     })
 }
 
@@ -863,6 +1285,52 @@ impl Emitter {
         ]);
         let repeat = self.emit_jcc(0x85);
         self.patch_rel32(repeat, loop_start)
+    }
+
+    fn emission(
+        &mut self,
+        instruction: DecodedInstruction,
+        lowering: Lowering,
+        action: EmissionAction,
+        retired: usize,
+        preferred_successor: Option<u32>,
+    ) -> Option<Flow> {
+        match action {
+            EmissionAction::Original => {
+                self.instruction(instruction, lowering, retired, preferred_successor)
+            }
+            EmissionAction::RotateImmediate {
+                destination,
+                source,
+                direction,
+                count,
+            } => {
+                debug_assert!(matches!(
+                    lowering,
+                    Lowering::Register {
+                        destination: original_destination,
+                        operation: RegisterOperation::Or,
+                        ..
+                    } if original_destination == destination
+                ));
+                self.rotate_immediate(destination, source, direction, count);
+                Some(Flow::Continue)
+            }
+            EmissionAction::ElideDeadShift => {
+                debug_assert!(matches!(
+                    lowering,
+                    Lowering::Immediate {
+                        operation: ImmediateOperation::ShiftLeft(_)
+                            | ImmediateOperation::ShiftRight(_),
+                        ..
+                    }
+                ));
+                // The prepared instruction and its retirement index remain in
+                // place. Only its host write is omitted after SSA liveness
+                // proves the value unobservable at every following barrier.
+                Some(Flow::Continue)
+            }
+        }
     }
 
     fn instruction(
@@ -1041,6 +1509,36 @@ impl Emitter {
         }
         self.store_eax(destination);
         Flow::Continue
+    }
+
+    fn rotate_immediate(
+        &mut self,
+        destination: usize,
+        source: usize,
+        direction: RotateDirection,
+        count: u8,
+    ) {
+        debug_assert!(destination != 0);
+        debug_assert!((1..32).contains(&count));
+
+        // Resolve the source before a cached destination can overwrite it.
+        // This is required when the final OR destination aliases the source
+        // or either eliminated shift temporary.
+        let source = self.register_operand(source);
+        if let Some(slot) = self.cache_index(destination) {
+            let host = self.cache[slot].expect("cache slot exists").register.host;
+            if !matches!(source, RegisterOperand::Host(source_host) if source_host.code() == host.code())
+            {
+                self.move_host_operand(host, source);
+            }
+            self.host_rotate_immediate(host, direction, count);
+            self.mark_cache_written(slot);
+            return;
+        }
+
+        self.move_eax_operand(source);
+        self.eax_rotate_immediate(direction, count);
+        self.store_eax(destination);
     }
 
     fn register(
@@ -1873,6 +2371,28 @@ impl Emitter {
         self.code.extend_from_slice(&[0xc1, extension, count]);
     }
 
+    fn eax_rotate_immediate(&mut self, direction: RotateDirection, count: u8) {
+        let extension = match direction {
+            RotateDirection::Left => 0,
+            RotateDirection::Right => 1,
+        };
+        self.code
+            .extend_from_slice(&[0xc1, 0xc0 | (extension << 3), count]);
+    }
+
+    fn host_rotate_immediate(&mut self, host: CacheHost, direction: RotateDirection, count: u8) {
+        let extension = match direction {
+            RotateDirection::Left => 0,
+            RotateDirection::Right => 1,
+        };
+        self.code.extend_from_slice(&[
+            0x41,
+            0xc1,
+            0xc0 | (extension << 3) | (host.code() & 7),
+            count,
+        ]);
+    }
+
     fn compare_and_set(&mut self, condition: u8) {
         self.code
             .extend_from_slice(&[0x39, 0xc8, 0x0f, condition, 0xc0, 0x0f, 0xb6, 0xc0]);
@@ -2121,6 +2641,10 @@ mod tests {
         (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | 0x33
     }
 
+    fn shift_immediate(rd: u32, rs1: u32, funct3: u32, count: u32) -> u32 {
+        ((count & 31) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | 0x13
+    }
+
     fn decoded(machine: &Machine, start: u32, count: usize) -> Vec<BlockInstruction> {
         (0..count)
             .map(|index| machine.fetch_decode(start + index as u32 * 4))
@@ -2365,6 +2889,219 @@ mod tests {
             &compiled.code,
             &[0x44, 0x89, 0xd0, 0x41, 0x2b, 0xc1, 0x41, 0x89, 0xc1]
         ));
+    }
+
+    #[test]
+    fn fuses_interleaved_complementary_shifts_without_renumbering_guest_work() {
+        let code = [
+            shift_immediate(6, 5, 1, 8),
+            addi(9, 9, 1),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 7, 6, 6, 0),
+            addi(6, 0, 11),
+            addi(7, 0, 12),
+        ];
+        let machine = machine_with_code(&code, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+
+        assert_eq!(compiled.fused_rotate_count(), 1);
+        assert_eq!(compiled.elided_shift_count(), 2);
+        assert_eq!(compiled.instruction_count(), code.len());
+        assert_eq!(compiled.minimum_instruction_count(), code.len());
+        assert!(contains_bytes(&compiled.code, &[0xc1, 0xc0, 8]));
+        assert!(!contains_bytes(&compiled.code, &[0xc1, 0xe0, 8]));
+        assert!(!contains_bytes(&compiled.code, &[0xc1, 0xe8, 24]));
+    }
+
+    #[test]
+    fn rotates_in_either_direction_and_retains_live_shift_values() {
+        let left = [
+            shift_immediate(6, 5, 1, 7),
+            shift_immediate(7, 5, 5, 25),
+            register(6, 6, 7, 6, 0),
+            addi(7, 0, 1),
+        ];
+        let right = [
+            shift_immediate(6, 5, 1, 25),
+            shift_immediate(7, 5, 5, 7),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 1),
+        ];
+
+        let machine = machine_with_code(&left, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert_eq!(compiled.fused_rotate_count(), 1);
+        assert_eq!(compiled.elided_shift_count(), 2);
+        assert!(contains_bytes(&compiled.code, &[0xc1, 0xc0, 7]));
+
+        let machine = machine_with_code(&right, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert_eq!(compiled.fused_rotate_count(), 1);
+        assert_eq!(compiled.elided_shift_count(), 1);
+        assert!(contains_bytes(&compiled.code, &[0xc1, 0xc8, 7]));
+        assert!(contains_bytes(&compiled.code, &[0xc1, 0xe8, 7]));
+    }
+
+    #[test]
+    fn rotate_fusion_respects_source_versions_and_side_exit_barriers() {
+        let source_clobber = [
+            shift_immediate(6, 5, 1, 8),
+            addi(5, 5, 1),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+        ];
+        let memory_barrier = [
+            shift_immediate(6, 5, 1, 8),
+            lw(9, 10, 0),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+        ];
+        let division_barrier = [
+            shift_immediate(6, 5, 1, 8),
+            register(0, 10, 11, 4, 1),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+        ];
+        let source_temp_alias = [
+            shift_immediate(6, 5, 5, 24),
+            shift_immediate(5, 5, 1, 8),
+            register(8, 6, 5, 6, 0),
+        ];
+        let fence_barrier = [
+            shift_immediate(6, 5, 1, 8),
+            0x0000_000f,
+            shift_immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+        ];
+        let noncomplementary = [
+            shift_immediate(6, 5, 1, 8),
+            shift_immediate(7, 5, 5, 23),
+            register(8, 6, 7, 6, 0),
+        ];
+        let masked_zero_count = [
+            shift_immediate(6, 5, 1, 32),
+            shift_immediate(7, 5, 5, 31),
+            register(8, 6, 7, 6, 0),
+        ];
+        let arithmetic_right_shift = [
+            shift_immediate(6, 5, 1, 8),
+            shift_immediate(7, 5, 5, 24) | 0x4000_0000,
+            register(8, 6, 7, 6, 0),
+        ];
+        let zero_destination = [
+            shift_immediate(6, 5, 1, 8),
+            shift_immediate(7, 5, 5, 24),
+            register(0, 6, 7, 6, 0),
+        ];
+        let zero_temporary = [
+            shift_immediate(0, 5, 1, 8),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 0, 7, 6, 0),
+        ];
+        let both_producers_live = [
+            shift_immediate(6, 5, 1, 8),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+        ];
+
+        for code in [
+            source_clobber.as_slice(),
+            memory_barrier.as_slice(),
+            division_barrier.as_slice(),
+            source_temp_alias.as_slice(),
+            fence_barrier.as_slice(),
+            noncomplementary.as_slice(),
+            masked_zero_count.as_slice(),
+            arithmetic_right_shift.as_slice(),
+            zero_destination.as_slice(),
+            zero_temporary.as_slice(),
+            both_producers_live.as_slice(),
+        ] {
+            let machine = machine_with_code(code, IMAGE_START);
+            let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+            assert_eq!(compiled.fused_rotate_count(), 0);
+            assert_eq!(compiled.elided_shift_count(), 0);
+        }
+    }
+
+    #[test]
+    fn rotate_fusion_handles_x0_and_keeps_additionally_consumed_producers() {
+        let zero_source = [
+            shift_immediate(6, 0, 1, 8),
+            shift_immediate(7, 0, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 1),
+            addi(7, 0, 2),
+        ];
+        let machine = machine_with_code(&zero_source, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert_eq!(compiled.fused_rotate_count(), 1);
+        assert_eq!(compiled.elided_shift_count(), 2);
+
+        let extra_consumer = [
+            shift_immediate(6, 5, 1, 8),
+            addi(10, 6, 0),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 1),
+            addi(7, 0, 2),
+        ];
+        let machine = machine_with_code(&extra_consumer, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert_eq!(compiled.fused_rotate_count(), 1);
+        assert_eq!(compiled.elided_shift_count(), 1);
+        assert!(contains_bytes(&compiled.code, &[0xc1, 0xe0, 8]));
+    }
+
+    #[test]
+    fn emits_rotate_directly_into_cached_destinations() {
+        let canonical_source = [
+            addi(8, 8, 1),
+            addi(8, 8, 2),
+            shift_immediate(6, 5, 1, 8),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 1),
+            addi(7, 0, 2),
+        ];
+        let machine = machine_with_code(&canonical_source, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(
+            &compiled.code,
+            &[0x44, 0x8b, 0x4f, 20, 0x41, 0xc1, 0xc1, 8]
+        ));
+
+        let cached_source_and_destination = [
+            addi(5, 5, 1),
+            addi(5, 5, 2),
+            shift_immediate(6, 5, 1, 8),
+            shift_immediate(7, 5, 5, 24),
+            register(5, 6, 7, 6, 0),
+            addi(6, 0, 1),
+            addi(7, 0, 2),
+        ];
+        let machine = machine_with_code(&cached_source_and_destination, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(&compiled.code, &[0x41, 0xc1, 0xc1, 8]));
+    }
+
+    #[test]
+    fn control_transfer_splits_pure_rotate_spans() {
+        let code = [
+            shift_immediate(6, 5, 1, 8),
+            branch(0, 0, 0, 4),
+            shift_immediate(7, 5, 5, 24),
+            register(8, 6, 7, 6, 0),
+            addi(6, 0, 1),
+            addi(7, 0, 2),
+        ];
+        let machine = machine_with_code(&code, IMAGE_START);
+        let first = decoded(&machine, IMAGE_START, 2);
+        let second = decoded(&machine, IMAGE_START + 8, 4);
+        let compiled = compile_region(&[RegionBlock::new(&first), RegionBlock::new(&second)])
+            .expect("branch target and fallthrough both continue to the second block");
+        assert_eq!(compiled.fused_rotate_count(), 0);
+        assert_eq!(compiled.elided_shift_count(), 0);
     }
 
     #[test]

@@ -141,6 +141,10 @@ impl NativeEntry<'_> {
         unreachable!()
     }
 
+    pub fn optimization_counts(&self, _retired: usize) -> (usize, usize) {
+        unreachable!()
+    }
+
     pub fn execute(
         &self,
         _registers: &mut [u32; 32],
