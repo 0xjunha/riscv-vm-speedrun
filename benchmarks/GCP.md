@@ -7,6 +7,12 @@ CPU, no network, and a 4 GiB memory limit. They share harness settings, but VM s
 time `RUN` round trips while native samples time only the workload function.
 
 Runs execute from VM0 through VM5 sequentially, then native, with VM0 as the baseline.
+After the detailed per-workload comparison, the report prints a second table
+covering every implementation. It uses geometric means across the six
+application workloads (`sha256`, `heatshrink`, `depthconv`, `dijkstra`,
+`sort_records`, and `qrcode`) to report speedup over VM0, host-native performance
+fraction, and time relative to native. The `tiny`, `arithmetic`, and `streaming`
+diagnostics remain visible in the detailed table but do not affect this aggregate.
 
 The host uses one hardware thread per core. It is deleted after results are
 copied and after failures; a four-hour maximum lifetime also deletes it if

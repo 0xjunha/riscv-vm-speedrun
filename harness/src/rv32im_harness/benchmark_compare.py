@@ -244,7 +244,146 @@ def _json_text(result: dict[str, object]) -> str:
     return json.dumps(result, indent=2, sort_keys=True) + "\n"
 
 
-def _summary_text(result: dict[str, object]) -> str:
+def _table_text(headers: tuple[str, ...], rows: Sequence[tuple[str, ...]]) -> str:
+    widths = [
+        max(len(headers[index]), *(len(row[index]) for row in rows))
+        for index in range(len(headers))
+    ]
+
+    def line(values: tuple[str, ...]) -> str:
+        return "  ".join(
+            value.ljust(widths[index]) for index, value in enumerate(values)
+        ).rstrip()
+
+    return "\n".join(
+        (
+            line(headers),
+            line(tuple("-" * width for width in widths)),
+            *(line(row) for row in rows),
+        )
+    )
+
+
+def _run_case_medians(
+    result: dict[str, object], implementation: str
+) -> tuple[tuple[str, ...], dict[str, int | float]]:
+    runs = result.get("runs")
+    if not isinstance(runs, Mapping):
+        raise BenchmarkFailure("benchmark comparison runs are invalid")
+    run = runs.get(implementation)
+    cases = run.get("cases") if isinstance(run, Mapping) else None
+    if not isinstance(cases, list):
+        raise BenchmarkFailure(f"{implementation} benchmark cases are invalid")
+
+    case_ids = []
+    medians = {}
+    for index, case in enumerate(cases):
+        case_id = case.get("id") if isinstance(case, Mapping) else None
+        if not isinstance(case_id, str) or not case_id or case_id in medians:
+            raise BenchmarkFailure(
+                f"{implementation} benchmark case {index} is invalid"
+            )
+        case_ids.append(case_id)
+        medians[case_id] = _positive_median(
+            case.get("median_ns"), f"{implementation} {case_id}"
+        )
+    return tuple(case_ids), medians
+
+
+def _geometric_mean(values: Sequence[float]) -> float:
+    if not values:
+        raise BenchmarkFailure("geometric mean requires at least one value")
+    return math.exp(math.fsum(math.log(value) for value in values) / len(values))
+
+
+def _application_summary_text(
+    result: dict[str, object], application_case_ids: Sequence[str]
+) -> str | None:
+    requested = tuple(application_case_ids)
+    if not requested:
+        return None
+    if any(not isinstance(case_id, str) or not case_id for case_id in requested):
+        raise BenchmarkFailure("application case IDs must be nonempty strings")
+    if len(set(requested)) != len(requested):
+        raise BenchmarkFailure("application case selection contains duplicate IDs")
+
+    baseline = str(result["baseline"])
+    baseline_case_ids, baseline_medians = _run_case_medians(result, baseline)
+    selected = tuple(case_id for case_id in requested if case_id in baseline_medians)
+    if not selected:
+        return None
+
+    implementations = result.get("implementations")
+    if not isinstance(implementations, Mapping):
+        raise BenchmarkFailure("benchmark comparison implementations are invalid")
+    native_labels = [
+        str(label)
+        for label, record in implementations.items()
+        if isinstance(record, Mapping) and record.get("interface") == "native"
+    ]
+    if len(native_labels) != 1:
+        raise BenchmarkFailure(
+            "application aggregate requires exactly one native reference"
+        )
+    native = native_labels[0]
+    native_case_ids, native_medians = _run_case_medians(result, native)
+    if native_case_ids != baseline_case_ids:
+        raise BenchmarkFailure("native run contains different benchmark cases")
+
+    implementation_labels = [baseline]
+    implementation_labels.extend(
+        str(label)
+        for label, record in implementations.items()
+        if str(label) != baseline
+        and not (isinstance(record, Mapping) and record.get("interface") == "native")
+    )
+    implementation_labels.append(native)
+
+    rows = []
+    for implementation in implementation_labels:
+        case_ids, medians = _run_case_medians(result, implementation)
+        if case_ids != baseline_case_ids:
+            raise BenchmarkFailure(
+                f"{implementation} run contains different benchmark cases"
+            )
+        speedup = _geometric_mean(
+            [baseline_medians[case_id] / medians[case_id] for case_id in selected]
+        )
+        native_fraction = _geometric_mean(
+            [native_medians[case_id] / medians[case_id] for case_id in selected]
+        )
+        rows.append(
+            (
+                implementation,
+                f"{speedup:.3f}x",
+                f"{native_fraction * 100:.4f}%",
+                f"{1 / native_fraction:.3f}x",
+            )
+        )
+
+    headers = (
+        "implementation",
+        f"speedup vs {baseline}",
+        f"{native} performance",
+        f"time vs {native}",
+    )
+    excluded = tuple(
+        case_id for case_id in baseline_case_ids if case_id not in set(selected)
+    )
+    description = (
+        f"geometric mean across {len(selected)} application "
+        f"{'workload' if len(selected) == 1 else 'workloads'}"
+    )
+    lines = ["application aggregate", description]
+    if excluded:
+        lines.append(f"excluded cases: {', '.join(excluded)}")
+    lines.extend(("", _table_text(headers, rows)))
+    return "\n".join(lines)
+
+
+def _summary_text(
+    result: dict[str, object], application_case_ids: Sequence[str] = ()
+) -> str:
     baseline = str(result["baseline"])
     comparisons = result["comparisons"]
     assert isinstance(comparisons, list)
@@ -265,23 +404,11 @@ def _summary_text(result: dict[str, object]) -> str:
         "implementation median (ns)",
         "speedup",
     )
-    widths = [
-        max(len(headers[index]), *(len(row[index]) for row in rows))
-        for index in range(len(headers))
-    ]
-
-    def line(values: tuple[str, ...]) -> str:
-        return "  ".join(
-            value.ljust(widths[index]) for index, value in enumerate(values)
-        ).rstrip()
-
-    return "\n".join(
-        (
-            line(headers),
-            line(tuple("-" * width for width in widths)),
-            *(line(row) for row in rows),
-        )
-    )
+    detailed = _table_text(headers, rows)
+    application = _application_summary_text(result, application_case_ids)
+    if application is None:
+        return detailed
+    return f"{detailed}\n\n{application}"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -335,6 +462,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run only this case (repeatable)",
     )
     parser.add_argument(
+        "--application-case",
+        dest="application_case_ids",
+        action="append",
+        default=[],
+        help=(
+            "include this case in the native-normalized application aggregate "
+            "(repeatable)"
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         required=True,
@@ -353,13 +490,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             case_ids=arguments.case_ids,
             native=arguments.native,
         )
+        summary = _summary_text(result, arguments.application_case_ids)
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(_json_text(result), encoding="utf-8")
     except (BenchmarkFailure, OSError) as error:
         print(f"benchmark comparison failed: {error}", file=sys.stderr)
         return 1
 
-    print(_summary_text(result))
+    print(summary)
     print(f"\nraw results: {arguments.output}")
     return 0
 

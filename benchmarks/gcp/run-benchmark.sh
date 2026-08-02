@@ -11,5 +11,11 @@ exec python3 -m rv32im_harness.benchmark_compare \
     --vm vm5=/opt/rv32im/vms/vm5/rv32vm \
     --native native=/opt/rv32im/native \
     --baseline vm0 \
+    --application-case sha256 \
+    --application-case heatshrink \
+    --application-case depthconv \
+    --application-case dijkstra \
+    --application-case sort_records \
+    --application-case qrcode \
     --output /results/comparison.json \
     "$@"

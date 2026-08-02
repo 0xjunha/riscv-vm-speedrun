@@ -42,6 +42,31 @@ def _native_result(median: int, samples: list[int]) -> dict[str, object]:
     return result
 
 
+def _multi_case_result(
+    medians: dict[str, int], *, interface: str = "serve"
+) -> dict[str, object]:
+    cases = []
+    for case_id, median in medians.items():
+        case = {
+            "id": case_id,
+            "workload": case_id,
+            "samples_ns": [median],
+            "median_ns": median,
+        }
+        if interface == "serve":
+            case["retired_instructions"] = 123
+        cases.append(case)
+    return {
+        "schema_version": 1,
+        "manifest_sha256": "a" * 64,
+        "interface": interface,
+        "warmups": 2,
+        "repetitions": 1,
+        "timeout_seconds": 10.0,
+        "cases": cases,
+    }
+
+
 def test_run_comparison_measures_vms_and_native_reference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -179,6 +204,64 @@ def test_comparison_rejects_invalid_vm_sets() -> None:
             "one",
             native=("two", "/native"),
         )
+
+
+def test_application_summary_uses_native_normalized_geometric_means() -> None:
+    result = {
+        "schema_version": 1,
+        "baseline": "base",
+        "implementations": {
+            "base": {"interface": "serve", "path": "vm0"},
+            "fast": {"interface": "serve", "path": "vm1"},
+            "native": {"interface": "native", "path": "/native"},
+        },
+        "runs": {
+            "base": _multi_case_result({"tiny": 300, "app-a": 400, "app-b": 900}),
+            "fast": _multi_case_result({"tiny": 100, "app-a": 100, "app-b": 100}),
+            "native": _multi_case_result(
+                {"tiny": 50, "app-a": 25, "app-b": 100}, interface="native"
+            ),
+        },
+        "comparisons": [],
+    }
+
+    summary = benchmark_compare._application_summary_text(result, ("app-a", "app-b"))
+
+    assert summary is not None
+    assert "geometric mean across 2 application workloads" in summary
+    assert "excluded cases: tiny" in summary
+    assert "speedup vs base" in summary
+    assert "native performance" in summary
+    parsed_rows = [
+        fields
+        for line in summary.splitlines()
+        if (fields := line.split()) and fields[0] in {"base", "fast", "native"}
+    ]
+    assert [fields[0] for fields in parsed_rows] == ["base", "fast", "native"]
+    rows = {fields[0]: fields[1:] for fields in parsed_rows}
+    assert rows == {
+        "base": ["1.000x", "8.3333%", "12.000x"],
+        "fast": ["6.000x", "50.0000%", "2.000x"],
+        "native": ["12.000x", "100.0000%", "1.000x"],
+    }
+
+
+def test_application_summary_skips_runs_without_selected_application_cases() -> None:
+    result = {
+        "schema_version": 1,
+        "baseline": "base",
+        "implementations": {
+            "base": {"interface": "serve", "path": "vm0"},
+            "native": {"interface": "native", "path": "/native"},
+        },
+        "runs": {
+            "base": _multi_case_result({"tiny": 300}),
+            "native": _multi_case_result({"tiny": 50}, interface="native"),
+        },
+        "comparisons": [],
+    }
+
+    assert benchmark_compare._application_summary_text(result, ("sha256",)) is None
 
 
 def test_main_writes_raw_json_and_prints_summary(

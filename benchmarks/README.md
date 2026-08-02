@@ -94,6 +94,22 @@ A value > 1 means the implementation's measured median was lower than the
 baseline's. This is diagnostic context, not a score or acceptance threshold;
 scheduling and hardware variation can affect it.
 
+When a native reference and one or more `--application-case` arguments are
+provided, the report ends with a native-normalized application aggregate. Each
+implementation is summarized using the geometric mean of its per-workload
+median ratios:
+
+```text
+speedup vs baseline = geomean(baseline median / implementation median)
+native performance = geomean(native median / implementation median) * 100%
+time vs native = geomean(implementation median / native median)
+```
+
+Raw nanosecond medians and speedups are not averaged arithmetically because the
+workloads have different scales and performance ratios are multiplicative.
+Cases that were measured but not selected with `--application-case` remain in
+the detailed table and are listed as excluded from the aggregate.
+
 The complete comparison document, including every labeled result and
 `samples_ns` value, is written to `benchmarks/out/comparison.json`.
 Override the path or shared settings when needed:
@@ -116,4 +132,5 @@ uv run --locked --package rv32im-harness rv32im-benchmark-compare \
 
 Pass `--native LABEL=DIRECTORY` when the directory contains an executable named
 for every selected workload. The GCP workflow builds and includes these
-automatically.
+automatically. Repeat `--application-case ID` to select the workloads included
+in its aggregate summary.
