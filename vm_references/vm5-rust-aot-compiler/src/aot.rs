@@ -6,9 +6,11 @@ use rv32vm_rust_common::{
     machine::Machine,
     memory::{ADDRESS_SPACE_SIZE, Image, PAGE_COUNT, PAGE_SHIFT, PAGE_SIZE},
 };
-use rv32vm_rust_x86_block_compiler::{
-    BlockInstruction, CompiledBlock, NativeEntry, NativeProgram, supports,
-};
+use rv32vm_rust_x86_block_compiler::BlockInstruction;
+
+use crate::linked::{LinkedBlock, LinkedEntry, LinkedProgram};
+#[cfg(feature = "profile")]
+use crate::profile::{GeneratedBlockProfile, LoadProfile};
 
 const INSTRUCTIONS_PER_PAGE: usize = PAGE_SIZE / 4;
 /// Longest native candidate formed by the eager compiler.
@@ -83,7 +85,9 @@ impl BlockPage {
 /// A bounded, image-scoped table of eagerly compiled native blocks.
 pub(crate) struct NativeImage {
     pages: Box<[Option<Box<BlockPage>>]>,
-    program: Option<NativeProgram>,
+    program: Option<LinkedProgram>,
+    #[cfg(feature = "profile")]
+    load_profile: LoadProfile,
     #[cfg(test)]
     staged_block_count: usize,
 }
@@ -93,6 +97,8 @@ impl Default for NativeImage {
         Self {
             pages: std::iter::repeat_with(|| None).take(PAGE_COUNT).collect(),
             program: None,
+            #[cfg(feature = "profile")]
+            load_profile: LoadProfile::default(),
             #[cfg(test)]
             staged_block_count: 0,
         }
@@ -146,7 +152,7 @@ impl NativeImage {
                     native.try_compile(&machine, target, limits, &mut blocks, &mut code_bytes);
                 }
 
-                if supports(instruction) && !instruction.ends_block() {
+                if LinkedBlock::supports(instruction) && !instruction.ends_block() {
                     sequence_length += 1;
                     begins_block = sequence_length == MAX_NATIVE_INSTRUCTIONS;
                     if begins_block {
@@ -164,11 +170,19 @@ impl NativeImage {
         {
             native.staged_block_count = blocks.len();
         }
-        native.program = NativeProgram::publish(blocks, limits.code_bytes);
+        native.program = LinkedProgram::publish(blocks, limits.code_bytes);
+        #[cfg(feature = "profile")]
+        {
+            native.load_profile.code_bytes = code_bytes as u64;
+            native.load_profile.mapped_bytes = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.mapped_len() as u64);
+        }
         native
     }
 
-    pub(crate) fn get(&self, pc: u32) -> Option<NativeEntry<'_>> {
+    pub(crate) fn get(&self, pc: u32) -> Option<LinkedEntry<'_>> {
         let Slot::Native(id) = self.slot(pc)? else {
             return None;
         };
@@ -180,7 +194,7 @@ impl NativeImage {
         machine: &Machine,
         pc: u32,
         limits: PreparationLimits,
-        blocks: &mut Vec<CompiledBlock>,
+        blocks: &mut Vec<LinkedBlock>,
         code_bytes: &mut usize,
     ) {
         if pc & 3 != 0
@@ -194,12 +208,12 @@ impl NativeImage {
             return;
         };
         self.set_slot(pc, Slot::Unavailable);
-        if !supports(instruction) {
+        if !LinkedBlock::supports(instruction) {
             return;
         }
 
         let instructions = native_sequence(machine, pc);
-        let Some(block) = CompiledBlock::compile(&instructions) else {
+        let Some(block) = LinkedBlock::compile(&instructions) else {
             return;
         };
         if block.instruction_count() < MIN_NATIVE_INSTRUCTIONS {
@@ -214,8 +228,18 @@ impl NativeImage {
 
         *code_bytes = next_code_bytes;
         let id = BlockId::new(blocks.len());
+        #[cfg(feature = "profile")]
+        {
+            let profile = GeneratedBlockProfile::from_compiled(&block);
+            self.load_profile.record_block(profile);
+        }
         blocks.push(block);
         self.set_slot(pc, Slot::Native(id));
+    }
+
+    #[cfg(feature = "profile")]
+    pub(crate) const fn load_profile(&self) -> LoadProfile {
+        self.load_profile
     }
 
     fn slot(&self, pc: u32) -> Option<Slot> {
@@ -256,7 +280,7 @@ fn native_sequence(machine: &Machine, start_pc: u32) -> Vec<BlockInstruction> {
     loop {
         let instruction = machine.fetch_decode(pc);
         let ends_sequence = instruction.as_ref().map_or(true, |instruction| {
-            instruction.ends_block() || !supports(*instruction)
+            instruction.ends_block() || !LinkedBlock::supports(*instruction)
         });
         instructions.push(instruction);
         if ends_sequence || instructions.len() == MAX_NATIVE_INSTRUCTIONS {
@@ -273,9 +297,9 @@ fn native_sequence(machine: &Machine, start_pc: u32) -> Vec<BlockInstruction> {
 #[cfg(test)]
 mod tests {
     use rv32vm_rust_common::{machine::Machine, memory::IMAGE_START};
-    use rv32vm_rust_x86_block_compiler::CompiledBlock;
 
     use super::{MAX_CODE_BYTES, NativeImage, PreparationLimits, native_sequence};
+    use crate::linked::LinkedBlock;
     use crate::test_support::{addi, beq, image_with_code_at, lw};
 
     #[test]
@@ -368,7 +392,7 @@ mod tests {
     fn emitted_code_limit_accepts_an_exact_fit() {
         let image = image_with_code_at(&[addi(5, 5, 1), addi(5, 5, 1), lw(6, 0, 0)], IMAGE_START);
         let machine = Machine::new(&image, &[], 0);
-        let code_len = CompiledBlock::compile(&native_sequence(&machine, IMAGE_START))
+        let code_len = LinkedBlock::compile(&native_sequence(&machine, IMAGE_START))
             .unwrap()
             .code_len();
 
@@ -379,5 +403,27 @@ mod tests {
 
         assert_eq!(exact.staged_block_count(), 1);
         assert_eq!(short.staged_block_count(), 0);
+    }
+
+    #[cfg(feature = "profile")]
+    #[test]
+    fn records_reusable_load_profile_for_generated_blocks() {
+        let image = image_with_code_at(&[addi(5, 5, 1), beq(0, 0, -4)], IMAGE_START);
+
+        let native = NativeImage::prepare(&image);
+        let profile = native.load_profile();
+
+        assert_eq!(profile.compiled_blocks, 1);
+        assert_eq!(profile.native_guest_instructions, 2);
+        assert!(profile.code_bytes > 0);
+        assert_eq!(profile.branch_blocks, 1);
+        assert_eq!(profile.fallthrough_blocks, 0);
+        assert_eq!(profile.direct_jump_blocks, 0);
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_os = "linux",
+            target_pointer_width = "64"
+        ))]
+        assert!(profile.mapped_bytes >= profile.code_bytes);
     }
 }

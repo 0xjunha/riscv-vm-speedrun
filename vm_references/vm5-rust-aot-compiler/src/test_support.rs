@@ -22,6 +22,16 @@ pub(crate) fn beq(rs1: u32, rs2: u32, offset: i32) -> u32 {
         | 0x63
 }
 
+pub(crate) fn jal(rd: u32, offset: i32) -> u32 {
+    let immediate = offset as u32 & 0x1f_ffff;
+    ((immediate >> 20) << 31)
+        | (((immediate >> 1) & 0x3ff) << 21)
+        | (((immediate >> 11) & 1) << 20)
+        | (((immediate >> 12) & 0xff) << 12)
+        | (rd << 7)
+        | 0x6f
+}
+
 pub(crate) fn image_with_code_at(code: &[u32], start: u32) -> Image {
     let mut permissions = vec![0; PAGE_COUNT];
     let mut pages = std::iter::repeat_with(|| None)
