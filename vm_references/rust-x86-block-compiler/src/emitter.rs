@@ -94,6 +94,102 @@ struct PreparedInstruction {
     instruction: DecodedInstruction,
     lowering: Lowering,
     preferred_successor: Option<u32>,
+    memory_validation: MemoryValidation,
+}
+
+#[derive(Clone, Copy)]
+struct MemoryValidation {
+    alignment: bool,
+    permission: bool,
+}
+
+impl MemoryValidation {
+    const FULL: Self = Self {
+        alignment: true,
+        permission: true,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SymbolicValue {
+    Constant(u32),
+    Affine { root: u16, offset: u32 },
+}
+
+impl SymbolicValue {
+    const fn wrapping_add(self, value: u32) -> Self {
+        match self {
+            Self::Constant(current) => Self::Constant(current.wrapping_add(value)),
+            Self::Affine { root, offset } => Self::Affine {
+                root,
+                offset: offset.wrapping_add(value),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProvenPage {
+    Constant(u32),
+    ExactAddress(SymbolicValue),
+}
+
+impl ProvenPage {
+    const fn for_address(address: SymbolicValue) -> Self {
+        match address {
+            SymbolicValue::Constant(address) => Self::Constant(address >> PAGE_SHIFT),
+            address => Self::ExactAddress(address),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PermissionProof {
+    page: ProvenPage,
+    permission: u8,
+}
+
+#[derive(Clone, Copy)]
+struct AlignmentProof {
+    address: SymbolicValue,
+    bytes: u32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct MemoryCheckStats {
+    accesses: usize,
+    alignment_candidates: usize,
+    alignment_checks: usize,
+    permission_checks: usize,
+}
+
+impl MemoryCheckStats {
+    fn for_instructions(instructions: &[PreparedInstruction]) -> Self {
+        instructions
+            .iter()
+            .fold(Self::default(), |mut stats, prepared| {
+                let width = match prepared.lowering {
+                    Lowering::Load { width, .. } | Lowering::Store { width, .. } => width,
+                    _ => return stats,
+                };
+                stats.accesses += 1;
+                let needs_alignment = width.bytes() != 1;
+                stats.alignment_candidates += usize::from(needs_alignment);
+                stats.alignment_checks +=
+                    usize::from(needs_alignment && prepared.memory_validation.alignment);
+                stats.permission_checks += usize::from(prepared.memory_validation.permission);
+                stats
+            })
+    }
+
+    fn repeated(self, copies: usize) -> Option<Self> {
+        Some(Self {
+            accesses: self.accesses.checked_mul(copies)?,
+            alignment_candidates: self.alignment_candidates.checked_mul(copies)?,
+            alignment_checks: self.alignment_checks.checked_mul(copies)?,
+            permission_checks: self.permission_checks.checked_mul(copies)?,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -766,6 +862,7 @@ pub struct CompiledBlock {
         allow(dead_code)
     )]
     pub(crate) optimization_events: Vec<OptimizationEvent>,
+    memory_checks: MemoryCheckStats,
 }
 
 impl CompiledBlock {
@@ -882,6 +979,26 @@ impl CompiledBlock {
     /// cycle. Grouped loops retain the per-cycle count.
     pub const fn elided_shift_count(&self) -> usize {
         self.elided_shift_count
+    }
+
+    /// Number of emitted guest load and store instructions.
+    pub const fn memory_accesses(&self) -> usize {
+        self.memory_checks.accesses
+    }
+
+    /// Number of non-byte accesses that would ordinarily require alignment guards.
+    pub const fn memory_alignment_candidates(&self) -> usize {
+        self.memory_checks.alignment_candidates
+    }
+
+    /// Number of alignment guards retained after local proof reuse.
+    pub const fn memory_alignment_checks(&self) -> usize {
+        self.memory_checks.alignment_checks
+    }
+
+    /// Number of permission/range guards retained after local proof reuse.
+    pub const fn memory_permission_checks(&self) -> usize {
+        self.memory_checks.permission_checks
     }
 }
 
@@ -1043,6 +1160,7 @@ fn compile_blocks(
                 instruction,
                 lowering,
                 preferred_successor,
+                memory_validation: MemoryValidation::FULL,
             });
             seen_pcs.push(instruction.pc());
             consumed += 1;
@@ -1067,6 +1185,7 @@ fn compile_blocks(
         }
     }
 
+    plan_memory_validations(&mut prepared);
     let instruction_count = prepared.len();
     let emissions = PureSpanPlan::analyze(&prepared);
     let plan = if closes_loop {
@@ -1076,6 +1195,7 @@ fn compile_blocks(
     };
     let uncached_register_accesses = plan.uncached_accesses;
     let cached_register_accesses = plan.cached_accesses;
+    let memory_checks = MemoryCheckStats::for_instructions(&prepared);
 
     if closes_loop {
         debug_assert!(!final_returned);
@@ -1089,6 +1209,7 @@ fn compile_blocks(
             prepared.instruction,
             prepared.lowering,
             emissions.actions[retired],
+            prepared.memory_validation,
             retired,
             preferred_successor,
         )?;
@@ -1112,6 +1233,7 @@ fn compile_blocks(
         fused_rotate_count: emissions.fused_rotates,
         elided_shift_count: emissions.elided_shifts,
         optimization_events: emissions.optimization_events(),
+        memory_checks,
     })
 }
 
@@ -1126,6 +1248,7 @@ fn emit_counted_loop(
     let minimum_instruction_count = instruction_count.checked_mul(unroll_factor)?;
     let uncached_register_accesses = plan.uncached_accesses;
     let cached_register_accesses = plan.cached_accesses;
+    let memory_checks = MemoryCheckStats::for_instructions(prepared).repeated(unroll_factor)?;
     let mut emitter = Emitter::new_loop(plan, minimum_instruction_count)?;
     let loop_start = emitter.code.len();
 
@@ -1137,6 +1260,7 @@ fn emit_counted_loop(
                 prepared.instruction,
                 prepared.lowering,
                 emissions.actions[offset],
+                prepared.memory_validation,
                 retired,
                 prepared.preferred_successor,
             )?;
@@ -1160,6 +1284,7 @@ fn emit_counted_loop(
         fused_rotate_count: emissions.fused_rotates,
         elided_shift_count: emissions.elided_shifts,
         optimization_events: emissions.optimization_events(),
+        memory_checks,
     })
 }
 
@@ -1173,6 +1298,230 @@ fn valid_continuation(instruction: DecodedInstruction, lowering: Lowering, succe
         } => successor == fallthrough || (target.is_multiple_of(4) && successor == target),
         Lowering::JumpRegister { .. } => false,
         _ => successor == instruction.pc().wrapping_add(4),
+    }
+}
+
+fn plan_memory_validations(instructions: &mut [PreparedInstruction]) {
+    let mut values = std::array::from_fn(|register| {
+        if register == 0 {
+            SymbolicValue::Constant(0)
+        } else {
+            SymbolicValue::Affine {
+                root: register as u16,
+                offset: 0,
+            }
+        }
+    });
+    let mut next_root = 32_u16;
+    let mut permission_proofs = Vec::<PermissionProof>::new();
+    let mut alignment_proofs = Vec::<AlignmentProof>::new();
+
+    for prepared in instructions {
+        let memory = match prepared.lowering {
+            Lowering::Load {
+                source,
+                offset,
+                width,
+                ..
+            } => Some((source, offset, width, PERM_READ)),
+            Lowering::Store {
+                base,
+                offset,
+                width,
+                ..
+            } => Some((base, offset, width, PERM_WRITE)),
+            _ => None,
+        };
+        if let Some((base, offset, width, permission)) = memory {
+            let address = values[base].wrapping_add(offset);
+            let bytes = width.bytes();
+            let alignment = bytes != 1
+                && !matches!(
+                    address,
+                    SymbolicValue::Constant(address) if address.is_multiple_of(bytes)
+                )
+                && !alignment_proofs
+                    .iter()
+                    .any(|proof| proof_implies_alignment(*proof, address, bytes));
+            let page = ProvenPage::for_address(address);
+            let permission_required = !permission_proofs
+                .iter()
+                .any(|proof| proof.page == page && proof.permission == permission);
+            prepared.memory_validation = MemoryValidation {
+                alignment,
+                permission: permission_required,
+            };
+
+            if let Some(proof) = alignment_proofs
+                .iter_mut()
+                .find(|proof| proof.address == address)
+            {
+                proof.bytes = proof.bytes.max(bytes);
+            } else {
+                alignment_proofs.push(AlignmentProof { address, bytes });
+            }
+            if permission_required {
+                permission_proofs.push(PermissionProof { page, permission });
+            }
+        }
+
+        update_symbolic_values(&mut values, &mut next_root, prepared.lowering);
+    }
+}
+
+fn proof_implies_alignment(proof: AlignmentProof, address: SymbolicValue, bytes: u32) -> bool {
+    if proof.bytes < bytes {
+        return false;
+    }
+    match (proof.address, address) {
+        (SymbolicValue::Constant(_), SymbolicValue::Constant(address)) => {
+            address.is_multiple_of(bytes)
+        }
+        (
+            SymbolicValue::Affine {
+                root: proof_root,
+                offset: proof_offset,
+            },
+            SymbolicValue::Affine { root, offset },
+        ) => proof_root == root && offset.wrapping_sub(proof_offset).is_multiple_of(bytes),
+        _ => false,
+    }
+}
+
+fn update_symbolic_values(
+    values: &mut [SymbolicValue; 32],
+    next_root: &mut u16,
+    lowering: Lowering,
+) {
+    let write = match lowering {
+        Lowering::WriteImmediate { destination, value }
+        | Lowering::Jump {
+            destination,
+            link: value,
+            ..
+        }
+        | Lowering::JumpRegister {
+            destination,
+            link: value,
+            ..
+        } => Some((destination, SymbolicValue::Constant(value))),
+        Lowering::Immediate {
+            destination,
+            source,
+            operation,
+        } => Some((
+            destination,
+            symbolic_immediate(values[source], operation)
+                .unwrap_or_else(|| fresh_symbolic(next_root)),
+        )),
+        Lowering::Register {
+            destination,
+            left,
+            right,
+            operation,
+        } => Some((
+            destination,
+            symbolic_register(values[left], values[right], operation)
+                .unwrap_or_else(|| fresh_symbolic(next_root)),
+        )),
+        Lowering::Load { destination, .. } => Some((destination, fresh_symbolic(next_root))),
+        Lowering::Branch { .. } | Lowering::Store { .. } | Lowering::Fence => None,
+    };
+    if let Some((destination, value)) = write.filter(|(destination, _)| *destination != 0) {
+        values[destination] = value;
+    }
+}
+
+fn fresh_symbolic(next_root: &mut u16) -> SymbolicValue {
+    let root = *next_root;
+    *next_root = next_root
+        .checked_add(1)
+        .expect("bounded native compilation cannot exhaust symbolic roots");
+    SymbolicValue::Affine { root, offset: 0 }
+}
+
+fn symbolic_immediate(
+    source: SymbolicValue,
+    operation: ImmediateOperation,
+) -> Option<SymbolicValue> {
+    match operation {
+        ImmediateOperation::Add(value) => Some(source.wrapping_add(value)),
+        ImmediateOperation::Xor(0) | ImmediateOperation::Or(0) => Some(source),
+        ImmediateOperation::And(u32::MAX) => Some(source),
+        _ => {
+            let SymbolicValue::Constant(source) = source else {
+                return None;
+            };
+            let value = match operation {
+                ImmediateOperation::Add(value) => source.wrapping_add(value),
+                ImmediateOperation::SetLessThan(value) => {
+                    u32::from((source as i32) < (value as i32))
+                }
+                ImmediateOperation::SetBelow(value) => u32::from(source < value),
+                ImmediateOperation::Xor(value) => source ^ value,
+                ImmediateOperation::Or(value) => source | value,
+                ImmediateOperation::And(value) => source & value,
+                ImmediateOperation::ShiftLeft(count) => source.wrapping_shl(u32::from(count)),
+                ImmediateOperation::ShiftRight(count) => source.wrapping_shr(u32::from(count)),
+                ImmediateOperation::ShiftRightArithmetic(count) => {
+                    (source as i32).wrapping_shr(u32::from(count)) as u32
+                }
+            };
+            Some(SymbolicValue::Constant(value))
+        }
+    }
+}
+
+fn symbolic_register(
+    left: SymbolicValue,
+    right: SymbolicValue,
+    operation: RegisterOperation,
+) -> Option<SymbolicValue> {
+    if left == right {
+        return match operation {
+            RegisterOperation::Subtract | RegisterOperation::Xor => {
+                Some(SymbolicValue::Constant(0))
+            }
+            RegisterOperation::Or | RegisterOperation::And => Some(left),
+            _ => None,
+        };
+    }
+    match (left, right, operation) {
+        (left, SymbolicValue::Constant(0), RegisterOperation::Add)
+        | (SymbolicValue::Constant(0), left, RegisterOperation::Add)
+        | (left, SymbolicValue::Constant(0), RegisterOperation::Subtract)
+        | (left, SymbolicValue::Constant(0), RegisterOperation::Xor)
+        | (SymbolicValue::Constant(0), left, RegisterOperation::Xor)
+        | (left, SymbolicValue::Constant(0), RegisterOperation::Or)
+        | (SymbolicValue::Constant(0), left, RegisterOperation::Or) => Some(left),
+        (left, SymbolicValue::Constant(value), RegisterOperation::Add)
+        | (SymbolicValue::Constant(value), left, RegisterOperation::Add) => {
+            Some(left.wrapping_add(value))
+        }
+        (left, SymbolicValue::Constant(value), RegisterOperation::Subtract) => {
+            Some(left.wrapping_add(value.wrapping_neg()))
+        }
+        (left, SymbolicValue::Constant(u32::MAX), RegisterOperation::And)
+        | (SymbolicValue::Constant(u32::MAX), left, RegisterOperation::And) => Some(left),
+        (SymbolicValue::Constant(left), SymbolicValue::Constant(right), operation) => {
+            let value = match operation {
+                RegisterOperation::Add => left.wrapping_add(right),
+                RegisterOperation::Subtract => left.wrapping_sub(right),
+                RegisterOperation::ShiftLeft => left.wrapping_shl(right & 31),
+                RegisterOperation::SetLessThan => u32::from((left as i32) < (right as i32)),
+                RegisterOperation::SetBelow => u32::from(left < right),
+                RegisterOperation::Xor => left ^ right,
+                RegisterOperation::ShiftRight => left.wrapping_shr(right & 31),
+                RegisterOperation::ShiftRightArithmetic => {
+                    (left as i32).wrapping_shr(right & 31) as u32
+                }
+                RegisterOperation::Or => left | right,
+                RegisterOperation::And => left & right,
+                _ => return None,
+            };
+            Some(SymbolicValue::Constant(value))
+        }
+        _ => None,
     }
 }
 
@@ -1292,13 +1641,18 @@ impl Emitter {
         instruction: DecodedInstruction,
         lowering: Lowering,
         action: EmissionAction,
+        memory_validation: MemoryValidation,
         retired: usize,
         preferred_successor: Option<u32>,
     ) -> Option<Flow> {
         match action {
-            EmissionAction::Original => {
-                self.instruction(instruction, lowering, retired, preferred_successor)
-            }
+            EmissionAction::Original => self.instruction(
+                instruction,
+                lowering,
+                memory_validation,
+                retired,
+                preferred_successor,
+            ),
             EmissionAction::RotateImmediate {
                 destination,
                 source,
@@ -1337,6 +1691,7 @@ impl Emitter {
         &mut self,
         instruction: DecodedInstruction,
         lowering: Lowering,
+        memory_validation: MemoryValidation,
         retired: usize,
         preferred_successor: Option<u32>,
     ) -> Option<Flow> {
@@ -1411,13 +1766,22 @@ impl Emitter {
                 offset,
                 width,
                 signed,
+                memory_validation,
             ),
             Lowering::Store {
                 source,
                 base,
                 offset,
                 width,
-            } => self.store(instruction.pc(), retired, source, base, offset, width),
+            } => self.store(
+                instruction.pc(),
+                retired,
+                source,
+                base,
+                offset,
+                width,
+                memory_validation,
+            ),
             Lowering::Fence => Some(Flow::Continue),
         }
     }
@@ -1770,8 +2134,9 @@ impl Emitter {
         offset: u32,
         width: MemoryWidth,
         signed: bool,
+        validation: MemoryValidation,
     ) -> Option<Flow> {
-        self.memory_prefix(source, offset, width, PERM_READ, pc, retired)?;
+        self.memory_prefix(source, offset, width, PERM_READ, pc, retired, validation)?;
         if destination == 0 {
             return Some(Flow::Continue);
         }
@@ -1814,8 +2179,9 @@ impl Emitter {
         base: usize,
         offset: u32,
         width: MemoryWidth,
+        validation: MemoryValidation,
     ) -> Option<Flow> {
-        self.memory_prefix(base, offset, width, PERM_WRITE, pc, retired)?;
+        self.memory_prefix(base, offset, width, PERM_WRITE, pc, retired, validation)?;
         if source != 0
             && let Some(host) = self.cached_host_for_read(source)
         {
@@ -1831,6 +2197,7 @@ impl Emitter {
         Some(Flow::Continue)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn memory_prefix(
         &mut self,
         base: usize,
@@ -1839,28 +2206,31 @@ impl Emitter {
         permission: u8,
         pc: u32,
         retired: usize,
+        validation: MemoryValidation,
     ) -> Option<()> {
         self.load_eax(base);
         if offset != 0 {
             self.eax_alu_immediate(0, 0x05, offset);
         }
         let bytes = width.bytes();
-        if bytes != 1 {
+        if validation.alignment && bytes != 1 {
             self.code.push(0xa9);
             self.code.extend_from_slice(&(bytes - 1).to_le_bytes());
             self.side_exit_conditional(0x85, pc, retired)?;
         }
 
-        // Naturally aligned byte, halfword, and word accesses cannot cross a
-        // 4 KiB guest page, so checking the first page is sufficient. The
-        // permission table has a permanent zero guard entry for every RV32
-        // page outside the architectural address space, making this check the
-        // range guard as well. The complete guest address remains in eax for
-        // direct flat-memory access after the check passes.
-        self.code
-            .extend_from_slice(&[0x89, 0xc1, 0xc1, 0xe9, PAGE_SHIFT as u8]);
-        self.code.extend_from_slice(&[0xf6, 0x04, 0x0e, permission]);
-        self.side_exit_conditional(0x84, pc, retired)?;
+        if validation.permission {
+            // Naturally aligned byte, halfword, and word accesses cannot cross a
+            // 4 KiB guest page, so checking the first page is sufficient. The
+            // permission table has a permanent zero guard entry for every RV32
+            // page outside the architectural address space, making this check the
+            // range guard as well. The complete guest address remains in eax for
+            // direct flat-memory access after the check passes.
+            self.code
+                .extend_from_slice(&[0x89, 0xc1, 0xc1, 0xe9, PAGE_SHIFT as u8]);
+            self.code.extend_from_slice(&[0xf6, 0x04, 0x0e, permission]);
+            self.side_exit_conditional(0x84, pc, retired)?;
+        }
         Some(())
     }
 
@@ -2645,6 +3015,16 @@ mod tests {
         ((count & 31) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | 0x13
     }
 
+    fn sw(rs2: u32, rs1: u32, immediate: i32) -> u32 {
+        let immediate = immediate as u32 & 0xfff;
+        ((immediate >> 5) << 25)
+            | (rs2 << 20)
+            | (rs1 << 15)
+            | (2 << 12)
+            | ((immediate & 0x1f) << 7)
+            | 0x23
+    }
+
     fn decoded(machine: &Machine, start: u32, count: usize) -> Vec<BlockInstruction> {
         (0..count)
             .map(|index| machine.fetch_decode(start + index as u32 * 4))
@@ -2677,6 +3057,53 @@ mod tests {
         let block = decoded_block(&machine, IMAGE_START);
 
         assert_eq!(compile(&block).unwrap().instruction_count, 1);
+    }
+
+    #[test]
+    fn reuses_only_dominating_exact_memory_validation_proofs() {
+        let machine = machine_with_code(&[lw(5, 6, 0), lw(0, 6, 0), lw(7, 6, 4)], IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+
+        assert_eq!(compiled.memory_accesses(), 3);
+        assert_eq!(compiled.memory_alignment_candidates(), 3);
+        // The first aligned address also proves alignment at a congruent
+        // offset, but only the exact repeated address proves its page.
+        assert_eq!(compiled.memory_alignment_checks(), 1);
+        assert_eq!(compiled.memory_permission_checks(), 2);
+
+        let machine = machine_with_code(&[lw(6, 6, 0), lw(5, 6, 0)], IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        // The first load changes the base value, so neither proof reaches the
+        // second dynamic address.
+        assert_eq!(compiled.memory_alignment_checks(), 2);
+        assert_eq!(compiled.memory_permission_checks(), 2);
+    }
+
+    #[test]
+    fn permission_proofs_do_not_cross_read_write_kinds() {
+        let machine = machine_with_code(&[sw(5, 6, 0), sw(7, 6, 0), lw(8, 6, 0)], IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+
+        assert_eq!(compiled.memory_accesses(), 3);
+        assert_eq!(compiled.memory_alignment_checks(), 1);
+        // The repeated store reuses its write proof. The load still needs an
+        // independent read proof even though it uses the same exact address.
+        assert_eq!(compiled.memory_permission_checks(), 2);
+    }
+
+    #[test]
+    fn recognizes_affine_aliases_but_keeps_wrapping_page_boundaries_checked() {
+        let machine = machine_with_code(&[addi(7, 6, 4), lw(5, 7, 0), lw(8, 6, 4)], IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert_eq!(compiled.memory_alignment_checks(), 1);
+        assert_eq!(compiled.memory_permission_checks(), 1);
+
+        let machine = machine_with_code(&[addi(6, 0, -4), lw(5, 6, 0), lw(7, 6, 4)], IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        // Both effective addresses are statically aligned, but RV32 wrapping
+        // moves the second from the final padded page back to page zero.
+        assert_eq!(compiled.memory_alignment_checks(), 0);
+        assert_eq!(compiled.memory_permission_checks(), 2);
     }
 
     #[test]

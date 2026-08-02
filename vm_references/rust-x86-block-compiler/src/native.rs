@@ -332,7 +332,10 @@ rv32vm_test_call_loop_with_callee_sentinels:
     use rv32vm_rust_common::{
         GuestTrap,
         machine::{Machine, Termination},
-        memory::{ADDRESS_SPACE_SIZE, IMAGE_START, PAGE_SIZE, STACK_END, STACK_START},
+        memory::{
+            ADDRESS_SPACE_SIZE, IMAGE_START, Image, PAGE_COUNT, PAGE_SHIFT, PAGE_SIZE, PERM_EXEC,
+            PERM_READ, STACK_END, STACK_START,
+        },
     };
 
     use super::{NativeBlock, NativeProgram, loop_iteration_budget};
@@ -399,6 +402,37 @@ rv32vm_test_call_loop_with_callee_sentinels:
         let block = decoded_block(&machine, IMAGE_START);
         let compiled = CompiledBlock::compile(&block).unwrap();
         NativeBlock::publish(compiled, usize::MAX).unwrap()
+    }
+
+    fn machine_with_data_permission(code: &[u32], address: u32, permission: u8) -> Machine {
+        let mut permissions = vec![0; PAGE_COUNT];
+        let mut pages = std::iter::repeat_with(|| None)
+            .take(PAGE_COUNT)
+            .collect::<Vec<_>>();
+        for (index, instruction) in code.iter().enumerate() {
+            let instruction_address = IMAGE_START + index as u32 * 4;
+            let page_number = (instruction_address >> PAGE_SHIFT) as usize;
+            permissions[page_number] = PERM_READ | PERM_EXEC;
+            let page = pages[page_number].get_or_insert_with(|| Box::new([0; PAGE_SIZE]));
+            let offset = instruction_address as usize & (PAGE_SIZE - 1);
+            page[offset..offset + 4].copy_from_slice(&instruction.to_le_bytes());
+        }
+        let data_page = (address >> PAGE_SHIFT) as usize;
+        permissions[data_page] = permission;
+        pages[data_page].get_or_insert_with(|| Box::new([0; PAGE_SIZE]));
+        Machine::new(
+            &Image {
+                entry: IMAGE_START,
+                permissions,
+                pages,
+                executable_file_ranges: std::iter::once(
+                    IMAGE_START..IMAGE_START + code.len() as u32 * 4,
+                )
+                .collect(),
+            },
+            &[],
+            0,
+        )
     }
 
     fn decoded(machine: &Machine, start: u32, count: usize) -> Vec<BlockInstruction> {
@@ -1907,6 +1941,106 @@ rv32vm_test_call_loop_with_callee_sentinels:
         assert_eq!(actual.registers[5], 13);
         assert_eq!(actual.registers[6], 27);
         assert_eq!(actual.registers[7], 41);
+    }
+
+    #[test]
+    fn reused_memory_proofs_preserve_fault_order_and_dynamic_bases() {
+        let code = [load(0, 6, 2, 0), load(5, 6, 2, 0)];
+        let native = native_block(&code);
+        let mut machine = machine_with_code(&code, IMAGE_START);
+        machine.registers[5] = 0xfeed_face;
+        machine.registers[6] = 0;
+
+        let outcome = execute_native(&native, &mut machine);
+        assert_eq!(outcome.retired(), 0);
+        assert_eq!(machine.registers[5], 0xfeed_face);
+        let trap = interpret_side_exit(&mut machine, outcome);
+        assert_eq!(trap.cause, "LoadAccessFault");
+        assert_eq!(trap.pc, IMAGE_START);
+
+        let code = [load(6, 6, 2, 0), load(5, 6, 2, 0)];
+        let native = native_block(&code);
+        let mut machine = machine_with_code(&code, IMAGE_START);
+        machine.registers[5] = 0xfeed_face;
+        machine.registers[6] = STACK_START;
+        machine
+            .memory
+            .store(STACK_START, 4, 0, IMAGE_START)
+            .unwrap();
+
+        let outcome = execute_native(&native, &mut machine);
+        assert_eq!(outcome.retired(), 1);
+        assert_eq!(machine.registers[6], 0);
+        assert_eq!(machine.registers[5], 0xfeed_face);
+        let trap = interpret_side_exit(&mut machine, outcome);
+        assert_eq!(trap.cause, "LoadAccessFault");
+        assert_eq!(trap.pc, IMAGE_START + 4);
+    }
+
+    #[test]
+    fn congruent_alignment_proofs_do_not_hide_page_crossing_faults() {
+        let code = [load(5, 6, 2, 0), load(7, 6, 2, 4)];
+        let native = native_block(&code);
+        let mut machine = machine_with_code(&code, IMAGE_START);
+        machine.registers[6] = IMAGE_START + PAGE_SIZE as u32 - 4;
+
+        let outcome = execute_native(&native, &mut machine);
+        assert_eq!(outcome.retired(), 1);
+        let trap = interpret_side_exit(&mut machine, outcome);
+        assert_eq!(trap.cause, "LoadAccessFault");
+        assert_eq!(trap.pc, IMAGE_START + 4);
+        assert_eq!(trap.value, IMAGE_START + PAGE_SIZE as u32);
+    }
+
+    #[test]
+    fn memory_proofs_are_local_to_each_entry_invocation_and_permission_view() {
+        let code = [load(5, 6, 2, 0), load(7, 6, 2, 0)];
+        let native = native_block(&code);
+        let address = IMAGE_START + PAGE_SIZE as u32;
+
+        let mut readable = machine_with_data_permission(&code, address, PERM_READ);
+        readable.registers[6] = address;
+        let outcome = execute_native(&native, &mut readable);
+        assert!(!outcome.needs_interpreter());
+        assert_eq!(outcome.retired(), 2);
+
+        let mut denied = machine_with_data_permission(&code, address, 0);
+        denied.registers[5] = 0xfeed_face;
+        denied.registers[7] = 0xdead_beef;
+        denied.registers[6] = address;
+        let outcome = execute_native(&native, &mut denied);
+        assert_eq!(outcome.retired(), 0);
+        assert_eq!(denied.registers[5], 0xfeed_face);
+        assert_eq!(denied.registers[7], 0xdead_beef);
+        let trap = interpret_side_exit(&mut denied, outcome);
+        assert_eq!(trap.cause, "LoadAccessFault");
+        assert_eq!(trap.pc, IMAGE_START);
+        assert_eq!(trap.value, address);
+    }
+
+    #[test]
+    fn region_memory_proofs_follow_only_the_executed_branch_path() {
+        let code = [load(5, 6, 2, 0), branch(0, 7, 0, 8), NOP, load(8, 6, 2, 0)];
+        let machine = machine_with_code(&code, IMAGE_START);
+        let native = native_region(&machine, &[(IMAGE_START, 2), (IMAGE_START + 12, 1)]);
+
+        let mut preferred = machine_with_code(&code, IMAGE_START);
+        preferred.registers[6] = STACK_START;
+        preferred.registers[7] = 0;
+        let outcome = execute_native(&native, &mut preferred);
+        assert!(!outcome.needs_interpreter());
+        assert_eq!(outcome.next_pc(), IMAGE_START + 16);
+        assert_eq!(outcome.retired(), 3);
+
+        let mut alternate = machine_with_code(&code, IMAGE_START);
+        alternate.registers[6] = STACK_START;
+        alternate.registers[7] = 1;
+        alternate.registers[8] = 0xfeed_face;
+        let outcome = execute_native(&native, &mut alternate);
+        assert!(!outcome.needs_interpreter());
+        assert_eq!(outcome.next_pc(), IMAGE_START + 8);
+        assert_eq!(outcome.retired(), 2);
+        assert_eq!(alternate.registers[8], 0xfeed_face);
     }
 
     #[test]
