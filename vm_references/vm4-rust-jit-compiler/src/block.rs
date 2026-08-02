@@ -21,9 +21,9 @@ impl BasicBlock {
 
         loop {
             let instruction = machine.fetch_decode(pc);
-            let ends_block = instruction.as_ref().map_or(true, |instruction| {
-                instruction.ends_block() || needs_precise_execution(*instruction)
-            });
+            let ends_block = instruction
+                .as_ref()
+                .map_or(true, |instruction| instruction.ends_block());
             instructions.push(instruction);
             if ends_block || instructions.len() == MAX_BLOCK_INSTRUCTIONS {
                 break;
@@ -47,11 +47,6 @@ impl BasicBlock {
     pub(crate) fn len(&self) -> usize {
         self.instructions.len()
     }
-}
-
-fn needs_precise_execution(instruction: DecodedInstruction) -> bool {
-    matches!(instruction.opcode(), 0x03 | 0x23)
-        || (instruction.opcode() == 0x33 && instruction.funct7() == 1 && instruction.funct3() != 0)
 }
 
 #[cfg(test)]
@@ -83,10 +78,11 @@ mod tests {
     }
 
     #[test]
-    fn translation_isolates_instructions_that_need_precise_execution() {
-        let machine = machine_with_code_at(&[addi(5, 0, 1), lw(6, 0, 0), NOP], IMAGE_START);
+    fn translation_keeps_precise_native_operations_in_blocks() {
+        let ecall = 0x0000_0073;
+        let machine = machine_with_code_at(&[addi(5, 0, 1), lw(6, 0, 0), NOP, ecall], IMAGE_START);
 
-        assert_eq!(BasicBlock::translate(&machine, IMAGE_START).len(), 2);
-        assert_eq!(BasicBlock::translate(&machine, IMAGE_START + 4).len(), 1);
+        assert_eq!(BasicBlock::translate(&machine, IMAGE_START).len(), 4);
+        assert_eq!(BasicBlock::translate(&machine, IMAGE_START + 4).len(), 3);
     }
 }

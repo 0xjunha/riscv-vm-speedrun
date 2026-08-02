@@ -1,5 +1,4 @@
-use std::marker::PhantomData;
-use std::ops::Range;
+use std::{marker::PhantomData, ops::Range, sync::Arc};
 
 use crate::error::GuestTrap;
 
@@ -32,8 +31,54 @@ pub struct Image {
     pub executable_file_ranges: Vec<Range<u32>>,
 }
 
+/// Immutable permission backing shared by runs of one loaded image.
+#[derive(Clone)]
+pub(crate) struct PermissionTemplate {
+    permissions: Arc<[u8]>,
+}
+
+impl PermissionTemplate {
+    pub(crate) fn new(image: &Image) -> Self {
+        // Copy only architectural permissions. The zero tail makes every
+        // possible RV32 page lookup safe without granting out-of-range access.
+        let mut permissions = vec![0; RV32_PAGE_COUNT];
+        permissions[..PAGE_COUNT].copy_from_slice(&image.permissions[..PAGE_COUNT]);
+
+        let input_first = (INPUT_START >> PAGE_SHIFT) as usize;
+        let input_last = (INPUT_END >> PAGE_SHIFT) as usize;
+        permissions[input_first..input_last].fill(PERM_READ);
+
+        let stack_first = (STACK_START >> PAGE_SHIFT) as usize;
+        let stack_last = (STACK_END >> PAGE_SHIFT) as usize;
+        permissions[stack_first..stack_last].fill(PERM_READ | PERM_WRITE);
+
+        Self {
+            permissions: permissions.into(),
+        }
+    }
+
+    fn clone_permissions(&self) -> Arc<[u8]> {
+        Arc::clone(&self.permissions)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn as_ptr(&self) -> *const u8 {
+        self.permissions.as_ptr()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.permissions)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get(&self, page: usize) -> u8 {
+        self.permissions[page]
+    }
+}
+
 pub struct Memory {
-    permissions: Vec<u8>,
+    permissions: Arc<[u8]>,
     pages: Vec<Option<Page>>,
     address_space: Option<Box<[u8]>>,
 }
@@ -67,38 +112,77 @@ impl DirectMemory<'_> {
     pub const fn address_space_ptr(&self) -> *mut u8 {
         self.address_space
     }
+
+    /// Compatibility accessors used by the shared VM4 native block compiler.
+    pub const fn permissions(&self) -> *const u8 {
+        self.permissions
+    }
+
+    pub const fn data(&self) -> *mut u8 {
+        self.address_space
+    }
 }
+
+/// VM4 and VM5 intentionally share the same run-local memory view.
+pub type NativeMemoryView<'a> = DirectMemory<'a>;
 
 impl Memory {
     pub fn new(image: &Image, input: &[u8]) -> Self {
-        let mut permissions = vec![0; RV32_PAGE_COUNT];
-        permissions[..PAGE_COUNT].copy_from_slice(&image.permissions);
-        let mut memory = Self {
-            permissions,
-            pages: image.pages.clone(),
-            address_space: None,
-        };
+        let permissions = PermissionTemplate::new(image);
+        Self::from_permission_template(image, input, &permissions)
+    }
 
+    pub(crate) fn from_permission_template(
+        image: &Image,
+        input: &[u8],
+        permissions: &PermissionTemplate,
+    ) -> Self {
+        let mut pages = image.pages.clone();
         let input_first = (INPUT_START >> PAGE_SHIFT) as usize;
-        let input_last = (INPUT_END >> PAGE_SHIFT) as usize;
-        memory.permissions[input_first..input_last].fill(PERM_READ);
         for (index, chunk) in input.chunks(PAGE_SIZE).enumerate() {
             if chunk.iter().any(|byte| *byte != 0) {
                 let mut page = Box::new([0; PAGE_SIZE]);
                 page[..chunk.len()].copy_from_slice(chunk);
-                memory.pages[input_first + index] = Some(page);
+                pages[input_first + index] = Some(page);
             }
         }
 
-        let stack_first = (STACK_START >> PAGE_SHIFT) as usize;
-        let stack_last = (STACK_END >> PAGE_SHIFT) as usize;
-        memory.permissions[stack_first..stack_last].fill(PERM_READ | PERM_WRITE);
-        memory
+        Self {
+            permissions: permissions.clone_permissions(),
+            pages,
+            address_space: None,
+        }
     }
 
-    /// Creates a direct view for one run, initializing its bounded contiguous
-    /// address space on first use.
-    pub fn direct_memory(&mut self) -> DirectMemory<'_> {
+    pub(crate) fn from_permission_template_direct(
+        image: &Image,
+        input: &[u8],
+        permissions: &PermissionTemplate,
+    ) -> Self {
+        let mut address_space = vec![0; ADDRESS_SPACE_SIZE as usize].into_boxed_slice();
+        for (page_number, page) in image.pages.iter().enumerate() {
+            let Some(page) = page else {
+                continue;
+            };
+            let offset = page_number * PAGE_SIZE;
+            address_space[offset..offset + PAGE_SIZE].copy_from_slice(page.as_ref());
+        }
+
+        for (index, chunk) in input.chunks(PAGE_SIZE).enumerate() {
+            if chunk.iter().any(|byte| *byte != 0) {
+                let offset = INPUT_START as usize + index * PAGE_SIZE;
+                address_space[offset..offset + chunk.len()].copy_from_slice(chunk);
+            }
+        }
+
+        Self {
+            permissions: permissions.clone_permissions(),
+            pages: Vec::new(),
+            address_space: Some(address_space),
+        }
+    }
+
+    fn ensure_address_space(&mut self) -> &mut Box<[u8]> {
         if self.address_space.is_none() {
             let mut address_space = vec![0; ADDRESS_SPACE_SIZE as usize].into_boxed_slice();
             for (page_number, page) in self.pages.iter_mut().enumerate() {
@@ -112,17 +196,36 @@ impl Memory {
             self.address_space = Some(address_space);
         }
 
-        let permissions = self.permissions.as_ptr();
-        let address_space = self
-            .address_space
+        self.address_space
             .as_mut()
             .expect("direct address space was initialized above")
-            .as_mut_ptr();
+    }
+
+    /// Creates a direct view for one run, initializing its bounded contiguous
+    /// address space on first use.
+    pub fn direct_memory(&mut self) -> DirectMemory<'_> {
+        let permissions = self.permissions.as_ptr();
+        let address_space = self.ensure_address_space().as_mut_ptr();
         DirectMemory {
             permissions,
             address_space,
             _memory: PhantomData,
         }
+    }
+
+    /// Returns the same stable direct view used by the VM4 native runner.
+    pub fn native_view(&mut self) -> NativeMemoryView<'_> {
+        self.direct_memory()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn permission_identity(&self) -> *const u8 {
+        self.permissions.as_ptr()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn direct_memory_is_initialized(&self) -> bool {
+        self.address_space.is_some() && self.pages.is_empty()
     }
 
     pub fn check(
@@ -403,5 +506,117 @@ mod tests {
 
         assert_ne!(second.permissions_ptr(), first_permissions);
         assert_ne!(second.address_space_ptr(), first_address_space);
+    }
+    #[test]
+    fn oversized_image_cannot_populate_the_native_guard_tail() {
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let mut image = image_with_resident_page(resident, PERM_READ);
+        image.permissions.push(PERM_READ | PERM_WRITE);
+
+        let memory = Memory::new(&image, &[]);
+
+        assert_eq!(PAGE_COUNT, 0x4000);
+        assert_eq!(RV32_PAGE_COUNT, 0x10_0000);
+        assert_eq!(memory.permissions.len(), RV32_PAGE_COUNT);
+        assert_eq!(memory.permissions[resident], PERM_READ);
+        assert!(
+            memory.permissions[PAGE_COUNT..]
+                .iter()
+                .all(|&value| value == 0)
+        );
+    }
+
+    #[test]
+    fn permission_template_contains_fixed_eei_permissions_once() {
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let image = image_with_resident_page(resident, PERM_READ);
+        let template = PermissionTemplate::new(&image);
+        let input_first = (INPUT_START >> PAGE_SHIFT) as usize;
+        let input_last = (INPUT_END >> PAGE_SHIFT) as usize - 1;
+        let stack_first = (STACK_START >> PAGE_SHIFT) as usize;
+        let stack_last = (STACK_END >> PAGE_SHIFT) as usize - 1;
+
+        assert_eq!(template.get(resident), PERM_READ);
+        assert_eq!(template.get(input_first), PERM_READ);
+        assert_eq!(template.get(input_last), PERM_READ);
+        assert_eq!(template.get(stack_first), PERM_READ | PERM_WRITE);
+        assert_eq!(template.get(stack_last), PERM_READ | PERM_WRITE);
+        assert_eq!(template.get(PAGE_COUNT), 0);
+        assert_eq!(template.get(RV32_PAGE_COUNT - 1), 0);
+    }
+
+    #[test]
+    fn permission_template_is_shared_but_run_data_is_not() {
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let image = image_with_resident_page(resident, PERM_READ);
+        let template = PermissionTemplate::new(&image);
+        let mut first = Memory::from_permission_template(&image, &[], &template);
+        let mut second = Memory::from_permission_template(&image, &[], &template);
+
+        assert_eq!(first.permission_identity(), template.as_ptr());
+        assert_eq!(second.permission_identity(), template.as_ptr());
+        assert_eq!(template.strong_count(), 3);
+
+        let first_address_space = first.direct_memory().address_space_ptr();
+        let second_address_space = second.direct_memory().address_space_ptr();
+        assert_ne!(first_address_space, second_address_space);
+    }
+
+    #[test]
+    fn direct_template_construction_skips_sparse_page_cloning() {
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let image = image_with_resident_page(resident, PERM_READ);
+        let template = PermissionTemplate::new(&image);
+        let input = [0x11, 0x22, 0x33, 0x44];
+        let memory = Memory::from_permission_template_direct(&image, &input, &template);
+
+        assert!(memory.pages.is_empty());
+        let address_space = memory.address_space.as_ref().unwrap();
+        assert_eq!(address_space[resident * PAGE_SIZE], 0xa5);
+        assert_eq!(
+            &address_space[INPUT_START as usize..INPUT_START as usize + input.len()],
+            &input
+        );
+        assert_eq!(memory.permission_identity(), template.as_ptr());
+    }
+
+    #[test]
+    fn input_and_stores_remain_fresh_between_runs() {
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let image = image_with_resident_page(resident, PERM_READ);
+        let input = [0x11, 0x22, 0x33, 0x44];
+        let mut first = Memory::new(&image, &input);
+        let second = Memory::new(&image, &input);
+
+        assert_eq!(first.load_u32(INPUT_START), 0x4433_2211);
+        first.store(STACK_START, 4, 0x8877_6655, 0).unwrap();
+
+        assert_eq!(first.load_u32(STACK_START), 0x8877_6655);
+        assert_eq!(second.load_u32(STACK_START), 0);
+    }
+
+    #[test]
+    fn empty_read_accepts_any_address_and_end_inspection() {
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let image = image_with_resident_page(resident, PERM_READ);
+        let memory = Memory::new(&image, &[]);
+
+        assert!(memory.read(u32::MAX, 0).is_empty());
+        assert_eq!(memory.inspect(ADDRESS_SPACE_SIZE, 0), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn native_and_direct_views_publish_the_same_allocations() {
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let mut memory = Memory::new(&image_with_resident_page(resident, PERM_READ), &[]);
+
+        let (native_permissions, native_data) = {
+            let native = memory.native_view();
+            (native.permissions(), native.data())
+        };
+        let direct = memory.direct_memory();
+
+        assert_eq!(direct.permissions_ptr(), native_permissions);
+        assert_eq!(direct.address_space_ptr(), native_data);
     }
 }

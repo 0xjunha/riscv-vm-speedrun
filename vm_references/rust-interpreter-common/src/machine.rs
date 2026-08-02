@@ -1,5 +1,7 @@
 use crate::error::GuestTrap;
-use crate::memory::{INPUT_START, Image, Memory, PERM_EXEC, PERM_READ, STACK_END};
+use crate::memory::{
+    INPUT_START, Image, Memory, PERM_EXEC, PERM_READ, PermissionTemplate, STACK_END,
+};
 
 /// Instruction limit used when none is specified.
 pub const DEFAULT_INSTRUCTION_LIMIT: u64 = 100_000_000;
@@ -14,6 +16,7 @@ pub const MAX_INPUT_LENGTH: usize = 4_194_304;
 
 pub struct LoadedProgram<E> {
     image: Image,
+    permissions: PermissionTemplate,
     engine: E,
 }
 
@@ -22,11 +25,22 @@ impl<E: Engine + Default> LoadedProgram<E> {
         let image = crate::elf::load(elf)?;
         let mut engine = E::default();
         engine.prepare(&image)?;
-        Ok(Self { image, engine })
+        let permissions = PermissionTemplate::new(&image);
+        Ok(Self {
+            image,
+            permissions,
+            engine,
+        })
     }
 
     pub fn run(&mut self, input: &[u8], instruction_limit: u64, output_limit: u32) -> CompletedRun {
-        let mut machine = Machine::new(&self.image, input, output_limit);
+        let mut machine = Machine::from_permission_template(
+            &self.image,
+            input,
+            output_limit,
+            &self.permissions,
+            self.engine.initialize_direct_memory(),
+        );
         let result = self.engine.run(&mut machine, instruction_limit);
         CompletedRun { machine, result }
     }
@@ -35,6 +49,15 @@ impl<E: Engine + Default> LoadedProgram<E> {
 pub trait Engine {
     fn prepare(&mut self, _image: &Image) -> Result<(), String> {
         Ok(())
+    }
+
+    /// Requests direct guest-memory initialization when each run is created.
+    ///
+    /// Interpreter engines retain the sparse default. Native engines whose
+    /// steady state always needs a flat address space may opt in to avoid
+    /// cloning sparse pages immediately before converting them.
+    fn initialize_direct_memory(&self) -> bool {
+        false
     }
 
     fn run(&mut self, machine: &mut Machine, instruction_limit: u64) -> RunResult;
@@ -183,6 +206,25 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(image: &Image, input: &[u8], output_limit: u32) -> Self {
+        Self::with_memory(image, input, output_limit, Memory::new(image, input))
+    }
+
+    fn from_permission_template(
+        image: &Image,
+        input: &[u8],
+        output_limit: u32,
+        permissions: &PermissionTemplate,
+        initialize_direct_memory: bool,
+    ) -> Self {
+        let memory = if initialize_direct_memory {
+            Memory::from_permission_template_direct(image, input, permissions)
+        } else {
+            Memory::from_permission_template(image, input, permissions)
+        };
+        Self::with_memory(image, input, output_limit, memory)
+    }
+
+    fn with_memory(image: &Image, input: &[u8], output_limit: u32, memory: Memory) -> Self {
         let mut registers = [0; 32];
         registers[2] = STACK_END;
         registers[10] = INPUT_START;
@@ -190,7 +232,7 @@ impl Machine {
         Self {
             registers,
             pc: image.entry,
-            memory: Memory::new(image, input),
+            memory,
             output: Vec::new(),
             retired: 0,
             output_limit,
@@ -474,10 +516,58 @@ fn signed_remainder(left: u32, right: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Machine, Termination};
+    use super::{Engine, LoadedProgram, Machine, RunResult, Termination};
     use crate::elf::load;
     use crate::elf::tests::executable;
-    use crate::memory::{IMAGE_START, INPUT_START};
+    use crate::memory::{
+        IMAGE_START, INPUT_START, PAGE_SHIFT, PAGE_SIZE, PERM_EXEC, PERM_READ, STACK_START,
+    };
+
+    #[derive(Default)]
+    struct LifecycleEngine {
+        prepare_calls: usize,
+        run_calls: usize,
+    }
+
+    impl Engine for LifecycleEngine {
+        fn prepare(&mut self, _image: &crate::memory::Image) -> Result<(), String> {
+            self.prepare_calls += 1;
+            Ok(())
+        }
+
+        fn run(&mut self, machine: &mut Machine, _instruction_limit: u64) -> RunResult {
+            // Every run receives fresh architectural state and data even
+            // though its immutable permission allocation is shared.
+            assert_eq!(machine.registers[5], 0);
+            assert_eq!(machine.memory.load_u32(STACK_START), 0);
+            assert!(machine.output.is_empty());
+            assert_eq!(machine.retired, 0);
+
+            self.run_calls += 1;
+            machine.registers[5] = self.run_calls as u32;
+            machine
+                .memory
+                .store(STACK_START, 4, self.run_calls as u32, machine.pc)
+                .unwrap();
+            machine.output.push(machine.memory.load_u8(INPUT_START));
+            machine.retired = 1;
+            machine.result(Termination::InstructionLimit)
+        }
+    }
+
+    #[derive(Default)]
+    struct DirectMemoryEngine;
+
+    impl Engine for DirectMemoryEngine {
+        fn initialize_direct_memory(&self) -> bool {
+            true
+        }
+
+        fn run(&mut self, machine: &mut Machine, _instruction_limit: u64) -> RunResult {
+            assert!(machine.memory.direct_memory_is_initialized());
+            machine.result(Termination::InstructionLimit)
+        }
+    }
 
     #[test]
     fn exit_retires() {
@@ -504,5 +594,91 @@ mod tests {
         assert_eq!(branch.direct_target(), Some(IMAGE_START + 8));
         assert_eq!(jump.direct_target(), Some(IMAGE_START + 12));
         assert_eq!(addi.direct_target(), None);
+    }
+
+    #[test]
+    fn loaded_program_reuses_permissions_but_keeps_each_run_state_fresh() {
+        let elf = executable(&[0x0000_0073]);
+        let mut program = LoadedProgram::<LifecycleEngine>::new(&elf).unwrap();
+        assert_eq!(program.engine.prepare_calls, 1);
+        let template = program.permissions.as_ptr();
+        assert_eq!(program.permissions.strong_count(), 1);
+
+        let first = program.run(&[0x11], 1, 4);
+        assert_eq!(first.machine.memory.permission_identity(), template);
+        assert_eq!(program.permissions.strong_count(), 2);
+        assert_eq!(first.machine.registers[5], 1);
+        assert_eq!(first.machine.memory.load_u32(STACK_START), 1);
+        assert_eq!(first.machine.output, [0x11]);
+        assert_eq!(first.result.retired, 1);
+        drop(first);
+        assert_eq!(program.permissions.strong_count(), 1);
+
+        let second = program.run(&[0x22], 1, 4);
+        assert_eq!(second.machine.memory.permission_identity(), template);
+        assert_eq!(program.permissions.strong_count(), 2);
+        assert_eq!(second.machine.registers[5], 2);
+        assert_eq!(second.machine.memory.load_u32(STACK_START), 2);
+        assert_eq!(second.machine.output, [0x22]);
+        assert_eq!(second.result.retired, 1);
+        assert_eq!(program.engine.prepare_calls, 1);
+        assert_eq!(program.engine.run_calls, 2);
+
+        // A completed run retains its own Arc, so its permission pointer and
+        // data remain valid even after the loaded program is dropped.
+        drop(program);
+        assert_eq!(second.machine.memory.permission_identity(), template);
+        assert!(second.machine.fetch_decode(IMAGE_START).is_ok());
+        assert_eq!(second.machine.memory.load_u32(STACK_START), 2);
+    }
+
+    #[test]
+    fn loaded_program_honors_direct_memory_initialization_requests() {
+        let elf = executable(&[0x0000_0073]);
+        let mut program = LoadedProgram::<DirectMemoryEngine>::new(&elf).unwrap();
+
+        let completed = program.run(&[0x11], 1, 4);
+
+        assert!(completed.machine.memory.direct_memory_is_initialized());
+        assert_eq!(completed.machine.memory.load_u8(INPUT_START), 0x11);
+    }
+
+    #[test]
+    fn distinct_loaded_programs_own_distinct_permission_templates() {
+        let short = LoadedProgram::<LifecycleEngine>::new(&executable(&[0x0000_0013])).unwrap();
+        let long_code = vec![0x0000_0013; PAGE_SIZE / 4 + 1];
+        let long = LoadedProgram::<LifecycleEngine>::new(&executable(&long_code)).unwrap();
+        let second_code_page = (IMAGE_START as usize + PAGE_SIZE) >> PAGE_SHIFT;
+
+        assert_ne!(short.permissions.as_ptr(), long.permissions.as_ptr());
+        assert_eq!(short.permissions.get(second_code_page), 0);
+        assert_eq!(
+            long.permissions.get(second_code_page),
+            PERM_READ | PERM_EXEC
+        );
+        assert_eq!(short.engine.prepare_calls, 1);
+        assert_eq!(long.engine.prepare_calls, 1);
+    }
+
+    #[test]
+    fn direct_machine_construction_remains_independent_and_fresh() {
+        let image = load(&executable(&[0x0000_0073])).unwrap();
+        let mut first = Machine::new(&image, &[0x11], 4);
+        let second = Machine::new(&image, &[0x22], 4);
+
+        assert_ne!(
+            first.memory.permission_identity(),
+            second.memory.permission_identity()
+        );
+        first.registers[5] = 9;
+        first.output.push(0xaa);
+        first.retired = 7;
+        first.memory.store(STACK_START, 4, 0x4433_2211, 0).unwrap();
+
+        assert_eq!(second.registers[5], 0);
+        assert!(second.output.is_empty());
+        assert_eq!(second.retired, 0);
+        assert_eq!(second.memory.load_u8(INPUT_START), 0x22);
+        assert_eq!(second.memory.load_u32(STACK_START), 0);
     }
 }

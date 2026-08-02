@@ -18,6 +18,30 @@ pub(crate) fn lw(rd: u32, rs1: u32, immediate: i32) -> u32 {
     target_os = "linux",
     target_pointer_width = "64"
 ))]
+pub(crate) fn div(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    (1 << 25) | (rs2 << 20) | (rs1 << 15) | (4 << 12) | (rd << 7) | 0x33
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    target_pointer_width = "64"
+))]
+pub(crate) fn sw(rs2: u32, rs1: u32, immediate: i32) -> u32 {
+    let immediate = immediate as u32 & 0xfff;
+    ((immediate >> 5) << 25)
+        | (rs2 << 20)
+        | (rs1 << 15)
+        | (2 << 12)
+        | ((immediate & 0x1f) << 7)
+        | 0x23
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    target_pointer_width = "64"
+))]
 pub(crate) fn beq(rs1: u32, rs2: u32, offset: i32) -> u32 {
     let immediate = offset as u32 & 0x1fff;
     ((immediate >> 12) << 31)
@@ -27,6 +51,15 @@ pub(crate) fn beq(rs1: u32, rs2: u32, offset: i32) -> u32 {
         | (((immediate >> 1) & 0xf) << 8)
         | (((immediate >> 11) & 1) << 7)
         | 0x63
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    target_pointer_width = "64"
+))]
+pub(crate) fn bne(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    beq(rs1, rs2, offset) | (1 << 12)
 }
 
 pub(crate) fn image_with_code_at(code: &[u32], start: u32) -> Image {
