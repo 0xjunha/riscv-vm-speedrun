@@ -1030,10 +1030,24 @@ impl Emitter {
             // section during resolve and enter one shared cache prologue.
             usize::MAX
         };
-        // JALR always has its own CET landing pad and retains the private ABI;
-        // direct edges enter immediately after it at hot_offset.
-        let indirect_offset = self.code.len();
-        self.code.extend_from_slice(&ENTRY_BYTES);
+        // A cached block laid out immediately after its direct predecessor can
+        // put the JALR landing pad in the predecessor's reserved edge slot.
+        // Direct execution crosses that pad and dispatch still lands on CET.
+        let overlapping_entry = self
+            .edges
+            .last()
+            .filter(|edge| !self.cache.is_empty() && edge.target_pc == pc)
+            .and_then(|edge| edge.slot_offset.checked_add(EDGE_SLOT_BYTES))
+            .filter(|&edge_end| edge_end == self.code.len())
+            .and_then(|edge_end| edge_end.checked_sub(ENTRY_BYTES.len()));
+        let indirect_offset = if let Some(offset) = overlapping_entry {
+            self.code.get_mut(offset..)?.copy_from_slice(&ENTRY_BYTES);
+            offset
+        } else {
+            let offset = self.code.len();
+            self.code.extend_from_slice(&ENTRY_BYTES);
+            offset
+        };
         let hot_offset = self.code.len();
         self.entries.push((
             pc,
@@ -2135,8 +2149,7 @@ impl Emitter {
         let alignment_mask = width.bytes() - 1;
         let mut failures = Vec::with_capacity(2);
         if alignment_mask != 0 {
-            self.code.push(0xa9); // test eax, alignment mask
-            self.code.extend_from_slice(&alignment_mask.to_le_bytes());
+            self.code.extend_from_slice(&[0xa8, alignment_mask as u8]); // test al, mask
             failures.push(self.cold_jcc(0x85)?); // jnz slow
         }
 
@@ -2579,9 +2592,9 @@ impl Emitter {
         if !self.local_fixups.is_empty() {
             return None;
         }
-        let mut hot_by_pc = BTreeMap::new();
+        let mut entry_by_pc = BTreeMap::new();
         for &(pc, entry) in &self.entries {
-            if hot_by_pc.insert(pc, entry.hot_offset).is_some() {
+            if entry_by_pc.insert(pc, entry).is_some() {
                 return None;
             }
         }
@@ -2618,8 +2631,8 @@ impl Emitter {
         let mut missing_by_pc = BTreeMap::new();
         #[cfg(not(feature = "profile"))]
         for edge in self.conditional_edges.clone() {
-            let target = if let Some(&target) = hot_by_pc.get(&edge.target_pc) {
-                target
+            let target = if let Some(entry) = entry_by_pc.get(&edge.target_pc) {
+                entry.hot_offset
             } else if let Some(&target) = missing_by_pc.get(&edge.target_pc) {
                 target
             } else {
@@ -2630,8 +2643,13 @@ impl Emitter {
             patch_relative(&mut self.code, edge.branch, target)?;
         }
         for edge in self.edges.clone() {
-            if let Some(&target) = hot_by_pc.get(&edge.target_pc) {
-                patch_edge(&mut self.code, edge.slot_offset, target)?;
+            if let Some(entry) = entry_by_pc.get(&edge.target_pc) {
+                patch_edge(
+                    &mut self.code,
+                    edge.slot_offset,
+                    entry.hot_offset,
+                    entry.indirect_offset,
+                )?;
             } else {
                 let target = if let Some(&target) = missing_by_pc.get(&edge.target_pc) {
                     target
@@ -2687,15 +2705,18 @@ fn patch_edge_jump(code: &mut [u8], slot_offset: usize, target_offset: usize) ->
     Some(())
 }
 
-fn patch_edge(code: &mut [u8], slot_offset: usize, target_offset: usize) -> Option<()> {
+fn patch_edge(
+    code: &mut [u8],
+    slot_offset: usize,
+    target_offset: usize,
+    indirect_offset: usize,
+) -> Option<()> {
+    let slot_end = slot_offset.checked_add(EDGE_SLOT_BYTES)?;
     #[cfg(feature = "profile")]
     let jump_offset = slot_offset.checked_add(4)?;
     #[cfg(not(feature = "profile"))]
     let jump_offset = slot_offset;
-    let instruction_end = jump_offset.checked_add(5)?;
-    let displacement = i64::try_from(target_offset).ok()? - i64::try_from(instruction_end).ok()?;
-    let displacement = i32::try_from(displacement).ok()?;
-    let slot = code.get_mut(slot_offset..slot_offset.checked_add(EDGE_SLOT_BYTES)?)?;
+    let slot = code.get_mut(slot_offset..slot_end)?;
     slot.fill(0x90);
     #[cfg(feature = "profile")]
     {
@@ -2706,6 +2727,17 @@ fn patch_edge(code: &mut [u8], slot_offset: usize, target_offset: usize) -> Opti
             u8::try_from(PROFILE_DIRECT_LINKS_OFFSET).ok()?,
         ]);
     }
+    if indirect_offset.checked_add(ENTRY_BYTES.len())? == slot_end && target_offset == slot_end {
+        let entry = indirect_offset.checked_sub(slot_offset)?;
+        slot.get_mut(entry..)?.copy_from_slice(&ENTRY_BYTES);
+        return Some(());
+    }
+    if indirect_offset == slot_end {
+        return Some(());
+    }
+    let instruction_end = jump_offset.checked_add(5)?;
+    let displacement = i64::try_from(target_offset).ok()? - i64::try_from(instruction_end).ok()?;
+    let displacement = i32::try_from(displacement).ok()?;
     let jump = jump_offset - slot_offset;
     slot[jump] = 0xe9;
     slot[jump + 1..jump + 5].copy_from_slice(&displacement.to_le_bytes());
@@ -3709,8 +3741,7 @@ mod tests {
 
             let mut expected = vec![0x31, 0xc0]; // xor eax, eax
             if alignment_mask != 0 {
-                expected.push(0xa9); // test eax, alignment mask
-                expected.extend_from_slice(&alignment_mask.to_le_bytes());
+                expected.extend_from_slice(&[0xa8, alignment_mask as u8]); // test al, mask
                 expected.extend_from_slice(&[0x0f, 0x85, 0, 0, 0, 0]); // jnz slow
             }
             expected.extend_from_slice(&[
@@ -3726,10 +3757,10 @@ mod tests {
                 assert_eq!(failures[0].instruction_end, 18);
             } else {
                 assert_eq!(failures.len(), 2);
-                assert_eq!(failures[0].displacement_offset, 9);
-                assert_eq!(failures[0].instruction_end, 13);
-                assert_eq!(failures[1].displacement_offset, 25);
-                assert_eq!(failures[1].instruction_end, 29);
+                assert_eq!(failures[0].displacement_offset, 6);
+                assert_eq!(failures[0].instruction_end, 10);
+                assert_eq!(failures[1].displacement_offset, 22);
+                assert_eq!(failures[1].instruction_end, 26);
             }
         }
     }
@@ -5054,15 +5085,17 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_table_encodes_internal_pads_while_direct_edges_target_hot_code() {
-        let code = [addi(5, 5, 1), addi(6, 6, 1)];
+    fn adjacent_direct_edges_share_their_slots_with_cet_pads() {
+        let code = [addi(5, 5, 1), addi(5, 5, 1), addi(5, 5, 1)];
         let image = image_with_code_at(&code, IMAGE_START);
         let machine = Machine::new(&image, &[], 0);
         let blocks = [
             block(&machine, IMAGE_START, 1),
-            block(&machine, IMAGE_START + 4, 1),
+            block(&machine, IMAGE_START + 4, 2),
         ];
-        let mut emitter = Emitter::new(RegisterCache::empty());
+        let cache = RegisterCache::select(&blocks);
+        assert_eq!(cache.count(), 1);
+        let mut emitter = Emitter::new(cache);
         for block in &blocks {
             emitter
                 .emit_block(&block.instructions, block.flow, block.pc)
@@ -5094,14 +5127,28 @@ mod tests {
         }
         assert_eq!(table.encoded_entry(IMAGE_START + 8), Some(0));
 
+        let edge_end = first_edge.slot_offset + EDGE_SLOT_BYTES;
+        assert_eq!(edge_end, entries[1].1.hot_offset);
+        assert_eq!(entries[1].1.indirect_offset + ENTRY_BYTES.len(), edge_end);
         #[cfg(feature = "profile")]
-        let jump_offset = first_edge.slot_offset + 4;
-        #[cfg(not(feature = "profile"))]
-        let jump_offset = first_edge.slot_offset;
-        assert_eq!(code[jump_offset], 0xe9);
         assert_eq!(
-            relative_target(&code, jump_offset + 1, jump_offset + 5),
-            entries[1].1.hot_offset
+            &code[first_edge.slot_offset..edge_end],
+            &[
+                0x48,
+                0xff,
+                0x47,
+                u8::try_from(super::PROFILE_DIRECT_LINKS_OFFSET).unwrap(),
+                0x90,
+                0xf3,
+                0x0f,
+                0x1e,
+                0xfa,
+            ]
+        );
+        #[cfg(not(feature = "profile"))]
+        assert_eq!(
+            &code[first_edge.slot_offset..edge_end],
+            &[0x90, 0xf3, 0x0f, 0x1e, 0xfa]
         );
         assert_ne!(entries[1].1.hot_offset, entries[1].1.indirect_offset);
     }
