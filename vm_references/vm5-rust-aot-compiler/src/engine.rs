@@ -1193,6 +1193,90 @@ mod tests {
         target_pointer_width = "64"
     ))]
     #[test]
+    fn failed_memory_inside_a_region_refunds_its_uncommitted_suffix() {
+        use rv32vm_rust_common::GuestTrap;
+
+        let image = image_with_code_at(
+            &[
+                addi(5, 5, 1),
+                lw(6, 10, 0),
+                addi(7, 7, 1),
+                lw(8, 11, 0),
+                addi(9, 9, 1),
+            ],
+            IMAGE_START,
+        );
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        let address = STACK_START + 0x300;
+        machine.registers[10] = address;
+        machine.registers[11] = 1;
+        machine.registers[8] = 0xcafe_babe;
+        machine
+            .memory
+            .store(address, 4, 0x1234_5678, IMAGE_START)
+            .unwrap();
+
+        let result = engine.run(&mut machine, 5);
+
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new("LoadAddressMisaligned", IMAGE_START + 12, 1,))
+        );
+        assert_eq!(result.retired, 3);
+        assert_eq!(machine.pc, IMAGE_START + 12);
+        assert_eq!(machine.registers[5], 1);
+        assert_eq!(machine.registers[6], 0x1234_5678);
+        assert_eq!(machine.registers[7], 1);
+        assert_eq!(machine.registers[8], 0xcafe_babe);
+        assert_eq!(machine.registers[9], 0);
+        assert_eq!(engine.native_retired(), 3);
+    }
+
+    #[cfg(all(
+        not(feature = "profile"),
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn region_local_cache_commits_before_a_precise_memory_failure() {
+        use rv32vm_rust_common::GuestTrap;
+
+        let mut code = (0..3)
+            .flat_map(|_| (1..=7).map(|register| addi(register, register, 1)))
+            .collect::<Vec<_>>();
+        let load_pc = IMAGE_START + u32::try_from(code.len() * 4).unwrap();
+        code.extend_from_slice(&[lw(8, 10, 0), 0x0000_0073]);
+        let image = image_with_code_at(&code, IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[8] = 0xcafe_babe;
+        machine.registers[10] = 1;
+
+        let result = engine.run(&mut machine, code.len() as u64);
+
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new("LoadAddressMisaligned", load_pc, 1))
+        );
+        assert_eq!(result.retired, 21);
+        assert_eq!(machine.pc, load_pc);
+        assert_eq!(machine.registers[1], 3);
+        assert_eq!(machine.registers[2], ADDRESS_SPACE_SIZE + 3);
+        assert_eq!(&machine.registers[3..=7], &[3; 5]);
+        assert_eq!(machine.registers[8], 0xcafe_babe);
+        assert_eq!(engine.native_retired(), 21);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
     fn short_budget_falls_back_before_prefix_without_over_retirement() {
         let image = image_with_code_at(&[addi(5, 5, 1), lw(6, 10, 0)], IMAGE_START);
         let mut engine = AotCompiler::default();
@@ -1443,6 +1527,42 @@ mod tests {
         target_pointer_width = "64"
     ))]
     #[test]
+    fn profile_executes_multiple_checked_accesses_in_one_region() {
+        let image = image_with_code_at(&[lw(5, 10, 0), lw(6, 10, 4), addi(7, 7, 1)], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        let address = STACK_START + 0x800;
+        machine.registers[10] = address;
+        machine
+            .memory
+            .store(address, 4, 0x1234_5678, IMAGE_START)
+            .unwrap();
+        machine
+            .memory
+            .store(address + 4, 4, 0x89ab_cdef, IMAGE_START)
+            .unwrap();
+
+        let (result, profile) = engine.run_profiled(&mut machine, 3);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(machine.registers[5], 0x1234_5678);
+        assert_eq!(machine.registers[6], 0x89ab_cdef);
+        assert_eq!(machine.registers[7], 1);
+        assert_eq!(profile.native_retired, 3);
+        assert_eq!(profile.native_invocations, 1);
+        assert_eq!(profile.native_dispatches, 1);
+        assert_eq!(profile.native_memory_loads, 2);
+        assert_eq!(profile.native_fallthrough_dispatches, 1);
+    }
+
+    #[cfg(all(
+        feature = "profile",
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
     fn profile_weights_native_block_traffic_and_separates_budget_fallback() {
         use crate::test_support::beq;
 
@@ -1529,9 +1649,9 @@ mod tests {
         engine.prepare(&image).unwrap();
         let load_profile = engine.native.load_profile();
         assert_eq!(load_profile.compiled_blocks, 4);
-        assert_eq!(load_profile.native_guest_instructions, 4);
-        assert_eq!(load_profile.fallthrough_blocks, 2);
-        assert_eq!(load_profile.branch_blocks, 1);
+        assert_eq!(load_profile.native_guest_instructions, 5);
+        assert_eq!(load_profile.fallthrough_blocks, 1);
+        assert_eq!(load_profile.branch_blocks, 2);
         assert_eq!(load_profile.direct_jump_blocks, 1);
 
         let mut machine = Machine::new(&image, &[], 0);
@@ -1541,11 +1661,11 @@ mod tests {
         assert_eq!(profile.native_retired, 4);
         assert_eq!(profile.fallback_retired, 0);
         assert_eq!(profile.native_invocations, 1);
-        assert_eq!(profile.native_dispatches, 4);
-        assert_eq!(profile.native_direct_link_hits, 3);
+        assert_eq!(profile.native_dispatches, 3);
+        assert_eq!(profile.native_direct_link_hits, 2);
         assert_eq!(profile.native_missing_exits, 1);
         assert_eq!(profile.native_memory_loads, 1);
-        assert_eq!(profile.native_fallthrough_dispatches, 2);
+        assert_eq!(profile.native_fallthrough_dispatches, 1);
         assert_eq!(profile.native_branch_dispatches, 1);
         assert_eq!(profile.native_direct_jump_dispatches, 1);
     }

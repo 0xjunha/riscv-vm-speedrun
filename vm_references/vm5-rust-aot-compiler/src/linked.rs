@@ -85,11 +85,6 @@ pub(crate) enum BlockFlow {
     Fallthrough {
         pc: u32,
     },
-    /// A checked memory terminator owns both its fast successor and precise
-    /// one-instruction slow exit.
-    CheckedFallthrough {
-        pc: u32,
-    },
     Branch {
         condition: Condition,
         fallthrough: u32,
@@ -106,9 +101,7 @@ pub(crate) enum BlockFlow {
 impl BlockFlow {
     const fn successors(self) -> [Option<u32>; 2] {
         match self {
-            Self::Fallthrough { pc } | Self::CheckedFallthrough { pc } | Self::Jump { pc } => {
-                [Some(pc), None]
-            }
+            Self::Fallthrough { pc } | Self::Jump { pc } => [Some(pc), None],
             Self::Branch {
                 fallthrough,
                 target,
@@ -136,13 +129,21 @@ impl LinkedBlock {
         Lowering::decode(instruction).is_some()
     }
 
-    /// Reports whether this supported instruction must terminate a native
-    /// block. Checked memory operations do so to keep one precise interpreter
-    /// retry point for all slow and trapping cases.
+    /// Reports whether this supported instruction terminates a native region.
     pub(crate) fn ends_block(instruction: DecodedInstruction) -> bool {
-        Lowering::decode(instruction)
-            .and_then(|lowering| lowering.flow(instruction.pc().wrapping_add(4)))
-            .is_some()
+        matches!(
+            Lowering::decode(instruction),
+            Some(Lowering::Jump { .. } | Lowering::IndirectJump { .. } | Lowering::Branch { .. })
+        )
+    }
+
+    /// Reports whether an instruction needs a separately compiled successor
+    /// for resuming after its precise one-instruction slow path.
+    pub(crate) fn needs_precise_resume(instruction: DecodedInstruction) -> bool {
+        matches!(
+            Lowering::decode(instruction),
+            Some(Lowering::Load { .. } | Lowering::Store { .. })
+        )
     }
 
     pub(crate) fn compile(instructions: &[BlockInstruction]) -> Option<Self> {
@@ -169,6 +170,7 @@ impl LinkedBlock {
                 } => Some(BlockFlow::IndirectJump {
                     target_hint: indirect_target_hint(&lowered, source, immediate),
                 }),
+                Lowering::Load { .. } | Lowering::Store { .. } => None,
                 _ => lowering.flow(next_pc),
             };
             lowered.push(lowering);
@@ -203,7 +205,22 @@ impl LinkedBlock {
         self.reserved_code_len
     }
 
-    pub(crate) const fn successors(&self) -> [Option<u32>; 2] {
+    pub(crate) fn successors(&self) -> Vec<u32> {
+        let mut successors = self
+            .instructions
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Lowering::Load { pc, .. } | Lowering::Store { pc, .. } => Some(pc.wrapping_add(4)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        successors.extend(self.flow.successors().into_iter().flatten());
+        successors.sort_unstable();
+        successors.dedup();
+        successors
+    }
+
+    pub(crate) const fn flow_successors(&self) -> [Option<u32>; 2] {
         self.flow.successors()
     }
 
@@ -379,9 +396,7 @@ impl Lowering {
                 target,
             }),
             Self::IndirectJump { .. } => Some(BlockFlow::IndirectJump { target_hint: None }),
-            Self::Load { pc, .. } | Self::Store { pc, .. } => Some(BlockFlow::CheckedFallthrough {
-                pc: pc.wrapping_add(4),
-            }),
+            Self::Load { .. } | Self::Store { .. } => None,
             _ => {
                 let _ = next_pc;
                 None
@@ -469,6 +484,22 @@ impl Lowering {
                 read(scores, weighted_accesses, source, execution_weight);
             }
             Self::Fence => {}
+        }
+    }
+
+    #[cfg(not(feature = "profile"))]
+    const fn writes_register(self, register: usize) -> bool {
+        if register == 0 {
+            return false;
+        }
+        match self {
+            Self::WriteImmediate { destination, .. }
+            | Self::Jump { destination, .. }
+            | Self::IndirectJump { destination, .. }
+            | Self::Immediate { destination, .. }
+            | Self::Register { destination, .. }
+            | Self::Load { destination, .. } => destination == register,
+            Self::Branch { .. } | Self::Store { .. } | Self::Fence => false,
         }
     }
 }
@@ -664,6 +695,8 @@ enum Register32 {
     R13d = 13,
     R14d = 14,
     R15d = 15,
+    #[cfg(not(feature = "profile"))]
+    R11d = 11,
 }
 
 impl Register32 {
@@ -885,6 +918,13 @@ struct EdgeRelocation {
     target_pc: u32,
 }
 
+#[cfg(not(feature = "profile"))]
+#[derive(Clone, Copy)]
+struct ConditionalEdgeRelocation {
+    branch: LocalFixup,
+    target_pc: u32,
+}
+
 #[derive(Clone, Copy)]
 struct BudgetRelocation {
     branch: LocalFixup,
@@ -895,6 +935,7 @@ struct BudgetRelocation {
 struct InterpretOneRelocation {
     branches: Vec<LocalFixup>,
     pc: u32,
+    refund: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -906,8 +947,12 @@ struct LocalFixup {
 struct Emitter {
     code: Vec<u8>,
     cache: RegisterCache,
+    #[cfg(not(feature = "profile"))]
+    local_guest: Option<usize>,
     entries: Vec<(u32, EntryMetadata)>,
     edges: Vec<EdgeRelocation>,
+    #[cfg(not(feature = "profile"))]
+    conditional_edges: Vec<ConditionalEdgeRelocation>,
     budget_exits: Vec<BudgetRelocation>,
     interpret_one_exits: Vec<InterpretOneRelocation>,
     indirect_misses: Vec<LocalFixup>,
@@ -919,8 +964,12 @@ impl Emitter {
         Self {
             code: Vec::new(),
             cache,
+            #[cfg(not(feature = "profile"))]
+            local_guest: None,
             entries: Vec::new(),
             edges: Vec::new(),
+            #[cfg(not(feature = "profile"))]
+            conditional_edges: Vec::new(),
             budget_exits: Vec::new(),
             interpret_one_exits: Vec::new(),
             indirect_misses: Vec::new(),
@@ -946,10 +995,25 @@ impl Emitter {
                 usize::from(!self.indirect_misses.is_empty())
                     .checked_mul(INDIRECT_MISSING_VENEER_BYTES)?,
             )?
+            .checked_add(self.conditional_missing_bytes()?)?
             .checked_add(self.edges.len().checked_mul(MISSING_VENEER_BYTES)?)
     }
 
+    const fn conditional_missing_bytes(&self) -> Option<usize> {
+        #[cfg(not(feature = "profile"))]
+        {
+            self.conditional_edges
+                .len()
+                .checked_mul(MISSING_VENEER_BYTES)
+        }
+        #[cfg(feature = "profile")]
+        {
+            Some(0)
+        }
+    }
+
     fn emit_block(&mut self, instructions: &[Lowering], flow: BlockFlow, pc: u32) -> Option<()> {
+        self.select_local_cache(instructions, flow);
         let external_offset = if self.cache.is_empty() {
             // With no cache to preserve, inline external entry is smaller than
             // a cold thunk plus a shared prologue. It also retains the old
@@ -991,10 +1055,19 @@ impl Emitter {
         let branch = self.cold_jcc(0x82)?; // jb budget exit
         self.budget_exits
             .push(BudgetRelocation { branch, pc, count });
+        self.fill_local_cache();
         #[cfg(feature = "profile")]
-        self.profile_block(instructions, flow)?;
+        self.profile_block(instructions)?;
 
-        for instruction in instructions {
+        let mut local_dirty = false;
+        for (index, instruction) in instructions.iter().enumerate() {
+            let refund = count.checked_sub(u8::try_from(index).ok()?)?;
+            if matches!(instruction, Lowering::Load { .. } | Lowering::Store { .. }) && local_dirty
+            {
+                self.spill_local_cache();
+                local_dirty = false;
+            }
+            let writes_local = self.writes_local(*instruction);
             match *instruction {
                 Lowering::WriteImmediate { destination, value } => {
                     self.write_immediate(destination, value);
@@ -1004,8 +1077,15 @@ impl Emitter {
                     link,
                     target,
                 } => {
+                    #[cfg(feature = "profile")]
+                    self.increment_context(PROFILE_JUMP_OFFSET);
                     self.write_immediate(destination, link);
+                    local_dirty |= writes_local;
+                    if local_dirty {
+                        self.spill_local_cache();
+                    }
                     self.edge_slot(target)?;
+                    return Some(());
                 }
                 Lowering::IndirectJump {
                     pc,
@@ -1013,14 +1093,25 @@ impl Emitter {
                     source,
                     immediate,
                     link,
-                } => self.indirect_jump(pc, destination, source, immediate, link)?,
+                } => {
+                    self.indirect_jump(pc, destination, source, immediate, link)?;
+                    return Some(());
+                }
                 Lowering::Branch {
                     left,
                     right,
                     condition,
                     fallthrough,
                     target,
-                } => self.branch(left, right, condition, fallthrough, target)?,
+                } => {
+                    #[cfg(feature = "profile")]
+                    self.increment_context(PROFILE_BRANCH_OFFSET);
+                    if local_dirty {
+                        self.spill_local_cache();
+                    }
+                    self.branch(left, right, condition, fallthrough, target)?;
+                    return Some(());
+                }
                 Lowering::Immediate {
                     destination,
                     source,
@@ -1033,53 +1124,115 @@ impl Emitter {
                     operation,
                 } => self.register(destination, left, right, operation)?,
                 Lowering::Load {
+                    pc,
                     destination,
                     base,
                     immediate,
                     width,
                     signed,
-                    ..
                 } => {
-                    let BlockFlow::CheckedFallthrough { pc: successor } = flow else {
-                        return None;
-                    };
-                    self.checked_load(successor, destination, base, immediate, width, signed)?;
+                    self.checked_load(pc, refund, destination, base, immediate, width, signed)?;
                 }
                 Lowering::Store {
+                    pc,
                     base,
                     source,
                     immediate,
                     width,
-                    ..
                 } => {
-                    let BlockFlow::CheckedFallthrough { pc: successor } = flow else {
-                        return None;
-                    };
-                    self.checked_store(successor, base, source, immediate, width)?;
+                    self.checked_store(pc, refund, base, source, immediate, width)?;
                 }
                 Lowering::Fence => {}
             }
+            local_dirty |= writes_local;
         }
 
         if matches!(flow, BlockFlow::Fallthrough { .. }) {
             let [Some(pc), None] = flow.successors() else {
                 return None;
             };
+            #[cfg(feature = "profile")]
+            self.increment_context(PROFILE_FALLTHROUGH_OFFSET);
+            if local_dirty {
+                self.spill_local_cache();
+            }
             self.edge_slot(pc)?;
         }
         Some(())
     }
 
-    #[cfg(feature = "profile")]
-    fn profile_block(&mut self, instructions: &[Lowering], flow: BlockFlow) -> Option<()> {
-        self.increment_context(PROFILE_BLOCKS_OFFSET);
-        match flow {
-            BlockFlow::Fallthrough { .. } => self.increment_context(PROFILE_FALLTHROUGH_OFFSET),
-            BlockFlow::CheckedFallthrough { .. } => {}
-            BlockFlow::Branch { .. } => self.increment_context(PROFILE_BRANCH_OFFSET),
-            BlockFlow::Jump { .. } => self.increment_context(PROFILE_JUMP_OFFSET),
-            BlockFlow::IndirectJump { .. } => {}
+    #[cfg(not(feature = "profile"))]
+    fn select_local_cache(&mut self, instructions: &[Lowering], flow: BlockFlow) {
+        self.local_guest = None;
+        if matches!(flow, BlockFlow::IndirectJump { .. }) {
+            return;
         }
+
+        let mut scores = [0; 32];
+        let mut accesses = [0; 32];
+        for &instruction in instructions {
+            instruction.score_register_uses(&mut scores, &mut accesses, 1);
+        }
+        let mut best = None;
+        for guest in 1..32 {
+            if self.cache.host(guest).is_some() {
+                continue;
+            }
+            let writes = accesses[guest]
+                .saturating_mul(2)
+                .saturating_sub(scores[guest]);
+            let overhead = 1 + u64::from(writes != 0);
+            let savings = accesses[guest].saturating_sub(overhead);
+            if savings < 2 {
+                continue;
+            }
+            let rank = (savings, scores[guest], usize::MAX - guest);
+            if best.is_none_or(|(best_rank, _)| rank > best_rank) {
+                best = Some((rank, guest));
+            }
+        }
+        self.local_guest = best.map(|(_, guest)| guest);
+    }
+
+    #[cfg(feature = "profile")]
+    const fn select_local_cache(&mut self, _instructions: &[Lowering], _flow: BlockFlow) {}
+
+    #[cfg(not(feature = "profile"))]
+    fn fill_local_cache(&mut self) {
+        if let Some(guest) = self.local_guest {
+            self.code
+                .extend_from_slice(&[0x44, 0x8b, 0x5e, register_offset(guest)]);
+        }
+    }
+
+    #[cfg(feature = "profile")]
+    const fn fill_local_cache(&mut self) {}
+
+    #[cfg(not(feature = "profile"))]
+    fn spill_local_cache(&mut self) {
+        if let Some(guest) = self.local_guest {
+            self.code
+                .extend_from_slice(&[0x44, 0x89, 0x5e, register_offset(guest)]);
+        }
+    }
+
+    #[cfg(feature = "profile")]
+    const fn spill_local_cache(&mut self) {}
+
+    #[cfg(not(feature = "profile"))]
+    fn writes_local(&self, instruction: Lowering) -> bool {
+        self.local_guest
+            .is_some_and(|guest| instruction.writes_register(guest))
+    }
+
+    #[cfg(feature = "profile")]
+    const fn writes_local(&self, _instruction: Lowering) -> bool {
+        false
+    }
+
+    #[cfg(feature = "profile")]
+    fn profile_block(&mut self, instructions: &[Lowering]) -> Option<()> {
+        self.increment_context(PROFILE_BLOCKS_OFFSET);
 
         // These counters describe dynamic executions of the new generic
         // direct-operand lowering families. Emit every ADD, including a zero
@@ -1284,11 +1437,24 @@ impl Emitter {
         }
     }
 
+    fn host_register(&self, guest: usize) -> Option<Register32> {
+        self.cache.host(guest).map(CachedHost::register).or({
+            #[cfg(not(feature = "profile"))]
+            {
+                (self.local_guest == Some(guest)).then_some(Register32::R11d)
+            }
+            #[cfg(feature = "profile")]
+            {
+                None
+            }
+        })
+    }
+
     fn guest_operand(&self, register: usize) -> Option<Operand32> {
         if register == 0 {
             None
-        } else if let Some(host) = self.cache.host(register) {
-            Some(Operand32::Register(host.register()))
+        } else if let Some(host) = self.host_register(register) {
+            Some(Operand32::Register(host))
         } else {
             Some(Operand32::GuestMemory(register_offset(register)))
         }
@@ -1403,8 +1569,7 @@ impl Emitter {
         if destination == 0 {
             return;
         }
-        if let Some(host) = self.cache.host(destination) {
-            let destination_register = host.register();
+        if let Some(destination_register) = self.host_register(destination) {
             if destination_register != source {
                 self.emit_register_operand(
                     &[0x8b],
@@ -1430,15 +1595,15 @@ impl Emitter {
             self.store_immediate(destination, 0);
             return;
         }
-        if let Some(destination_host) = self.cache.host(destination) {
-            self.move_guest_to_register(destination_host.register(), source);
+        if let Some(destination_register) = self.host_register(destination) {
+            self.move_guest_to_register(destination_register, source);
             self.profile_guest_write(destination);
-        } else if let Some(source_host) = self.cache.host(source) {
+        } else if let Some(source_register) = self.host_register(source) {
             self.profile_guest_read(source);
             self.emit_operand_register(
                 &[0x89],
                 Operand32::GuestMemory(register_offset(destination)),
-                source_host.register(),
+                source_register,
             );
             self.profile_guest_write(destination);
         } else {
@@ -1541,8 +1706,7 @@ impl Emitter {
             self.profile_guest_read(source);
             self.emit_group_immediate(extension, destination_operand, value);
             self.profile_guest_write(destination);
-        } else if let Some(host) = self.cache.host(destination) {
-            let destination_register = host.register();
+        } else if let Some(destination_register) = self.host_register(destination) {
             self.move_guest_to_register(destination_register, source);
             self.emit_group_immediate(extension, Operand32::Register(destination_register), value);
             self.profile_guest_write(destination);
@@ -1578,8 +1742,7 @@ impl Emitter {
             self.profile_guest_read(source);
             self.emit_shift_immediate(extension, destination_operand, count);
             self.profile_guest_write(destination);
-        } else if let Some(host) = self.cache.host(destination) {
-            let destination_register = host.register();
+        } else if let Some(destination_register) = self.host_register(destination) {
             self.move_guest_to_register(destination_register, source);
             self.emit_shift_immediate(extension, Operand32::Register(destination_register), count);
             self.profile_guest_write(destination);
@@ -1652,7 +1815,7 @@ impl Emitter {
         }
         let aliases_noncommutative_right =
             !operation.commutative() && destination == right && destination != left;
-        let cached_destination = self.cache.host(destination).map(CachedHost::register);
+        let cached_destination = self.host_register(destination);
         let result = if aliases_noncommutative_right {
             Register32::Eax
         } else {
@@ -1669,7 +1832,7 @@ impl Emitter {
     }
 
     fn negate_guest(&mut self, destination: usize, source: usize) {
-        let cached_destination = self.cache.host(destination).map(CachedHost::register);
+        let cached_destination = self.host_register(destination);
         let result = cached_destination.unwrap_or(Register32::Eax);
         if Some(result) == cached_destination && destination == source {
             self.profile_guest_read(source);
@@ -1811,11 +1974,19 @@ impl Emitter {
             }
         };
 
-        self.code.extend_from_slice(&[0x0f, condition.x86()]);
-        self.code
-            .extend_from_slice(&(EDGE_SLOT_BYTES as i32).to_le_bytes());
-        self.edge_slot(fallthrough)?;
-        self.edge_slot(target)
+        #[cfg(not(feature = "profile"))]
+        {
+            self.conditional_edge(condition.x86(), target)?;
+            self.edge_slot(fallthrough)
+        }
+        #[cfg(feature = "profile")]
+        {
+            self.code.extend_from_slice(&[0x0f, condition.x86()]);
+            self.code
+                .extend_from_slice(&(EDGE_SLOT_BYTES as i32).to_le_bytes());
+            self.edge_slot(fallthrough)?;
+            self.edge_slot(target)
+        }
     }
 
     fn compare_guest_with_zero(&mut self, register: usize) {
@@ -1884,25 +2055,21 @@ impl Emitter {
         self.code.extend_from_slice(&[0x41, 0xff, 0xe3]); // jmp r11
 
         self.indirect_misses.extend(misses);
-        self.interpret_one_exit(vec![misaligned], pc)
+        self.interpret_one_exit(vec![misaligned], pc, 1)
     }
 
     fn checked_load(
         &mut self,
-        successor: u32,
+        pc: u32,
+        refund: u8,
         destination: usize,
         base: usize,
         immediate: u32,
         width: MemoryWidth,
         signed: bool,
     ) -> Option<()> {
-        let pc = successor.wrapping_sub(4);
         let failures = self.checked_memory_address(base, immediate, width, PERM_READ)?;
-        let result = self
-            .cache
-            .host(destination)
-            .map(CachedHost::register)
-            .unwrap_or(Register32::Eax);
+        let result = self.host_register(destination).unwrap_or(Register32::Eax);
 
         if destination != 0 {
             self.emit_flat_load(result, width, signed);
@@ -1915,28 +2082,26 @@ impl Emitter {
         #[cfg(feature = "profile")]
         {
             self.increment_context(PROFILE_MEMORY_LOADS_OFFSET);
-            self.increment_context(PROFILE_FALLTHROUGH_OFFSET);
         }
-        self.edge_slot(successor)?;
-        self.interpret_one_exit(failures, pc)
+        self.interpret_one_exit(failures, pc, refund)
     }
 
     fn checked_store(
         &mut self,
-        successor: u32,
+        pc: u32,
+        refund: u8,
         base: usize,
         source: usize,
         immediate: u32,
         width: MemoryWidth,
     ) -> Option<()> {
-        let pc = successor.wrapping_sub(4);
         let failures = self.checked_memory_address(base, immediate, width, PERM_WRITE)?;
         let source = if source == 0 {
             self.zero_register(Register32::Ecx);
             Register32::Ecx
-        } else if let Some(host) = self.cache.host(source) {
+        } else if let Some(source_register) = self.host_register(source) {
             self.profile_guest_read(source);
-            host.register()
+            source_register
         } else {
             self.move_guest_to_register(Register32::Ecx, source);
             Register32::Ecx
@@ -1945,10 +2110,8 @@ impl Emitter {
         #[cfg(feature = "profile")]
         {
             self.increment_context(PROFILE_MEMORY_STORES_OFFSET);
-            self.increment_context(PROFILE_FALLTHROUGH_OFFSET);
         }
-        self.edge_slot(successor)?;
-        self.interpret_one_exit(failures, pc)
+        self.interpret_one_exit(failures, pc, refund)
     }
 
     /// Computes EAX = wrapping guest address and EDX = permission page index.
@@ -1965,15 +2128,17 @@ impl Emitter {
             self.add_eax_immediate(immediate);
         }
 
-        // ADDRESS_SPACE_SIZE is a power of two and every supported width
-        // divides it. One mask therefore rejects both out-of-range addresses
-        // and misalignment. The precise Rust retry retains the required trap
-        // ordering when both conditions hold.
-        let invalid_mask = !(ADDRESS_SPACE_SIZE - 1) | (width.bytes() - 1);
-        self.code.push(0xa9); // test eax, invalid mask
-        self.code.extend_from_slice(&invalid_mask.to_le_bytes());
+        // DirectMemory's permission table covers every RV32 page and leaves
+        // pages outside the EEI at zero. Byte accesses therefore need no
+        // separate bounds branch; wider accesses retain their exact alignment
+        // check. Rust's precise retry decides the required trap class/order.
+        let alignment_mask = width.bytes() - 1;
         let mut failures = Vec::with_capacity(2);
-        failures.push(self.cold_jcc(0x85)?); // jnz slow
+        if alignment_mask != 0 {
+            self.code.push(0xa9); // test eax, alignment mask
+            self.code.extend_from_slice(&alignment_mask.to_le_bytes());
+            failures.push(self.cold_jcc(0x85)?); // jnz slow
+        }
 
         self.code.extend_from_slice(&[0x89, 0xc2]); // mov edx, eax
         let page_shift = u8::try_from(PAGE_SHIFT).ok()?;
@@ -2018,10 +2183,13 @@ impl Emitter {
         self.code.push(0x01); // scale 1, index RAX, base R9
     }
 
-    fn interpret_one_exit(&mut self, branches: Vec<LocalFixup>, pc: u32) -> Option<()> {
+    fn interpret_one_exit(&mut self, branches: Vec<LocalFixup>, pc: u32, refund: u8) -> Option<()> {
         (!branches.is_empty()).then(|| {
-            self.interpret_one_exits
-                .push(InterpretOneRelocation { branches, pc });
+            self.interpret_one_exits.push(InterpretOneRelocation {
+                branches,
+                pc,
+                refund,
+            });
         })
     }
 
@@ -2090,17 +2258,22 @@ impl Emitter {
     }
 
     fn store_immediate(&mut self, register: usize, value: u32) {
-        if let Some(host) = self.cache.host(register) {
+        if let Some(host) = self.host_register(register) {
             if value == 0 {
-                self.zero_register(host.register());
+                self.zero_register(host);
             } else {
                 match host {
-                    CachedHost::Ebx => self.code.push(0xbb),
-                    CachedHost::Ebp => self.code.push(0xbd),
-                    CachedHost::R12d => self.code.extend_from_slice(&[0x41, 0xbc]),
-                    CachedHost::R13d => self.code.extend_from_slice(&[0x41, 0xbd]),
-                    CachedHost::R14d => self.code.extend_from_slice(&[0x41, 0xbe]),
-                    CachedHost::R15d => self.code.extend_from_slice(&[0x41, 0xbf]),
+                    Register32::Ebx => self.code.push(0xbb),
+                    Register32::Ebp => self.code.push(0xbd),
+                    Register32::R12d => self.code.extend_from_slice(&[0x41, 0xbc]),
+                    Register32::R13d => self.code.extend_from_slice(&[0x41, 0xbd]),
+                    Register32::R14d => self.code.extend_from_slice(&[0x41, 0xbe]),
+                    Register32::R15d => self.code.extend_from_slice(&[0x41, 0xbf]),
+                    #[cfg(not(feature = "profile"))]
+                    Register32::R11d => self.code.extend_from_slice(&[0x41, 0xbb]),
+                    Register32::Eax | Register32::Ecx => {
+                        unreachable!("scratch registers are not guest caches")
+                    }
                 }
                 self.code.extend_from_slice(&value.to_le_bytes());
             }
@@ -2118,14 +2291,19 @@ impl Emitter {
     fn load_eax(&mut self, register: usize) {
         if register == 0 {
             self.code.extend_from_slice(&[0x31, 0xc0]); // xor eax, eax
-        } else if let Some(host) = self.cache.host(register) {
+        } else if let Some(host) = self.host_register(register) {
             match host {
-                CachedHost::Ebx => self.code.extend_from_slice(&[0x89, 0xd8]),
-                CachedHost::Ebp => self.code.extend_from_slice(&[0x89, 0xe8]),
-                CachedHost::R12d => self.code.extend_from_slice(&[0x44, 0x89, 0xe0]),
-                CachedHost::R13d => self.code.extend_from_slice(&[0x44, 0x89, 0xe8]),
-                CachedHost::R14d => self.code.extend_from_slice(&[0x44, 0x89, 0xf0]),
-                CachedHost::R15d => self.code.extend_from_slice(&[0x44, 0x89, 0xf8]),
+                Register32::Ebx => self.code.extend_from_slice(&[0x89, 0xd8]),
+                Register32::Ebp => self.code.extend_from_slice(&[0x89, 0xe8]),
+                Register32::R12d => self.code.extend_from_slice(&[0x44, 0x89, 0xe0]),
+                Register32::R13d => self.code.extend_from_slice(&[0x44, 0x89, 0xe8]),
+                Register32::R14d => self.code.extend_from_slice(&[0x44, 0x89, 0xf0]),
+                Register32::R15d => self.code.extend_from_slice(&[0x44, 0x89, 0xf8]),
+                #[cfg(not(feature = "profile"))]
+                Register32::R11d => self.code.extend_from_slice(&[0x44, 0x89, 0xd8]),
+                Register32::Eax | Register32::Ecx => {
+                    unreachable!("scratch registers are not guest caches")
+                }
             }
             #[cfg(feature = "profile")]
             self.increment_context(PROFILE_CACHE_READ_HITS_OFFSET);
@@ -2140,14 +2318,19 @@ impl Emitter {
     fn load_ecx(&mut self, register: usize) {
         if register == 0 {
             self.code.extend_from_slice(&[0x31, 0xc9]); // xor ecx, ecx
-        } else if let Some(host) = self.cache.host(register) {
+        } else if let Some(host) = self.host_register(register) {
             match host {
-                CachedHost::Ebx => self.code.extend_from_slice(&[0x89, 0xd9]),
-                CachedHost::Ebp => self.code.extend_from_slice(&[0x89, 0xe9]),
-                CachedHost::R12d => self.code.extend_from_slice(&[0x44, 0x89, 0xe1]),
-                CachedHost::R13d => self.code.extend_from_slice(&[0x44, 0x89, 0xe9]),
-                CachedHost::R14d => self.code.extend_from_slice(&[0x44, 0x89, 0xf1]),
-                CachedHost::R15d => self.code.extend_from_slice(&[0x44, 0x89, 0xf9]),
+                Register32::Ebx => self.code.extend_from_slice(&[0x89, 0xd9]),
+                Register32::Ebp => self.code.extend_from_slice(&[0x89, 0xe9]),
+                Register32::R12d => self.code.extend_from_slice(&[0x44, 0x89, 0xe1]),
+                Register32::R13d => self.code.extend_from_slice(&[0x44, 0x89, 0xe9]),
+                Register32::R14d => self.code.extend_from_slice(&[0x44, 0x89, 0xf1]),
+                Register32::R15d => self.code.extend_from_slice(&[0x44, 0x89, 0xf9]),
+                #[cfg(not(feature = "profile"))]
+                Register32::R11d => self.code.extend_from_slice(&[0x44, 0x89, 0xd9]),
+                Register32::Eax | Register32::Ecx => {
+                    unreachable!("scratch registers are not guest caches")
+                }
             }
             #[cfg(feature = "profile")]
             self.increment_context(PROFILE_CACHE_READ_HITS_OFFSET);
@@ -2160,14 +2343,19 @@ impl Emitter {
     }
 
     fn store_eax(&mut self, register: usize) {
-        if let Some(host) = self.cache.host(register) {
+        if let Some(host) = self.host_register(register) {
             match host {
-                CachedHost::Ebx => self.code.extend_from_slice(&[0x89, 0xc3]),
-                CachedHost::Ebp => self.code.extend_from_slice(&[0x89, 0xc5]),
-                CachedHost::R12d => self.code.extend_from_slice(&[0x41, 0x89, 0xc4]),
-                CachedHost::R13d => self.code.extend_from_slice(&[0x41, 0x89, 0xc5]),
-                CachedHost::R14d => self.code.extend_from_slice(&[0x41, 0x89, 0xc6]),
-                CachedHost::R15d => self.code.extend_from_slice(&[0x41, 0x89, 0xc7]),
+                Register32::Ebx => self.code.extend_from_slice(&[0x89, 0xc3]),
+                Register32::Ebp => self.code.extend_from_slice(&[0x89, 0xc5]),
+                Register32::R12d => self.code.extend_from_slice(&[0x41, 0x89, 0xc4]),
+                Register32::R13d => self.code.extend_from_slice(&[0x41, 0x89, 0xc5]),
+                Register32::R14d => self.code.extend_from_slice(&[0x41, 0x89, 0xc6]),
+                Register32::R15d => self.code.extend_from_slice(&[0x41, 0x89, 0xc7]),
+                #[cfg(not(feature = "profile"))]
+                Register32::R11d => self.code.extend_from_slice(&[0x41, 0x89, 0xc3]),
+                Register32::Eax | Register32::Ecx => {
+                    unreachable!("scratch registers are not guest caches")
+                }
             }
             #[cfg(feature = "profile")]
             self.increment_context(PROFILE_CACHE_WRITE_HITS_OFFSET);
@@ -2265,6 +2453,20 @@ impl Emitter {
         Some(())
     }
 
+    #[cfg(not(feature = "profile"))]
+    fn conditional_edge(&mut self, condition: u8, pc: u32) -> Option<()> {
+        let start = self.code.len();
+        self.code.extend_from_slice(&[0x0f, condition, 0, 0, 0, 0]);
+        self.conditional_edges.push(ConditionalEdgeRelocation {
+            branch: LocalFixup {
+                displacement_offset: start.checked_add(2)?,
+                instruction_end: start.checked_add(6)?,
+            },
+            target_pc: pc,
+        });
+        Some(())
+    }
+
     fn cold_jump(&mut self) -> Option<LocalFixup> {
         let displacement_offset = self.code.len().checked_add(1)?;
         let instruction_end = self.code.len().checked_add(5)?;
@@ -2334,9 +2536,11 @@ impl Emitter {
         for branch in relocation.branches {
             patch_relative(&mut self.code, branch, start)?;
         }
-        // The terminal memory instruction has not committed. Refund exactly
-        // that instruction from the block reservation before Rust retries it.
-        self.code.extend_from_slice(&[0x49, 0x83, 0xc2, 0x01]); // add r10, 1
+        // The failed memory instruction and the remainder of its region have
+        // not committed. Refund both before Rust retries exactly that memory
+        // operation. Earlier region instructions stay retired and visible.
+        self.code
+            .extend_from_slice(&[0x49, 0x83, 0xc2, relocation.refund]);
         self.mov_eax(relocation.pc);
         let jump = self.cold_jump()?;
         patch_relative(&mut self.code, jump, target)?;
@@ -2412,6 +2616,19 @@ impl Emitter {
         let indirect_misses = std::mem::take(&mut self.indirect_misses);
         self.emit_indirect_missing_veneer(indirect_misses, exit_targets.missing)?;
         let mut missing_by_pc = BTreeMap::new();
+        #[cfg(not(feature = "profile"))]
+        for edge in self.conditional_edges.clone() {
+            let target = if let Some(&target) = hot_by_pc.get(&edge.target_pc) {
+                target
+            } else if let Some(&target) = missing_by_pc.get(&edge.target_pc) {
+                target
+            } else {
+                let target = self.emit_missing_veneer(edge.target_pc, exit_targets.missing)?;
+                missing_by_pc.insert(edge.target_pc, target);
+                target
+            };
+            patch_relative(&mut self.code, edge.branch, target)?;
+        }
         for edge in self.edges.clone() {
             if let Some(&target) = hot_by_pc.get(&edge.target_pc) {
                 patch_edge(&mut self.code, edge.slot_offset, target)?;
@@ -3479,32 +3696,41 @@ mod tests {
     }
 
     #[test]
-    fn flat_memory_validation_combines_bounds_alignment_and_permissions() {
-        for (width, permission, mask) in [
-            (MemoryWidth::Byte, 1_u8, 0xfc00_0000_u32),
-            (MemoryWidth::Half, 2_u8, 0xfc00_0001),
-            (MemoryWidth::Word, 1_u8, 0xfc00_0003),
+    fn flat_memory_validation_uses_full_rv32_permissions_and_exact_alignment() {
+        for (width, permission, alignment_mask) in [
+            (MemoryWidth::Byte, 1_u8, 0_u32),
+            (MemoryWidth::Half, 2_u8, 1_u32),
+            (MemoryWidth::Word, 1_u8, 3_u32),
         ] {
             let mut emitter = Emitter::new(RegisterCache::empty());
             let failures = emitter
                 .checked_memory_address(0, 0, width, permission)
                 .unwrap();
 
-            let mut expected = vec![0x31, 0xc0, 0xa9]; // xor eax,eax; test eax, mask
-            expected.extend_from_slice(&mask.to_le_bytes());
+            let mut expected = vec![0x31, 0xc0]; // xor eax, eax
+            if alignment_mask != 0 {
+                expected.push(0xa9); // test eax, alignment mask
+                expected.extend_from_slice(&alignment_mask.to_le_bytes());
+                expected.extend_from_slice(&[0x0f, 0x85, 0, 0, 0, 0]); // jnz slow
+            }
             expected.extend_from_slice(&[
-                0x0f, 0x85, 0, 0, 0, 0, // jnz precise slow path
                 0x89, 0xc2, // mov edx, eax
                 0xc1, 0xea, 0x0c, // shr edx, PAGE_SHIFT
                 0x41, 0xf6, 0x04, 0x10, permission, // test [r8+rdx], permission
                 0x0f, 0x84, 0, 0, 0, 0, // jz precise slow path
             ]);
             assert_eq!(emitter.code, expected);
-            assert_eq!(failures.len(), 2);
-            assert_eq!(failures[0].displacement_offset, 9);
-            assert_eq!(failures[0].instruction_end, 13);
-            assert_eq!(failures[1].displacement_offset, 25);
-            assert_eq!(failures[1].instruction_end, 29);
+            if alignment_mask == 0 {
+                assert_eq!(failures.len(), 1);
+                assert_eq!(failures[0].displacement_offset, 14);
+                assert_eq!(failures[0].instruction_end, 18);
+            } else {
+                assert_eq!(failures.len(), 2);
+                assert_eq!(failures[0].displacement_offset, 9);
+                assert_eq!(failures[0].instruction_end, 13);
+                assert_eq!(failures[1].displacement_offset, 25);
+                assert_eq!(failures[1].instruction_end, 29);
+            }
         }
     }
 
@@ -4468,9 +4694,49 @@ mod tests {
 
         let cache = RegisterCache::select(&[block]);
 
-        assert_eq!(cache.count(), 6);
-        assert_eq!(cache.guests(), [1, 2, 3, 4, 5, 6]);
+        assert_eq!(cache.count(), super::MAX_CACHED_REGISTERS);
+        assert_eq!(
+            &cache.guests()[..super::MAX_CACHED_REGISTERS],
+            &(1..=super::MAX_CACHED_REGISTERS as u8).collect::<Vec<_>>()
+        );
         assert_eq!(RegisterCache::select(&[]).count(), 0);
+    }
+
+    #[cfg(not(feature = "profile"))]
+    #[test]
+    fn region_local_cache_selects_profitable_uncached_reuse_and_skips_jalr() {
+        let instructions = vec![scored_add(7, 7); 3];
+        let cache = explicit_cache(&[1, 2, 3, 4, 5, 6]);
+        let flow = super::BlockFlow::Fallthrough { pc: 12 };
+        let mut emitter = Emitter::new(cache);
+
+        emitter.emit_block(&instructions, flow, 0).unwrap();
+
+        assert_eq!(emitter.local_guest, Some(7));
+        let fill = [0x44, 0x8b, 0x5e, super::register_offset(7)];
+        let spill = [0x44, 0x89, 0x5e, super::register_offset(7)];
+        assert_eq!(
+            emitter
+                .code
+                .windows(fill.len())
+                .filter(|bytes| *bytes == fill)
+                .count(),
+            1
+        );
+        assert_eq!(
+            emitter
+                .code
+                .windows(spill.len())
+                .filter(|bytes| *bytes == spill)
+                .count(),
+            1
+        );
+
+        emitter.select_local_cache(
+            &instructions,
+            super::BlockFlow::IndirectJump { target_hint: None },
+        );
+        assert_eq!(emitter.local_guest, None);
     }
 
     #[test]
@@ -4491,10 +4757,10 @@ mod tests {
     }
 
     #[test]
-    fn six_register_shared_entry_and_exit_match_the_fixed_maxima() {
+    fn full_register_cache_entry_and_exit_match_the_fixed_maxima() {
         let block = scoring_block(
             IMAGE_START,
-            (1..=6)
+            (1..=super::MAX_CACHED_REGISTERS)
                 .flat_map(|destination| {
                     (0..MIN_WEIGHTED_CACHE_ACCESSES).map(move |_| super::Lowering::WriteImmediate {
                         destination,
@@ -5134,7 +5400,13 @@ mod tests {
             .emit_block(&block.instructions, block.flow, block.pc)
             .unwrap();
         let hot_len = emitter.code.len();
+        #[cfg(feature = "profile")]
         let edge_offsets = [emitter.edges[0].slot_offset, emitter.edges[1].slot_offset];
+        #[cfg(not(feature = "profile"))]
+        let (jump_offset, conditional) = (
+            emitter.edges[0].slot_offset,
+            emitter.conditional_edges[0].branch,
+        );
 
         let resolved = emitter.resolve().unwrap();
         let exit_start = hot_len + resolved.external_thunk_bytes + resolved.shared_prologue_bytes;
@@ -5149,11 +5421,28 @@ mod tests {
             reserved_len
         );
         let veneer = exit_start + exit_bytes + BUDGET_VENEER_BYTES;
+        #[cfg(feature = "profile")]
         for slot in edge_offsets {
             assert_eq!(code[slot], 0xe9);
             assert_eq!(relative_target(&code, slot + 1, slot + 5), veneer);
-            #[cfg(feature = "profile")]
             assert_eq!(&code[slot + 5..slot + EDGE_SLOT_BYTES], &[0x90; 4]);
+        }
+        #[cfg(not(feature = "profile"))]
+        {
+            assert_eq!(code[jump_offset], 0xe9);
+            assert_eq!(
+                relative_target(&code, jump_offset + 1, jump_offset + 5),
+                veneer
+            );
+            assert_eq!(code[conditional.instruction_end - 6], 0x0f);
+            assert_eq!(
+                relative_target(
+                    &code,
+                    conditional.displacement_offset,
+                    conditional.instruction_end,
+                ),
+                veneer
+            );
         }
         assert_eq!(code[veneer], 0xb8);
         assert_eq!(

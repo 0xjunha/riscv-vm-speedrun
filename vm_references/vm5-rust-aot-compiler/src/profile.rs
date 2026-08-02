@@ -28,9 +28,7 @@ impl GeneratedBlockProfile {
     pub(crate) fn from_compiled(compiled: &LinkedBlock) -> Self {
         let instruction_count = compiled.instruction_count();
         let flow = match compiled.flow() {
-            LinkedBlockFlow::Fallthrough { .. } | LinkedBlockFlow::CheckedFallthrough { .. } => {
-                BlockFlow::Fallthrough
-            }
+            LinkedBlockFlow::Fallthrough { .. } => BlockFlow::Fallthrough,
             LinkedBlockFlow::Branch { .. } => BlockFlow::Branch,
             LinkedBlockFlow::Jump { .. } => BlockFlow::DirectJump,
             LinkedBlockFlow::IndirectJump { .. } => BlockFlow::IndirectJump,

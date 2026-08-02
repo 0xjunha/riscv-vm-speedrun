@@ -14,6 +14,8 @@ pub const STACK_END: u32 = 0x0400_0000;
 pub const PAGE_SHIFT: u32 = 12;
 pub const PAGE_SIZE: usize = 1 << PAGE_SHIFT;
 pub const PAGE_COUNT: usize = ADDRESS_SPACE_SIZE as usize / PAGE_SIZE;
+/// Page-indexed permission entries covering every address representable by RV32.
+pub const RV32_PAGE_COUNT: usize = 1_usize << (u32::BITS - PAGE_SHIFT);
 
 pub const PERM_READ: u8 = 1;
 pub const PERM_WRITE: u8 = 2;
@@ -49,6 +51,10 @@ pub struct DirectMemory<'a> {
 
 impl DirectMemory<'_> {
     /// Returns the base of the immutable, page-indexed permission table.
+    ///
+    /// The table has [`RV32_PAGE_COUNT`] entries. Pages outside the project
+    /// EEI address space are present with zero permissions, so native runners
+    /// may validate any wrapping RV32 address without an out-of-bounds read.
     pub const fn permissions_ptr(&self) -> *const u8 {
         self.permissions
     }
@@ -65,8 +71,10 @@ impl DirectMemory<'_> {
 
 impl Memory {
     pub fn new(image: &Image, input: &[u8]) -> Self {
+        let mut permissions = vec![0; RV32_PAGE_COUNT];
+        permissions[..PAGE_COUNT].copy_from_slice(&image.permissions);
         let mut memory = Self {
-            permissions: image.permissions.clone(),
+            permissions,
             pages: image.pages.clone(),
             address_space: None,
         };
@@ -280,11 +288,14 @@ mod tests {
 
         let address_space = memory.address_space.as_ref().unwrap();
         assert_eq!(address_space.len(), ADDRESS_SPACE_SIZE as usize);
+        assert_eq!(memory.permissions.len(), RV32_PAGE_COUNT);
         assert_eq!(permissions_ptr, memory.permissions.as_ptr());
         assert_eq!(address_space_ptr, address_space.as_ptr().cast_mut());
         assert!(memory.pages.is_empty());
         assert_eq!(memory.permissions[resident], PERM_READ | PERM_EXEC);
         assert_eq!(memory.permissions[sparse], 0);
+        assert_eq!(memory.permissions[PAGE_COUNT], 0);
+        assert_eq!(memory.permissions[RV32_PAGE_COUNT - 1], 0);
         assert_eq!(address_space[resident * PAGE_SIZE], 0xa5);
         assert!(
             address_space[sparse * PAGE_SIZE..(sparse + 1) * PAGE_SIZE]

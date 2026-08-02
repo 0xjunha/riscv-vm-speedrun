@@ -70,6 +70,11 @@ struct BlockPage {
     entries: [Slot; INSTRUCTIONS_PER_PAGE],
 }
 
+struct CompiledSuccessors {
+    all: Vec<u32>,
+    flow: [Option<u32>; 2],
+}
+
 impl BlockPage {
     fn new() -> Self {
         Self {
@@ -116,16 +121,13 @@ impl NativeImage {
         let mut native = Self::default();
         let mut blocks = Vec::new();
         let mut reserved_code_bytes = 0;
-        // Only a newly admitted block contributes its at-most-two direct
-        // successors, so the native-block cap also bounds this queue's work.
-        let mut reachable = VecDeque::from([image.entry]);
-        while let Some(pc) = reachable.pop_front() {
-            if let Some(successors) =
-                native.try_compile(&machine, pc, limits, &mut blocks, &mut reserved_code_bytes)
-            {
-                reachable.extend(successors.into_iter().flatten());
-            }
-        }
+        native.compile_successor_closure(
+            &machine,
+            [image.entry],
+            limits,
+            &mut blocks,
+            &mut reserved_code_bytes,
+        );
 
         let mut scanned = 0;
         'ranges: for range in &image.executable_file_ranges {
@@ -144,7 +146,7 @@ impl NativeImage {
                 }
 
                 if begins_block {
-                    let _ = native.try_compile(
+                    native.compile_cold_seed(
                         &machine,
                         pc,
                         limits,
@@ -160,9 +162,9 @@ impl NativeImage {
                     continue;
                 };
                 if let Some(target) = instruction.direct_target() {
-                    let _ = native.try_compile(
+                    native.compile_successor_closure(
                         &machine,
-                        target,
+                        [target],
                         limits,
                         &mut blocks,
                         &mut reserved_code_bytes,
@@ -171,7 +173,8 @@ impl NativeImage {
 
                 if LinkedBlock::supports(instruction) && !LinkedBlock::ends_block(instruction) {
                     sequence_length += 1;
-                    begins_block = sequence_length == MAX_NATIVE_INSTRUCTIONS;
+                    begins_block = LinkedBlock::needs_precise_resume(instruction)
+                        || sequence_length == MAX_NATIVE_INSTRUCTIONS;
                     if begins_block {
                         sequence_length = 0;
                     }
@@ -247,6 +250,50 @@ impl NativeImage {
         self.program.as_ref()?.entry(id.index())
     }
 
+    fn compile_successor_closure(
+        &mut self,
+        machine: &Machine,
+        seeds: impl IntoIterator<Item = u32>,
+        limits: PreparationLimits,
+        blocks: &mut Vec<LinkedBlock>,
+        reserved_code_bytes: &mut usize,
+    ) {
+        // Only a newly admitted region contributes successors, so the native
+        // block cap bounds both this queue and all recursive discovery work.
+        let mut reachable = VecDeque::from_iter(seeds);
+        while let Some(pc) = reachable.pop_front() {
+            if let Some(successors) =
+                self.try_compile(machine, pc, limits, blocks, reserved_code_bytes)
+            {
+                reachable.extend(successors.all);
+            }
+        }
+    }
+
+    fn compile_cold_seed(
+        &mut self,
+        machine: &Machine,
+        pc: u32,
+        limits: PreparationLimits,
+        blocks: &mut Vec<LinkedBlock>,
+        reserved_code_bytes: &mut usize,
+    ) {
+        let Some(successors) = self.try_compile(machine, pc, limits, blocks, reserved_code_bytes)
+        else {
+            return;
+        };
+        // The bounded cold sweep itself discovers precise memory resumes.
+        // Follow only the seed's actual control-flow exits here; descendants
+        // are reachable and therefore use complete successor closure.
+        self.compile_successor_closure(
+            machine,
+            successors.flow.into_iter().flatten(),
+            limits,
+            blocks,
+            reserved_code_bytes,
+        );
+    }
+
     fn try_compile(
         &mut self,
         machine: &Machine,
@@ -254,12 +301,11 @@ impl NativeImage {
         limits: PreparationLimits,
         blocks: &mut Vec<LinkedBlock>,
         reserved_code_bytes: &mut usize,
-    ) -> Option<[Option<u32>; 2]> {
-        if pc & 3 != 0
-            || pc >= ADDRESS_SPACE_SIZE
-            || blocks.len() == limits.native_blocks
-            || !matches!(self.slot(pc), Some(Slot::Unseen))
-        {
+    ) -> Option<CompiledSuccessors> {
+        if pc & 3 != 0 || pc >= ADDRESS_SPACE_SIZE || !matches!(self.slot(pc), Some(Slot::Unseen)) {
+            return None;
+        }
+        if blocks.len() == limits.native_blocks {
             return None;
         }
         let Ok(instruction) = machine.fetch_decode(pc) else {
@@ -269,9 +315,10 @@ impl NativeImage {
         if !LinkedBlock::supports(instruction) {
             return None;
         }
-
         let instructions = native_sequence(machine, pc);
-        let block = LinkedBlock::compile(&instructions)?;
+        let Some(block) = LinkedBlock::compile(&instructions) else {
+            return None;
+        };
         let fixed_bytes = if blocks.is_empty() {
             LinkedProgram::fixed_code_len()
         } else {
@@ -288,7 +335,10 @@ impl NativeImage {
             return None;
         }
 
-        let successors = block.successors();
+        let successors = CompiledSuccessors {
+            all: block.successors(),
+            flow: block.flow_successors(),
+        };
         *reserved_code_bytes = next_code_bytes;
         let id = BlockId::new(blocks.len());
         #[cfg(feature = "profile")]
@@ -528,7 +578,9 @@ mod tests {
         assert_eq!(native.staged_block_count(), 3);
         #[cfg(feature = "profile")]
         {
-            assert_eq!(native.load_profile().native_guest_instructions, 4);
+            // The three precise resume entries share semantics but currently
+            // stage overlapping bounded suffix regions of lengths 4, 3, and 2.
+            assert_eq!(native.load_profile().native_guest_instructions, 9);
             assert_eq!(native.load_profile().fallthrough_blocks, 3);
         }
     }
