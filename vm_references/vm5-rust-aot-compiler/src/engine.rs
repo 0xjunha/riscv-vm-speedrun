@@ -83,7 +83,12 @@ impl AotCompiler {
                 profile.lookup_fallbacks += 1;
             }
             if let Some(native) = native {
-                let native_run = native.execute(&mut machine.registers, machine.pc, remaining);
+                let native_run = native.execute(
+                    &mut machine.registers,
+                    &mut machine.memory,
+                    machine.pc,
+                    remaining,
+                );
                 debug_assert!(native_run.retired <= remaining);
                 machine.pc = native_run.pc;
                 machine.registers[0] = 0;
@@ -103,6 +108,7 @@ impl AotCompiler {
                     crate::linked::NativeStop::MissingSuccessor => {
                         profile.lookup_fallbacks += 1;
                     }
+                    crate::linked::NativeStop::InterpretOne => {}
                 }
             }
 
@@ -139,6 +145,14 @@ impl AotCompiler {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    use rv32vm_rust_common::memory::{
+        ADDRESS_SPACE_SIZE, INPUT_START, PAGE_SHIFT, PAGE_SIZE, PERM_READ, PERM_WRITE, STACK_START,
+    };
     use rv32vm_rust_common::{
         machine::{Engine, Machine, Termination},
         memory::IMAGE_START,
@@ -146,6 +160,33 @@ mod tests {
 
     use super::AotCompiler;
     use crate::test_support::{addi, image_with_code_at, lw, machine_with_code_at};
+
+    #[cfg(any(
+        feature = "profile",
+        all(
+            target_arch = "x86_64",
+            target_os = "linux",
+            target_pointer_width = "64"
+        )
+    ))]
+    fn load(rd: u32, rs1: u32, funct3: u32, immediate: i32) -> u32 {
+        ((immediate as u32 & 0xfff) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | 0x03
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    fn store(rs1: u32, rs2: u32, funct3: u32, immediate: i32) -> u32 {
+        let immediate = immediate as u32 & 0xfff;
+        ((immediate >> 5) << 25)
+            | (rs2 << 20)
+            | (rs1 << 15)
+            | (funct3 << 12)
+            | ((immediate & 0x1f) << 7)
+            | 0x23
+    }
 
     #[test]
     fn exact_budget_stops_at_the_requested_instruction() {
@@ -188,7 +229,7 @@ mod tests {
         assert_eq!(exit_profile.fallback_retired, 1);
         assert_eq!(exit_profile.fallback_system, 1);
 
-        let trap_image = image_with_code_at(&[lw(5, 0, 1)], IMAGE_START);
+        let trap_image = image_with_code_at(&[load(5, 0, 3, 0)], IMAGE_START);
         let mut trap_machine = Machine::new(&trap_image, &[], 0);
         let (trap, trap_profile) = engine.run_profiled(&mut trap_machine, 1);
 
@@ -255,7 +296,7 @@ mod tests {
             &[
                 addi(5, 5, 1),
                 addi(5, 5, 1),
-                lw(6, 10, 0),
+                (10 << 15) | (6 << 7) | 0x67, // jalr x6, 0(x10)
                 addi(7, 7, 1),
                 addi(7, 7, 1),
                 0x0000_0073,
@@ -265,7 +306,7 @@ mod tests {
         let mut engine = AotCompiler::default();
         engine.prepare(&image).unwrap();
         let mut machine = Machine::new(&image, &[], 0);
-        machine.registers[10] = IMAGE_START;
+        machine.registers[10] = IMAGE_START + 12;
 
         let result = engine.run(&mut machine, 5);
 
@@ -273,7 +314,7 @@ mod tests {
         assert_eq!(machine.pc, IMAGE_START + 20);
         assert_eq!(machine.retired, 5);
         assert_eq!(machine.registers[5], 2);
-        assert_eq!(machine.registers[6], addi(5, 5, 1));
+        assert_eq!(machine.registers[6], IMAGE_START + 12);
         assert_eq!(machine.registers[7], 2);
         assert_eq!(engine.native_retired(), 4);
     }
@@ -314,6 +355,619 @@ mod tests {
         assert_eq!(trapping.pc, target);
         assert_eq!(trapping.registers[5], IMAGE_START + 8);
         assert_eq!(trapping.retired, 2);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn checked_loads_cover_every_width_and_signedness() {
+        let code = [
+            load(5, 10, 0, 0),
+            load(6, 10, 4, 0),
+            load(7, 10, 1, 2),
+            load(8, 10, 5, 2),
+            load(9, 10, 2, 4),
+        ];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        let base = STACK_START + 0x100;
+        machine.registers[10] = base;
+        machine.memory.store(base, 1, 0x80, IMAGE_START).unwrap();
+        machine
+            .memory
+            .store(base + 2, 2, 0x8001, IMAGE_START)
+            .unwrap();
+        machine
+            .memory
+            .store(base + 4, 4, 0x89ab_cdef, IMAGE_START)
+            .unwrap();
+
+        let result = engine.run(&mut machine, code.len() as u64);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(machine.registers[5], 0xffff_ff80);
+        assert_eq!(machine.registers[6], 0x80);
+        assert_eq!(machine.registers[7], 0xffff_8001);
+        assert_eq!(machine.registers[8], 0x8001);
+        assert_eq!(machine.registers[9], 0x89ab_cdef);
+        assert_eq!(engine.native_retired(), code.len() as u64);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn checked_stores_cover_every_width_and_little_endian_layout() {
+        let code = [store(10, 5, 0, 0), store(10, 6, 1, 2), store(10, 7, 2, 4)];
+        let image = image_with_code_at(&code, IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        let base = STACK_START + 0x180;
+        machine.registers[10] = base;
+        machine.registers[5] = 0xa5;
+        machine.registers[6] = 0xbbaa;
+        machine.registers[7] = 0x4433_2211;
+        machine.memory.store(base, 1, 0, IMAGE_START).unwrap();
+
+        let result = engine.run(&mut machine, code.len() as u64);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(
+            machine.memory.read(base, 8),
+            [0xa5, 0, 0xaa, 0xbb, 0x11, 0x22, 0x33, 0x44]
+        );
+        assert_eq!(engine.native_retired(), code.len() as u64);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn negative_i_and_s_immediates_cover_all_memory_widths() {
+        let load_code = [load(5, 10, 0, -1), load(6, 11, 1, -2), load(7, 12, 2, -4)];
+        let load_image = image_with_code_at(&load_code, IMAGE_START);
+        let mut load_engine = AotCompiler::default();
+        load_engine.prepare(&load_image).unwrap();
+        let mut load_machine = Machine::new(&load_image, &[], 0);
+        let base = STACK_START + 0x800;
+        load_machine.registers[10] = base + 1;
+        load_machine.registers[11] = base + 4;
+        load_machine.registers[12] = base + 8;
+        load_machine
+            .memory
+            .store(base, 1, 0x80, IMAGE_START)
+            .unwrap();
+        load_machine
+            .memory
+            .store(base + 2, 2, 0x8001, IMAGE_START)
+            .unwrap();
+        load_machine
+            .memory
+            .store(base + 4, 4, 0x89ab_cdef, IMAGE_START)
+            .unwrap();
+
+        let result = load_engine.run(&mut load_machine, load_code.len() as u64);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(load_machine.registers[5], 0xffff_ff80);
+        assert_eq!(load_machine.registers[6], 0xffff_8001);
+        assert_eq!(load_machine.registers[7], 0x89ab_cdef);
+        assert_eq!(load_engine.native_retired(), load_code.len() as u64);
+
+        let store_code = [
+            store(10, 5, 0, -1),
+            store(11, 6, 1, -2),
+            store(12, 7, 2, -4),
+        ];
+        let store_image = image_with_code_at(&store_code, IMAGE_START);
+        let mut store_engine = AotCompiler::default();
+        store_engine.prepare(&store_image).unwrap();
+        let mut store_machine = Machine::new(&store_image, &[], 0);
+        let base = STACK_START + 0x900;
+        store_machine.registers[10] = base + 1;
+        store_machine.registers[11] = base + 4;
+        store_machine.registers[12] = base + 8;
+        store_machine.registers[5] = 0xa5;
+        store_machine.registers[6] = 0xbbaa;
+        store_machine.registers[7] = 0x4433_2211;
+        store_machine.memory.store(base, 1, 0, IMAGE_START).unwrap();
+
+        let result = store_engine.run(&mut store_machine, store_code.len() as u64);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(
+            store_machine.memory.read(base, 8),
+            [0xa5, 0, 0xaa, 0xbb, 0x11, 0x22, 0x33, 0x44]
+        );
+        assert_eq!(store_engine.native_retired(), store_code.len() as u64);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn negative_memory_immediates_preserve_wrapping_and_page_selection() {
+        use rv32vm_rust_common::GuestTrap;
+
+        let load_image = image_with_code_at(&[load(5, 10, 2, -4)], IMAGE_START);
+        let mut load_engine = AotCompiler::default();
+        load_engine.prepare(&load_image).unwrap();
+        let mut load_machine = Machine::new(&load_image, &[], 0);
+        load_machine.registers[10] = 0;
+        load_machine.registers[5] = 0xfeed_face;
+        let result = load_engine.run(&mut load_machine, 1);
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new("LoadAccessFault", IMAGE_START, u32::MAX - 3,))
+        );
+        assert_eq!(load_machine.registers[5], 0xfeed_face);
+
+        let store_image = image_with_code_at(&[store(10, 5, 2, -4)], IMAGE_START);
+        let mut store_engine = AotCompiler::default();
+        store_engine.prepare(&store_image).unwrap();
+        let mut store_machine = Machine::new(&store_image, &[], 0);
+        store_machine.registers[10] = 0;
+        store_machine.registers[5] = 0x1122_3344;
+        let result = store_engine.run(&mut store_machine, 1);
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new(
+                "StoreAccessFault",
+                IMAGE_START,
+                u32::MAX - 3,
+            ))
+        );
+
+        let boundary = IMAGE_START + u32::try_from(PAGE_SIZE * 4).unwrap();
+        let mut load_image = image_with_code_at(&[load(5, 10, 0, -1)], IMAGE_START);
+        load_image.permissions[(boundary >> PAGE_SHIFT) as usize] = PERM_READ;
+        let mut load_engine = AotCompiler::default();
+        load_engine.prepare(&load_image).unwrap();
+        let mut load_machine = Machine::new(&load_image, &[], 0);
+        load_machine.registers[10] = boundary;
+        let result = load_engine.run(&mut load_machine, 1);
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new("LoadAccessFault", IMAGE_START, boundary - 1,))
+        );
+
+        let mut store_image = image_with_code_at(&[store(10, 5, 0, -1)], IMAGE_START);
+        store_image.permissions[(boundary >> PAGE_SHIFT) as usize] = PERM_WRITE;
+        let mut store_engine = AotCompiler::default();
+        store_engine.prepare(&store_image).unwrap();
+        let mut store_machine = Machine::new(&store_image, &[], 0);
+        store_machine.registers[10] = boundary;
+        store_machine.registers[5] = 0x55;
+        let result = store_engine.run(&mut store_machine, 1);
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new(
+                "StoreAccessFault",
+                IMAGE_START,
+                boundary - 1,
+            ))
+        );
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn readable_sparse_loads_return_zero_natively() {
+        let image = image_with_code_at(&[load(5, 10, 2, 0)], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[10] = INPUT_START;
+        machine.registers[5] = 0xfeed_face;
+
+        let result = engine.run(&mut machine, 1);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(machine.registers[5], 0);
+        assert_eq!(engine.native_retired(), 1);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn sparse_store_falls_back_once_then_reuses_the_resident_page_natively() {
+        let image = image_with_code_at(&[store(10, 5, 2, 0)], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[10] = STACK_START + 0x200;
+        machine.registers[5] = 0x4433_2211;
+
+        let first = engine.run(&mut machine, 1);
+        assert_eq!(first.termination, Termination::InstructionLimit);
+        assert_eq!(first.retired, 1);
+        assert_eq!(engine.native_retired(), 0);
+        assert_eq!(machine.memory.load_u32(STACK_START + 0x200), 0x4433_2211);
+
+        machine.pc = IMAGE_START;
+        machine.retired = 0;
+        machine.registers[5] = 0x8877_6655;
+        let second = engine.run(&mut machine, 1);
+        assert_eq!(second.termination, Termination::InstructionLimit);
+        assert_eq!(engine.native_retired(), 1);
+        assert_eq!(machine.memory.load_u32(STACK_START + 0x200), 0x8877_6655);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn memory_slow_paths_preserve_trap_priority_bounds_and_destination() {
+        use rv32vm_rust_common::GuestTrap;
+
+        let cases = [
+            (
+                load(5, 10, 2, 0),
+                1,
+                GuestTrap::new("LoadAddressMisaligned", IMAGE_START, 1),
+            ),
+            (
+                load(5, 10, 2, 0),
+                ADDRESS_SPACE_SIZE,
+                GuestTrap::new("LoadAccessFault", IMAGE_START, ADDRESS_SPACE_SIZE),
+            ),
+            (
+                load(5, 10, 2, 0),
+                0,
+                GuestTrap::new("LoadAccessFault", IMAGE_START, 0),
+            ),
+            (
+                load(5, 10, 2, 1),
+                u32::MAX,
+                GuestTrap::new("LoadAccessFault", IMAGE_START, 0),
+            ),
+        ];
+        for (instruction, address, trap) in cases {
+            let image = image_with_code_at(&[instruction], IMAGE_START);
+            let mut engine = AotCompiler::default();
+            engine.prepare(&image).unwrap();
+            let mut machine = Machine::new(&image, &[], 0);
+            machine.registers[10] = address;
+            machine.registers[5] = 0xfeed_face;
+
+            let result = engine.run(&mut machine, 1);
+
+            assert_eq!(result.termination, Termination::Trap(trap));
+            assert_eq!(result.retired, 0);
+            assert_eq!(machine.registers[5], 0xfeed_face);
+            assert_eq!(engine.native_retired(), 0);
+        }
+
+        let mut write_only_image = image_with_code_at(&[lw(5, 10, 0)], IMAGE_START);
+        let write_only = IMAGE_START + (1 << PAGE_SHIFT);
+        write_only_image.permissions[(write_only >> PAGE_SHIFT) as usize] = PERM_WRITE;
+        let mut engine = AotCompiler::default();
+        engine.prepare(&write_only_image).unwrap();
+        let mut machine = Machine::new(&write_only_image, &[], 0);
+        machine.registers[10] = write_only;
+        machine.registers[5] = 0xfeed_face;
+        let result = engine.run(&mut machine, 1);
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new("LoadAccessFault", IMAGE_START, write_only,))
+        );
+        assert_eq!(machine.registers[5], 0xfeed_face);
+
+        let store_cases = [
+            (1, GuestTrap::new("StoreAddressMisaligned", IMAGE_START, 1)),
+            (0, GuestTrap::new("StoreAccessFault", IMAGE_START, 0)),
+            (
+                IMAGE_START,
+                GuestTrap::new("StoreAccessFault", IMAGE_START, IMAGE_START),
+            ),
+            (
+                ADDRESS_SPACE_SIZE,
+                GuestTrap::new("StoreAccessFault", IMAGE_START, ADDRESS_SPACE_SIZE),
+            ),
+        ];
+        for (address, trap) in store_cases {
+            let image = image_with_code_at(&[store(10, 5, 2, 0)], IMAGE_START);
+            let mut engine = AotCompiler::default();
+            engine.prepare(&image).unwrap();
+            let mut machine = Machine::new(&image, &[], 0);
+            machine.registers[10] = address;
+            machine.registers[5] = 0x1122_3344;
+
+            let result = engine.run(&mut machine, 1);
+
+            assert_eq!(result.termination, Termination::Trap(trap));
+            assert_eq!(result.retired, 0);
+            assert_eq!(engine.native_retired(), 0);
+        }
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn failed_terminal_memory_refunds_only_itself_after_a_native_prefix() {
+        use rv32vm_rust_common::GuestTrap;
+
+        let image = image_with_code_at(&[addi(5, 5, 1), lw(6, 10, 0)], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[10] = 1;
+        machine.registers[6] = 0xcafe_babe;
+
+        let result = engine.run(&mut machine, 2);
+
+        assert_eq!(
+            result.termination,
+            Termination::Trap(GuestTrap::new("LoadAddressMisaligned", IMAGE_START + 4, 1,))
+        );
+        assert_eq!(result.retired, 1);
+        assert_eq!(machine.pc, IMAGE_START + 4);
+        assert_eq!(machine.registers[5], 1);
+        assert_eq!(machine.registers[6], 0xcafe_babe);
+        assert_eq!(engine.native_retired(), 1);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn short_budget_falls_back_before_prefix_without_over_retirement() {
+        let image = image_with_code_at(&[addi(5, 5, 1), lw(6, 10, 0)], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        let address = STACK_START + 0x280;
+        machine.registers[10] = address;
+        machine
+            .memory
+            .store(address, 4, 0x1234_5678, IMAGE_START)
+            .unwrap();
+
+        let prefix = engine.run(&mut machine, 1);
+        assert_eq!(prefix.termination, Termination::InstructionLimit);
+        assert_eq!(machine.pc, IMAGE_START + 4);
+        assert_eq!(machine.registers[5], 1);
+        assert_eq!(machine.registers[6], 0);
+        assert_eq!(engine.native_retired(), 0);
+
+        let load = engine.run(&mut machine, 2);
+        assert_eq!(load.termination, Termination::InstructionLimit);
+        assert_eq!(machine.registers[6], 0x1234_5678);
+        assert_eq!(engine.native_retired(), 0);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn repeated_runs_reload_object_specific_memory_anchors() {
+        let image = image_with_code_at(&[lw(5, 10, 0)], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let address = STACK_START + 0x300;
+
+        for expected in [0x1122_3344, 0xaabb_ccdd] {
+            let mut machine = Machine::new(&image, &[], 0);
+            machine.registers[10] = address;
+            machine
+                .memory
+                .store(address, 4, expected, IMAGE_START)
+                .unwrap();
+
+            let result = engine.run(&mut machine, 1);
+
+            assert_eq!(result.termination, Termination::InstructionLimit);
+            assert_eq!(machine.registers[5], expected);
+        }
+        assert_eq!(engine.native_retired(), 2);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn checked_memory_preserves_register_aliases_and_x0() {
+        let load_image = image_with_code_at(&[lw(5, 5, 0)], IMAGE_START);
+        let mut load_engine = AotCompiler::default();
+        load_engine.prepare(&load_image).unwrap();
+        let mut load_machine = Machine::new(&load_image, &[], 0);
+        let address = STACK_START + 0x380;
+        load_machine.registers[5] = address;
+        load_machine
+            .memory
+            .store(address, 4, 0x7654_3210, IMAGE_START)
+            .unwrap();
+        load_engine.run(&mut load_machine, 1);
+        assert_eq!(load_machine.registers[5], 0x7654_3210);
+
+        let x0_image = image_with_code_at(&[lw(0, 10, 0)], IMAGE_START);
+        let mut x0_engine = AotCompiler::default();
+        x0_engine.prepare(&x0_image).unwrap();
+        let mut x0_machine = Machine::new(&x0_image, &[], 0);
+        x0_machine.registers[10] = INPUT_START;
+        x0_engine.run(&mut x0_machine, 1);
+        assert_eq!(x0_machine.registers[0], 0);
+        assert_eq!(x0_engine.native_retired(), 1);
+
+        let store_image = image_with_code_at(&[store(5, 5, 2, 0), store(10, 0, 2, 4)], IMAGE_START);
+        let mut store_engine = AotCompiler::default();
+        store_engine.prepare(&store_image).unwrap();
+        let mut store_machine = Machine::new(&store_image, &[], 0);
+        let store_address = STACK_START + 0x400;
+        store_machine.registers[5] = store_address;
+        store_machine.registers[10] = store_address;
+        store_machine
+            .memory
+            .store(store_address, 4, 1, IMAGE_START)
+            .unwrap();
+        store_engine.run(&mut store_machine, 2);
+        assert_eq!(store_machine.memory.load_u32(store_address), store_address);
+        assert_eq!(store_machine.memory.load_u32(store_address + 4), 0);
+        assert_eq!(store_engine.native_retired(), 2);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn checked_memory_matches_one_step_interpreter_execution() {
+        let cases = [
+            (load(5, 10, 0, 0), STACK_START + 0x500, 0x0000_0080),
+            (load(5, 10, 4, 0), STACK_START + 0x500, 0x0000_0080),
+            (load(5, 10, 1, 0), STACK_START + 0x500, 0x0000_8001),
+            (load(5, 10, 5, 0), STACK_START + 0x500, 0x0000_8001),
+            (load(5, 10, 2, 0), STACK_START + 0x500, 0x89ab_cdef),
+            (store(10, 5, 0, 0), STACK_START + 0x500, 0x89ab_cdef),
+            (store(10, 5, 1, 0), STACK_START + 0x500, 0x89ab_cdef),
+            (store(10, 5, 2, 0), STACK_START + 0x500, 0x89ab_cdef),
+            (load(5, 10, 2, 0), 1, 0x89ab_cdef),
+            (store(10, 5, 2, 0), 0, 0x89ab_cdef),
+        ];
+
+        for (instruction, address, value) in cases {
+            let image = image_with_code_at(&[instruction], IMAGE_START);
+            let mut expected = Machine::new(&image, &[], 0);
+            let mut actual = Machine::new(&image, &[], 0);
+            expected.registers[10] = address;
+            actual.registers[10] = address;
+            expected.registers[5] = value;
+            actual.registers[5] = value;
+            if (STACK_START..ADDRESS_SPACE_SIZE).contains(&address) {
+                expected
+                    .memory
+                    .store(address, 4, value, IMAGE_START)
+                    .unwrap();
+                actual.memory.store(address, 4, value, IMAGE_START).unwrap();
+            }
+
+            let expected_termination = expected.execute_one(expected.fetch_decode(IMAGE_START));
+            let mut engine = AotCompiler::default();
+            engine.prepare(&image).unwrap();
+            let actual_result = engine.run(&mut actual, 1);
+
+            assert_eq!(
+                actual_result.termination,
+                expected_termination.unwrap_or(Termination::InstructionLimit)
+            );
+            assert_eq!(actual.pc, expected.pc);
+            assert_eq!(actual.registers, expected.registers);
+            assert_eq!(actual.retired, expected.retired);
+            if (STACK_START..ADDRESS_SPACE_SIZE).contains(&address) {
+                assert_eq!(
+                    actual.memory.read(address, 4),
+                    expected.memory.read(address, 4)
+                );
+            }
+        }
+    }
+
+    #[cfg(all(
+        feature = "profile",
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn profile_counts_checked_memory_at_exact_dynamic_commit_points() {
+        let load_image = image_with_code_at(&[addi(5, 5, 1), lw(6, 10, 0)], IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&load_image).unwrap();
+        let mut success = Machine::new(&load_image, &[], 0);
+        let address = STACK_START + 0x600;
+        success.registers[10] = address;
+        success
+            .memory
+            .store(address, 4, 0x1234_5678, IMAGE_START)
+            .unwrap();
+
+        let (result, profile) = engine.run_profiled(&mut success, 2);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(profile.native_retired, 2);
+        assert_eq!(profile.generated_guest_register_loads, 2);
+        assert_eq!(profile.generated_guest_register_stores, 2);
+        assert_eq!(profile.native_memory_loads, 1);
+        assert_eq!(profile.native_memory_stores, 0);
+        assert_eq!(profile.native_fallthrough_dispatches, 1);
+        assert_eq!(profile.native_interpret_one_exits, 0);
+        assert_eq!(profile.fallback_loads, 0);
+
+        let mut fault = Machine::new(&load_image, &[], 0);
+        fault.registers[10] = 1;
+        fault.registers[6] = 0xfeed_face;
+        let (_, profile) = engine.run_profiled(&mut fault, 2);
+        assert_eq!(profile.native_retired, 1);
+        assert_eq!(profile.generated_guest_register_loads, 2);
+        assert_eq!(profile.generated_guest_register_stores, 1);
+        assert_eq!(profile.native_memory_loads, 0);
+        assert_eq!(profile.native_fallthrough_dispatches, 0);
+        assert_eq!(profile.native_interpret_one_exits, 1);
+        assert_eq!(profile.fallback_loads, 1);
+        assert_eq!(profile.fallback_retired, 0);
+
+        let store_image = image_with_code_at(&[store(10, 5, 2, 0)], IMAGE_START);
+        engine.prepare(&store_image).unwrap();
+        let mut sparse = Machine::new(&store_image, &[], 0);
+        sparse.registers[10] = STACK_START + 0x700;
+        sparse.registers[5] = 0xaabb_ccdd;
+        let (_, profile) = engine.run_profiled(&mut sparse, 1);
+        assert_eq!(profile.native_retired, 0);
+        assert_eq!(profile.generated_guest_register_loads, 2);
+        assert_eq!(profile.generated_guest_register_stores, 0);
+        assert_eq!(profile.native_memory_stores, 0);
+        assert_eq!(profile.native_fallthrough_dispatches, 0);
+        assert_eq!(profile.native_interpret_one_exits, 1);
+        assert_eq!(profile.fallback_stores, 1);
+        assert_eq!(profile.fallback_retired, 1);
+
+        let mut resident = Machine::new(&store_image, &[], 0);
+        let address = STACK_START + 0x780;
+        resident.registers[10] = address;
+        resident.registers[5] = 0x1122_3344;
+        resident.memory.store(address, 4, 0, IMAGE_START).unwrap();
+        let (result, profile) = engine.run_profiled(&mut resident, 1);
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(profile.native_retired, 1);
+        assert_eq!(profile.generated_guest_register_loads, 2);
+        assert_eq!(profile.generated_guest_register_stores, 0);
+        assert_eq!(profile.native_memory_loads, 0);
+        assert_eq!(profile.native_memory_stores, 1);
+        assert_eq!(profile.native_fallthrough_dispatches, 1);
+        assert_eq!(profile.native_interpret_one_exits, 0);
+        assert_eq!(profile.fallback_stores, 0);
+        assert_eq!(profile.fallback_retired, 0);
+        assert_eq!(resident.memory.load_u32(address), 0x1122_3344);
     }
 
     #[cfg(all(
@@ -388,5 +1042,33 @@ mod tests {
         assert_eq!(profile.native_fallthrough_dispatches, 1);
         assert_eq!(profile.generated_guest_register_loads, 5);
         assert_eq!(profile.generated_guest_register_stores, 3);
+    }
+
+    #[cfg(all(
+        feature = "profile",
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn profile_retires_every_rv32m_operation_natively() {
+        let code = (0..8)
+            .map(|funct3| (1 << 25) | (7 << 20) | (6 << 15) | (funct3 << 12) | (5 << 7) | 0x33)
+            .collect::<Vec<_>>();
+        let image = image_with_code_at(&code, IMAGE_START);
+        let mut engine = AotCompiler::default();
+        engine.prepare(&image).unwrap();
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[6] = 0x8000_0001;
+        machine.registers[7] = 3;
+
+        let (result, profile) = engine.run_profiled(&mut machine, code.len() as u64);
+
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(profile.native_retired, 8);
+        assert_eq!(profile.fallback_retired, 0);
+        assert_eq!(profile.fallback_m_ops, 0);
+        assert_eq!(profile.generated_guest_register_loads, 16);
+        assert_eq!(profile.generated_guest_register_stores, 8);
     }
 }

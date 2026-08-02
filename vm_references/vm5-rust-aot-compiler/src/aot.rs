@@ -152,7 +152,7 @@ impl NativeImage {
                     native.try_compile(&machine, target, limits, &mut blocks, &mut code_bytes);
                 }
 
-                if LinkedBlock::supports(instruction) && !instruction.ends_block() {
+                if LinkedBlock::supports(instruction) && !LinkedBlock::ends_block(instruction) {
                     sequence_length += 1;
                     begins_block = sequence_length == MAX_NATIVE_INSTRUCTIONS;
                     if begins_block {
@@ -216,7 +216,7 @@ impl NativeImage {
         let Some(block) = LinkedBlock::compile(&instructions) else {
             return;
         };
-        if block.instruction_count() < MIN_NATIVE_INSTRUCTIONS {
+        if block.instruction_count() < MIN_NATIVE_INSTRUCTIONS && !block.permits_singleton() {
             return;
         }
         let Some(next_code_bytes) = (*code_bytes).checked_add(block.code_len()) else {
@@ -280,7 +280,7 @@ fn native_sequence(machine: &Machine, start_pc: u32) -> Vec<BlockInstruction> {
     loop {
         let instruction = machine.fetch_decode(pc);
         let ends_sequence = instruction.as_ref().map_or(true, |instruction| {
-            instruction.ends_block() || !LinkedBlock::supports(*instruction)
+            !LinkedBlock::supports(*instruction) || LinkedBlock::ends_block(*instruction)
         });
         instructions.push(instruction);
         if ends_sequence || instructions.len() == MAX_NATIVE_INSTRUCTIONS {
@@ -301,6 +301,10 @@ mod tests {
     use super::{MAX_CODE_BYTES, NativeImage, PreparationLimits, native_sequence};
     use crate::linked::LinkedBlock;
     use crate::test_support::{addi, beq, image_with_code_at, lw};
+
+    fn register(rd: u32, rs1: u32, rs2: u32, funct3: u32, funct7: u32) -> u32 {
+        (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | 0x33
+    }
 
     #[test]
     fn prepares_entry_and_sequences_after_precise_fallbacks() {
@@ -339,6 +343,41 @@ mod tests {
         let native = NativeImage::prepare(&image);
 
         assert!(native.attempted(IMAGE_START + 16));
+    }
+
+    #[test]
+    fn prepares_every_rv32m_operation_as_one_native_sequence() {
+        let code = (0..8)
+            .map(|funct3| register(5, 6, 7, funct3, 1))
+            .collect::<Vec<_>>();
+        let image = image_with_code_at(&code, IMAGE_START);
+
+        let native = NativeImage::prepare(&image);
+
+        assert!(native.attempted(IMAGE_START));
+        assert_eq!(native.staged_block_count(), 1);
+        #[cfg(feature = "profile")]
+        assert_eq!(native.load_profile().native_guest_instructions, 8);
+    }
+
+    #[test]
+    fn retains_memory_singletons_and_discovers_their_successors() {
+        let image = image_with_code_at(
+            &[lw(5, 10, 0), lw(6, 10, 4), addi(7, 7, 1), addi(7, 7, 1)],
+            IMAGE_START,
+        );
+
+        let native = NativeImage::prepare(&image);
+
+        assert!(native.attempted(IMAGE_START));
+        assert!(native.attempted(IMAGE_START + 4));
+        assert!(native.attempted(IMAGE_START + 8));
+        assert_eq!(native.staged_block_count(), 3);
+        #[cfg(feature = "profile")]
+        {
+            assert_eq!(native.load_profile().native_guest_instructions, 4);
+            assert_eq!(native.load_profile().fallthrough_blocks, 3);
+        }
     }
 
     #[test]

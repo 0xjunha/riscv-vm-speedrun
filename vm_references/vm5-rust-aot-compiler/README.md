@@ -5,8 +5,10 @@ x86-64 code when an ELF is loaded. This follows the VM interface: `LOAD`
 supplies the program, and later `RUN` requests reuse its compiled blocks until
 the image is replaced or unloaded.
 
-Memory operations, division, indirect jumps, syscalls, traps, short instruction
-budgets, and unsupported instructions use the shared interpreter.
+Supported RV32I/RV32M arithmetic and checked integer loads and stores run in
+the eager native image. Memory slow paths, indirect jumps, syscalls, traps,
+short instruction budgets, and unsupported instructions use the shared
+interpreter.
 
 Translation scans at most 262,144 file-backed instructions (1 MiB of RV32
 code), retains at most 8,192 native blocks and their lookup metadata, and stores
@@ -36,15 +38,17 @@ cargo build --locked --release --features profile \
   --manifest-path vm_references/vm5-rust-aot-compiler/Cargo.toml
 ```
 
-Each record has `kind: "vm5_profile"` and `schema_version: 2`. It reports:
+Each record has `kind: "vm5_profile"` and `schema_version: 3`. It reports:
 
 - total, native, and interpreter-fallback retired instructions;
 - native invocations, executed blocks, direct linked-edge hits, native exit
-  reasons, and lookup versus short-budget fallbacks;
+  reasons (including precise `interpret_one` memory exits), and lookup versus
+  short-budget fallbacks;
 - fallback classes (loads, stores, JALR, M operations, system, other, and fetch
   traps) and a base-opcode breakdown;
 - generated guest-register loads and stores, weighted by native block
   dispatches;
+- successful native memory loads and stores;
 - native fallthrough, conditional-branch, and direct-jump dispatches; and
 - LOAD-time compiled block, native guest instruction, raw code byte, mapped
   byte, and block control-flow counts.

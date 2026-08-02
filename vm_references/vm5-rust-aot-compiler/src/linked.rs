@@ -6,31 +6,46 @@
 
 use std::collections::BTreeMap;
 
-use rv32vm_rust_common::machine::DecodedInstruction;
+use rv32vm_rust_common::{
+    machine::DecodedInstruction,
+    memory::{ADDRESS_SPACE_SIZE, DirectMemory, PAGE_SHIFT, PAGE_SIZE, PERM_READ, PERM_WRITE},
+};
 use rv32vm_rust_x86_block_compiler::BlockInstruction;
 
 const ENTRY_BYTES: [u8; 4] = [0xf3, 0x0f, 0x1e, 0xfa];
 const EDGE_SLOT_BYTES: usize = 16;
 const EXIT_MISSING: u32 = 1;
 const EXIT_BUDGET: u32 = 2;
+const EXIT_INTERPRET_ONE: u32 = 3;
+const _: () = assert!(PAGE_SIZE.is_power_of_two());
+const _: () = assert!(PAGE_SIZE == 1_usize << PAGE_SHIFT);
 #[cfg(feature = "profile")]
-const PROFILE_BLOCKS_OFFSET: u8 = 24;
+const PROFILE_BLOCKS_OFFSET: u8 = 40;
 #[cfg(feature = "profile")]
-const PROFILE_DIRECT_LINKS_OFFSET: u8 = 32;
+const PROFILE_DIRECT_LINKS_OFFSET: u8 = 48;
 #[cfg(feature = "profile")]
-const PROFILE_REGISTER_LOADS_OFFSET: u8 = 40;
+const PROFILE_REGISTER_LOADS_OFFSET: u8 = 56;
 #[cfg(feature = "profile")]
-const PROFILE_REGISTER_STORES_OFFSET: u8 = 48;
+const PROFILE_REGISTER_STORES_OFFSET: u8 = 64;
 #[cfg(feature = "profile")]
-const PROFILE_FALLTHROUGH_OFFSET: u8 = 56;
+const PROFILE_FALLTHROUGH_OFFSET: u8 = 72;
 #[cfg(feature = "profile")]
-const PROFILE_BRANCH_OFFSET: u8 = 64;
+const PROFILE_BRANCH_OFFSET: u8 = 80;
 #[cfg(feature = "profile")]
-const PROFILE_JUMP_OFFSET: u8 = 72;
+const PROFILE_JUMP_OFFSET: u8 = 88;
+#[cfg(feature = "profile")]
+const PROFILE_MEMORY_LOADS_OFFSET: u8 = 96;
+#[cfg(feature = "profile")]
+const PROFILE_MEMORY_STORES_OFFSET: u8 = 104;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BlockFlow {
     Fallthrough {
+        pc: u32,
+    },
+    /// A checked memory terminator owns both its fast successor and precise
+    /// one-instruction slow exit.
+    CheckedFallthrough {
         pc: u32,
     },
     Branch {
@@ -46,13 +61,19 @@ pub(crate) enum BlockFlow {
 impl BlockFlow {
     const fn successors(self) -> [Option<u32>; 2] {
         match self {
-            Self::Fallthrough { pc } | Self::Jump { pc } => [Some(pc), None],
+            Self::Fallthrough { pc } | Self::CheckedFallthrough { pc } | Self::Jump { pc } => {
+                [Some(pc), None]
+            }
             Self::Branch {
                 fallthrough,
                 target,
                 ..
             } => [Some(fallthrough), Some(target)],
         }
+    }
+
+    const fn permits_singleton(self) -> bool {
+        matches!(self, Self::CheckedFallthrough { .. })
     }
 }
 
@@ -71,6 +92,15 @@ impl LinkedBlock {
     /// when the separately versioned VM4 block compiler gains a lowering.
     pub(crate) fn supports(instruction: DecodedInstruction) -> bool {
         Lowering::decode(instruction).is_some()
+    }
+
+    /// Reports whether this supported instruction must terminate a native
+    /// block. Checked memory operations do so to keep one precise interpreter
+    /// retry point for all slow and trapping cases.
+    pub(crate) fn ends_block(instruction: DecodedInstruction) -> bool {
+        Lowering::decode(instruction)
+            .and_then(|lowering| lowering.flow(instruction.pc().wrapping_add(4)))
+            .is_some()
     }
 
     pub(crate) fn compile(instructions: &[BlockInstruction]) -> Option<Self> {
@@ -120,6 +150,10 @@ impl LinkedBlock {
         self.code_len
     }
 
+    pub(crate) fn permits_singleton(&self) -> bool {
+        self.flow.permits_singleton()
+    }
+
     #[cfg(feature = "profile")]
     pub(crate) const fn flow(&self) -> BlockFlow {
         self.flow
@@ -154,6 +188,21 @@ enum Lowering {
         left: usize,
         right: usize,
         operation: RegisterOperation,
+    },
+    Load {
+        pc: u32,
+        destination: usize,
+        base: usize,
+        immediate: u32,
+        width: MemoryWidth,
+        signed: bool,
+    },
+    Store {
+        pc: u32,
+        base: usize,
+        source: usize,
+        immediate: u32,
+        width: MemoryWidth,
     },
     Fence,
 }
@@ -209,6 +258,41 @@ impl Lowering {
                 right: instruction.rs2(),
                 operation: RegisterOperation::decode(instruction)?,
             }),
+            0x03 => {
+                let (width, signed) = match instruction.funct3() {
+                    0 => (MemoryWidth::Byte, true),
+                    1 => (MemoryWidth::Half, true),
+                    2 => (MemoryWidth::Word, false),
+                    4 => (MemoryWidth::Byte, false),
+                    5 => (MemoryWidth::Half, false),
+                    _ => return None,
+                };
+                Some(Self::Load {
+                    pc: instruction.pc(),
+                    destination: instruction.rd(),
+                    base: instruction.rs1(),
+                    immediate: sign_extend(instruction.raw() >> 20, 12),
+                    width,
+                    signed,
+                })
+            }
+            0x23 => {
+                let width = match instruction.funct3() {
+                    0 => MemoryWidth::Byte,
+                    1 => MemoryWidth::Half,
+                    2 => MemoryWidth::Word,
+                    _ => return None,
+                };
+                let encoded =
+                    ((instruction.raw() >> 7) & 0x1f) | (((instruction.raw() >> 25) & 0x7f) << 5);
+                Some(Self::Store {
+                    pc: instruction.pc(),
+                    base: instruction.rs1(),
+                    source: instruction.rs2(),
+                    immediate: sign_extend(encoded, 12),
+                    width,
+                })
+            }
             0x0f if instruction.funct3() == 0 => Some(Self::Fence),
             _ => None,
         }
@@ -226,6 +310,9 @@ impl Lowering {
                 condition,
                 fallthrough,
                 target,
+            }),
+            Self::Load { pc, .. } | Self::Store { pc, .. } => Some(BlockFlow::CheckedFallthrough {
+                pc: pc.wrapping_add(4),
             }),
             _ => {
                 let _ = next_pc;
@@ -248,7 +335,28 @@ impl Lowering {
                 usize::from(destination != 0) * 2,
                 usize::from(destination != 0),
             ),
+            // Checked memory traffic is counted at its exact dynamic point:
+            // attempted source reads happen before validation, while a load's
+            // destination write happens only after the fast path succeeds.
+            Self::Load { .. } | Self::Store { .. } => (0, 0),
             Self::Fence => (0, 0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MemoryWidth {
+    Byte,
+    Half,
+    Word,
+}
+
+impl MemoryWidth {
+    const fn bytes(self) -> u32 {
+        match self {
+            Self::Byte => 1,
+            Self::Half => 2,
+            Self::Word => 4,
         }
     }
 }
@@ -320,6 +428,13 @@ enum RegisterOperation {
     Or,
     And,
     Multiply,
+    MultiplyHighSigned,
+    MultiplyHighSignedUnsigned,
+    MultiplyHighUnsigned,
+    DivideSigned,
+    DivideUnsigned,
+    RemainderSigned,
+    RemainderUnsigned,
 }
 
 impl RegisterOperation {
@@ -336,6 +451,13 @@ impl RegisterOperation {
             (0, 6) => Some(Self::Or),
             (0, 7) => Some(Self::And),
             (1, 0) => Some(Self::Multiply),
+            (1, 1) => Some(Self::MultiplyHighSigned),
+            (1, 2) => Some(Self::MultiplyHighSignedUnsigned),
+            (1, 3) => Some(Self::MultiplyHighUnsigned),
+            (1, 4) => Some(Self::DivideSigned),
+            (1, 5) => Some(Self::DivideUnsigned),
+            (1, 6) => Some(Self::RemainderSigned),
+            (1, 7) => Some(Self::RemainderUnsigned),
             _ => None,
         }
     }
@@ -363,10 +485,17 @@ struct EdgeRelocation {
     target_pc: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LocalFixup {
+    displacement_offset: usize,
+    instruction_end: usize,
+}
+
 struct Emitter {
     code: Vec<u8>,
     entries: Vec<(u32, EntryMetadata)>,
     edges: Vec<EdgeRelocation>,
+    local_fixups: Vec<LocalFixup>,
 }
 
 impl Emitter {
@@ -375,6 +504,7 @@ impl Emitter {
             code: Vec::new(),
             entries: Vec::new(),
             edges: Vec::new(),
+            local_fixups: Vec::new(),
         }
     }
 
@@ -382,8 +512,11 @@ impl Emitter {
         let external_offset = self.code.len();
         self.code.extend_from_slice(&ENTRY_BYTES);
         // The external entry is the only indirect host target. Direct guest
-        // edges enter at `hot_offset` and retain RSI as the register-file base.
+        // edges enter at `hot_offset` and retain RSI as the register-file base
+        // plus R8/R9 as run-local memory metadata anchors.
         self.code.extend_from_slice(&[0x48, 0x8b, 0x37]); // mov rsi, [rdi]
+        self.code.extend_from_slice(&[0x4c, 0x8b, 0x47, 0x18]); // mov r8, [rdi+24]
+        self.code.extend_from_slice(&[0x4c, 0x8b, 0x4f, 0x20]); // mov r9, [rdi+32]
         let hot_offset = self.code.len();
         self.entries.push((
             pc,
@@ -447,7 +580,32 @@ impl Emitter {
                     left,
                     right,
                     operation,
-                } => self.register(destination, left, right, operation),
+                } => self.register(destination, left, right, operation)?,
+                Lowering::Load {
+                    destination,
+                    base,
+                    immediate,
+                    width,
+                    signed,
+                    ..
+                } => {
+                    let BlockFlow::CheckedFallthrough { pc: successor } = flow else {
+                        return None;
+                    };
+                    self.checked_load(successor, destination, base, immediate, width, signed)?;
+                }
+                Lowering::Store {
+                    base,
+                    source,
+                    immediate,
+                    width,
+                    ..
+                } => {
+                    let BlockFlow::CheckedFallthrough { pc: successor } = flow else {
+                        return None;
+                    };
+                    self.checked_store(successor, base, source, immediate, width)?;
+                }
                 Lowering::Fence => {}
             }
         }
@@ -476,11 +634,12 @@ impl Emitter {
         self.increment_context(PROFILE_BLOCKS_OFFSET);
         self.add_context(PROFILE_REGISTER_LOADS_OFFSET, loads)?;
         self.add_context(PROFILE_REGISTER_STORES_OFFSET, stores)?;
-        self.increment_context(match flow {
-            BlockFlow::Fallthrough { .. } => PROFILE_FALLTHROUGH_OFFSET,
-            BlockFlow::Branch { .. } => PROFILE_BRANCH_OFFSET,
-            BlockFlow::Jump { .. } => PROFILE_JUMP_OFFSET,
-        });
+        match flow {
+            BlockFlow::Fallthrough { .. } => self.increment_context(PROFILE_FALLTHROUGH_OFFSET),
+            BlockFlow::CheckedFallthrough { .. } => {}
+            BlockFlow::Branch { .. } => self.increment_context(PROFILE_BRANCH_OFFSET),
+            BlockFlow::Jump { .. } => self.increment_context(PROFILE_JUMP_OFFSET),
+        }
         Some(())
     }
 
@@ -531,9 +690,9 @@ impl Emitter {
         left: usize,
         right: usize,
         operation: RegisterOperation,
-    ) {
+    ) -> Option<()> {
         if destination == 0 {
-            return;
+            return Some(());
         }
         self.load_eax(left);
         self.load_ecx(right);
@@ -544,6 +703,26 @@ impl Emitter {
             RegisterOperation::Or => self.code.extend_from_slice(&[0x09, 0xc8]),
             RegisterOperation::And => self.code.extend_from_slice(&[0x21, 0xc8]),
             RegisterOperation::Multiply => self.code.extend_from_slice(&[0x0f, 0xaf, 0xc1]),
+            RegisterOperation::MultiplyHighSigned => {
+                self.code.extend_from_slice(&[0xf7, 0xe9]); // imul ecx
+                self.mov_eax_edx();
+            }
+            RegisterOperation::MultiplyHighSignedUnsigned => {
+                // Sign-extend the left operand, retain the right operand's
+                // zero-extension from the ECX load, and form the exact mixed
+                // 32x32 product in RAX without consuming the R8/R9 anchors.
+                self.code.extend_from_slice(&[0x48, 0x63, 0xc0]); // movsxd rax, eax
+                self.code.extend_from_slice(&[0x48, 0x0f, 0xaf, 0xc1]); // imul rax, rcx
+                self.code.extend_from_slice(&[0x48, 0xc1, 0xe8, 0x20]); // shr rax, 32
+            }
+            RegisterOperation::MultiplyHighUnsigned => {
+                self.code.extend_from_slice(&[0xf7, 0xe1]); // mul ecx
+                self.mov_eax_edx();
+            }
+            RegisterOperation::DivideSigned => self.divide_signed()?,
+            RegisterOperation::DivideUnsigned => self.divide_unsigned()?,
+            RegisterOperation::RemainderSigned => self.remainder_signed()?,
+            RegisterOperation::RemainderUnsigned => self.remainder_unsigned()?,
             RegisterOperation::ShiftLeft => self.code.extend_from_slice(&[0xd3, 0xe0]),
             RegisterOperation::ShiftRight => self.code.extend_from_slice(&[0xd3, 0xe8]),
             RegisterOperation::ShiftRightArithmetic => {
@@ -553,6 +732,214 @@ impl Emitter {
             RegisterOperation::SetBelow => self.compare_and_set(0x92),
         }
         self.store_eax(destination);
+        Some(())
+    }
+
+    fn checked_load(
+        &mut self,
+        successor: u32,
+        destination: usize,
+        base: usize,
+        immediate: u32,
+        width: MemoryWidth,
+        signed: bool,
+    ) -> Option<()> {
+        let pc = successor.wrapping_sub(4);
+        let mut failures = self.checked_memory_address(base, immediate, width, PERM_READ, None)?;
+
+        // A readable sparse page has the architecturally defined value zero.
+        self.code.extend_from_slice(&[0x48, 0x85, 0xd2]); // test rdx, rdx
+        let sparse = self.local_jcc(0x84)?; // jz sparse
+        self.mask_page_offset()?;
+        match (width, signed) {
+            (MemoryWidth::Byte, true) => {
+                self.code.extend_from_slice(&[0x0f, 0xbe, 0x04, 0x02]);
+            }
+            (MemoryWidth::Byte, false) => {
+                self.code.extend_from_slice(&[0x0f, 0xb6, 0x04, 0x02]);
+            }
+            (MemoryWidth::Half, true) => {
+                self.code.extend_from_slice(&[0x0f, 0xbf, 0x04, 0x02]);
+            }
+            (MemoryWidth::Half, false) => {
+                self.code.extend_from_slice(&[0x0f, 0xb7, 0x04, 0x02]);
+            }
+            (MemoryWidth::Word, _) => {
+                self.code.extend_from_slice(&[0x8b, 0x04, 0x02]);
+            }
+        }
+        let loaded = self.local_jump()?;
+        self.bind_local(sparse)?;
+        self.code.extend_from_slice(&[0x31, 0xc0]); // xor eax, eax
+        self.bind_local(loaded)?;
+        if destination != 0 {
+            self.store_eax(destination);
+            #[cfg(feature = "profile")]
+            self.increment_context(PROFILE_REGISTER_STORES_OFFSET);
+        }
+        #[cfg(feature = "profile")]
+        {
+            self.increment_context(PROFILE_MEMORY_LOADS_OFFSET);
+            self.increment_context(PROFILE_FALLTHROUGH_OFFSET);
+        }
+        self.edge_slot(successor)?;
+
+        self.bind_all(&mut failures)?;
+        self.interpret_one_exit(pc)
+    }
+
+    fn checked_store(
+        &mut self,
+        successor: u32,
+        base: usize,
+        source: usize,
+        immediate: u32,
+        width: MemoryWidth,
+    ) -> Option<()> {
+        let pc = successor.wrapping_sub(4);
+        let mut failures =
+            self.checked_memory_address(base, immediate, width, PERM_WRITE, Some(source))?;
+        self.code.extend_from_slice(&[0x48, 0x85, 0xd2]); // test rdx, rdx
+        failures.push(self.local_jcc(0x84)?); // sparse stores allocate in Rust
+        self.mask_page_offset()?;
+        match width {
+            MemoryWidth::Byte => self.code.extend_from_slice(&[0x88, 0x0c, 0x02]),
+            MemoryWidth::Half => self.code.extend_from_slice(&[0x66, 0x89, 0x0c, 0x02]),
+            MemoryWidth::Word => self.code.extend_from_slice(&[0x89, 0x0c, 0x02]),
+        }
+        #[cfg(feature = "profile")]
+        {
+            self.increment_context(PROFILE_MEMORY_STORES_OFFSET);
+            self.increment_context(PROFILE_FALLTHROUGH_OFFSET);
+        }
+        self.edge_slot(successor)?;
+
+        self.bind_all(&mut failures)?;
+        self.interpret_one_exit(pc)
+    }
+
+    /// Computes EAX = wrapping guest address and RDX = resident page base.
+    /// Every returned fixup targets the caller's single precise slow exit.
+    fn checked_memory_address(
+        &mut self,
+        base: usize,
+        immediate: u32,
+        width: MemoryWidth,
+        permission: u8,
+        store_source: Option<usize>,
+    ) -> Option<Vec<LocalFixup>> {
+        self.load_eax(base);
+        if let Some(source) = store_source {
+            self.load_ecx(source);
+        }
+        #[cfg(feature = "profile")]
+        self.add_context(
+            PROFILE_REGISTER_LOADS_OFFSET,
+            if store_source.is_some() { 2 } else { 1 },
+        )?;
+        if immediate != 0 {
+            self.eax_immediate(0x05, immediate);
+        }
+
+        let mut failures = Vec::with_capacity(3);
+        let alignment_mask = width.bytes() - 1;
+        if alignment_mask != 0 {
+            self.code.extend_from_slice(&[0xa8, alignment_mask as u8]); // test al, mask
+            failures.push(self.local_jcc(0x85)?); // jnz slow
+        }
+
+        self.code.push(0x3d); // cmp eax, last valid start address
+        self.code
+            .extend_from_slice(&(ADDRESS_SPACE_SIZE - width.bytes()).to_le_bytes());
+        failures.push(self.local_jcc(0x87)?); // ja slow
+
+        self.code.extend_from_slice(&[0x89, 0xc2]); // mov edx, eax
+        let page_shift = u8::try_from(PAGE_SHIFT).ok()?;
+        self.code.extend_from_slice(&[0xc1, 0xea, page_shift]); // shr edx, PAGE_SHIFT
+        self.code
+            .extend_from_slice(&[0x41, 0xf6, 0x04, 0x10, permission]); // test [r8+rdx], perm
+        failures.push(self.local_jcc(0x84)?); // jz slow
+        self.code.extend_from_slice(&[0x49, 0x8b, 0x14, 0xd1]); // mov rdx, [r9+rdx*8]
+        Some(failures)
+    }
+
+    fn mask_page_offset(&mut self) -> Option<()> {
+        let page_mask = u32::try_from(PAGE_SIZE.checked_sub(1)?).ok()?;
+        self.code.push(0x25); // and eax, PAGE_SIZE - 1
+        self.code.extend_from_slice(&page_mask.to_le_bytes());
+        Some(())
+    }
+
+    fn bind_all(&mut self, fixups: &mut Vec<LocalFixup>) -> Option<()> {
+        for fixup in fixups.drain(..) {
+            self.bind_local(fixup)?;
+        }
+        Some(())
+    }
+
+    fn interpret_one_exit(&mut self, pc: u32) -> Option<()> {
+        // The terminal memory instruction has not committed. Refund exactly
+        // that instruction from the block reservation before Rust retries it.
+        self.code.extend_from_slice(&[0x48, 0x83, 0x47, 0x08, 0x01]); // add [rdi+8], 1
+        self.exit_slot(pc, EXIT_INTERPRET_ONE)
+    }
+
+    fn divide_signed(&mut self) -> Option<()> {
+        // RISC-V defines both exceptional x86 IDIV inputs. Guard them before
+        // IDIV so guest arithmetic can never raise host #DE.
+        self.code.extend_from_slice(&[0x85, 0xc9]); // test ecx, ecx
+        let zero = self.local_jcc(0x84)?; // jz zero
+        self.code.push(0x3d); // cmp eax, INT_MIN
+        self.code.extend_from_slice(&i32::MIN.to_le_bytes());
+        let divide = self.local_jcc(0x85)?; // jne divide
+        self.code.extend_from_slice(&[0x83, 0xf9, 0xff]); // cmp ecx, -1
+        let done_overflow = self.local_jcc(0x84)?; // je done, EAX already INT_MIN
+        self.bind_local(divide)?;
+        self.code.extend_from_slice(&[0x99, 0xf7, 0xf9]); // cdq; idiv ecx
+        let done_divide = self.local_jump()?;
+        self.bind_local(zero)?;
+        self.mov_eax(u32::MAX);
+        self.bind_local(done_overflow)?;
+        self.bind_local(done_divide)
+    }
+
+    fn divide_unsigned(&mut self) -> Option<()> {
+        self.code.extend_from_slice(&[0x85, 0xc9]); // test ecx, ecx
+        let zero = self.local_jcc(0x84)?; // jz zero
+        self.code.extend_from_slice(&[0x31, 0xd2]); // xor edx, edx
+        self.code.extend_from_slice(&[0xf7, 0xf1]); // div ecx
+        let done = self.local_jump()?;
+        self.bind_local(zero)?;
+        self.mov_eax(u32::MAX);
+        self.bind_local(done)
+    }
+
+    fn remainder_signed(&mut self) -> Option<()> {
+        // A zero divisor returns the dividend. INT_MIN % -1 returns zero.
+        self.code.extend_from_slice(&[0x85, 0xc9]); // test ecx, ecx
+        let done_zero = self.local_jcc(0x84)?; // jz done
+        self.code.push(0x3d); // cmp eax, INT_MIN
+        self.code.extend_from_slice(&i32::MIN.to_le_bytes());
+        let divide_left = self.local_jcc(0x85)?; // jne divide
+        self.code.extend_from_slice(&[0x83, 0xf9, 0xff]); // cmp ecx, -1
+        let divide_right = self.local_jcc(0x85)?; // jne divide
+        self.code.extend_from_slice(&[0x31, 0xc0]); // xor eax, eax
+        let done_overflow = self.local_jump()?;
+        self.bind_local(divide_left)?;
+        self.bind_local(divide_right)?;
+        self.code.extend_from_slice(&[0x99, 0xf7, 0xf9]); // cdq; idiv ecx
+        self.mov_eax_edx();
+        self.bind_local(done_zero)?;
+        self.bind_local(done_overflow)
+    }
+
+    fn remainder_unsigned(&mut self) -> Option<()> {
+        self.code.extend_from_slice(&[0x85, 0xc9]); // test ecx, ecx
+        let done = self.local_jcc(0x84)?; // jz done, EAX retains dividend
+        self.code.extend_from_slice(&[0x31, 0xd2]); // xor edx, edx
+        self.code.extend_from_slice(&[0xf7, 0xf1]); // div ecx
+        self.mov_eax_edx();
+        self.bind_local(done)
     }
 
     fn write_immediate(&mut self, register: usize, value: u32) {
@@ -587,6 +974,10 @@ impl Emitter {
         self.code.extend_from_slice(&value.to_le_bytes());
     }
 
+    fn mov_eax_edx(&mut self) {
+        self.code.extend_from_slice(&[0x89, 0xd0]);
+    }
+
     fn eax_immediate(&mut self, opcode: u8, value: u32) {
         self.code.push(opcode);
         self.code.extend_from_slice(&value.to_le_bytes());
@@ -599,6 +990,45 @@ impl Emitter {
     fn compare_and_set(&mut self, condition: u8) {
         self.code
             .extend_from_slice(&[0x39, 0xc8, 0x0f, condition, 0xc0, 0x0f, 0xb6, 0xc0]);
+    }
+
+    fn local_jcc(&mut self, condition: u8) -> Option<LocalFixup> {
+        let displacement_offset = self.code.len().checked_add(2)?;
+        let instruction_end = self.code.len().checked_add(6)?;
+        self.code.extend_from_slice(&[0x0f, condition, 0, 0, 0, 0]);
+        let fixup = LocalFixup {
+            displacement_offset,
+            instruction_end,
+        };
+        self.local_fixups.push(fixup);
+        Some(fixup)
+    }
+
+    fn local_jump(&mut self) -> Option<LocalFixup> {
+        let displacement_offset = self.code.len().checked_add(1)?;
+        let instruction_end = self.code.len().checked_add(5)?;
+        self.code.extend_from_slice(&[0xe9, 0, 0, 0, 0]);
+        let fixup = LocalFixup {
+            displacement_offset,
+            instruction_end,
+        };
+        self.local_fixups.push(fixup);
+        Some(fixup)
+    }
+
+    fn bind_local(&mut self, fixup: LocalFixup) -> Option<()> {
+        let index = self
+            .local_fixups
+            .iter()
+            .position(|pending| *pending == fixup)?;
+        let displacement =
+            i64::try_from(self.code.len()).ok()? - i64::try_from(fixup.instruction_end).ok()?;
+        let displacement = i32::try_from(displacement).ok()?;
+        self.code
+            .get_mut(fixup.displacement_offset..fixup.displacement_offset.checked_add(4)?)?
+            .copy_from_slice(&displacement.to_le_bytes());
+        self.local_fixups.swap_remove(index);
+        Some(())
     }
 
     fn edge_slot(&mut self, pc: u32) -> Option<()> {
@@ -624,6 +1054,9 @@ impl Emitter {
     }
 
     fn resolve(mut self) -> Option<(Vec<u8>, Vec<EntryMetadata>)> {
+        if !self.local_fixups.is_empty() {
+            return None;
+        }
         let mut hot_by_pc = BTreeMap::new();
         for &(pc, entry) in &self.entries {
             if hot_by_pc.insert(pc, entry.hot_offset).is_some() {
@@ -674,6 +1107,8 @@ struct RunContext {
     remaining: u64,
     pc: u32,
     exit: u32,
+    permissions: *const u8,
+    page_addresses: *const usize,
     #[cfg(feature = "profile")]
     blocks: u64,
     #[cfg(feature = "profile")]
@@ -688,31 +1123,42 @@ struct RunContext {
     branch_blocks: u64,
     #[cfg(feature = "profile")]
     jump_blocks: u64,
+    #[cfg(feature = "profile")]
+    memory_loads: u64,
+    #[cfg(feature = "profile")]
+    memory_stores: u64,
 }
 
 const _: () = assert!(std::mem::offset_of!(RunContext, registers) == 0);
 const _: () = assert!(std::mem::offset_of!(RunContext, remaining) == 8);
 const _: () = assert!(std::mem::offset_of!(RunContext, pc) == 16);
 const _: () = assert!(std::mem::offset_of!(RunContext, exit) == 20);
+const _: () = assert!(std::mem::offset_of!(RunContext, permissions) == 24);
+const _: () = assert!(std::mem::offset_of!(RunContext, page_addresses) == 32);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, blocks) == 24);
+const _: () = assert!(std::mem::offset_of!(RunContext, blocks) == 40);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, direct_links) == 32);
+const _: () = assert!(std::mem::offset_of!(RunContext, direct_links) == 48);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, register_loads) == 40);
+const _: () = assert!(std::mem::offset_of!(RunContext, register_loads) == 56);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, register_stores) == 48);
+const _: () = assert!(std::mem::offset_of!(RunContext, register_stores) == 64);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, fallthrough_blocks) == 56);
+const _: () = assert!(std::mem::offset_of!(RunContext, fallthrough_blocks) == 72);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, branch_blocks) == 64);
+const _: () = assert!(std::mem::offset_of!(RunContext, branch_blocks) == 80);
 #[cfg(feature = "profile")]
-const _: () = assert!(std::mem::offset_of!(RunContext, jump_blocks) == 72);
+const _: () = assert!(std::mem::offset_of!(RunContext, jump_blocks) == 88);
+#[cfg(feature = "profile")]
+const _: () = assert!(std::mem::offset_of!(RunContext, memory_loads) == 96);
+#[cfg(feature = "profile")]
+const _: () = assert!(std::mem::offset_of!(RunContext, memory_stores) == 104);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeStop {
     MissingSuccessor,
     Budget,
+    InterpretOne,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -734,6 +1180,8 @@ pub(crate) struct NativeRunProfile {
     pub(crate) fallthrough_blocks: u64,
     pub(crate) branch_blocks: u64,
     pub(crate) jump_blocks: u64,
+    pub(crate) memory_loads: u64,
+    pub(crate) memory_stores: u64,
 }
 
 /// Owns one fully relocated VM5 linked image.
@@ -776,8 +1224,15 @@ pub(crate) struct LinkedEntry<'a> {
 }
 
 impl LinkedEntry<'_> {
-    pub(crate) fn execute(self, registers: &mut [u32; 32], pc: u32, remaining: u64) -> NativeRun {
-        self.execute_inner(registers, pc, remaining)
+    pub(crate) fn execute(
+        self,
+        registers: &mut [u32; 32],
+        memory: &mut rv32vm_rust_common::memory::Memory,
+        pc: u32,
+        remaining: u64,
+    ) -> NativeRun {
+        let direct_memory = memory.direct_memory();
+        self.execute_inner(registers, &direct_memory, pc, remaining)
     }
 
     #[cfg(all(
@@ -785,7 +1240,13 @@ impl LinkedEntry<'_> {
         target_os = "linux",
         target_pointer_width = "64"
     ))]
-    fn execute_inner(self, registers: &mut [u32; 32], pc: u32, remaining: u64) -> NativeRun {
+    fn execute_inner(
+        self,
+        registers: &mut [u32; 32],
+        direct_memory: &DirectMemory<'_>,
+        pc: u32,
+        remaining: u64,
+    ) -> NativeRun {
         use std::mem;
 
         type Entry = unsafe extern "C" fn(*mut RunContext);
@@ -807,6 +1268,8 @@ impl LinkedEntry<'_> {
             remaining,
             pc,
             exit: 0,
+            permissions: direct_memory.permissions_ptr(),
+            page_addresses: direct_memory.page_addresses_ptr(),
             #[cfg(feature = "profile")]
             blocks: 0,
             #[cfg(feature = "profile")]
@@ -821,6 +1284,10 @@ impl LinkedEntry<'_> {
             branch_blocks: 0,
             #[cfg(feature = "profile")]
             jump_blocks: 0,
+            #[cfg(feature = "profile")]
+            memory_loads: 0,
+            #[cfg(feature = "profile")]
+            memory_stores: 0,
         };
         // SAFETY: The mapping is RX and live, context/register borrows are
         // exclusive for the synchronous call, and emitted code uses only
@@ -830,6 +1297,7 @@ impl LinkedEntry<'_> {
         let stop = match context.exit {
             EXIT_MISSING => NativeStop::MissingSuccessor,
             EXIT_BUDGET => NativeStop::Budget,
+            EXIT_INTERPRET_ONE => NativeStop::InterpretOne,
             _ => unreachable!("linked code returned an invalid exit reason"),
         };
         NativeRun {
@@ -845,6 +1313,8 @@ impl LinkedEntry<'_> {
                 fallthrough_blocks: context.fallthrough_blocks,
                 branch_blocks: context.branch_blocks,
                 jump_blocks: context.jump_blocks,
+                memory_loads: context.memory_loads,
+                memory_stores: context.memory_stores,
             },
         }
     }
@@ -854,7 +1324,13 @@ impl LinkedEntry<'_> {
         target_os = "linux",
         target_pointer_width = "64"
     )))]
-    fn execute_inner(self, _registers: &mut [u32; 32], _pc: u32, _remaining: u64) -> NativeRun {
+    fn execute_inner(
+        self,
+        _registers: &mut [u32; 32],
+        _direct_memory: &DirectMemory<'_>,
+        _pc: u32,
+        _remaining: u64,
+    ) -> NativeRun {
         unreachable!("linked native entries require x86-64 Linux")
     }
 }
@@ -1086,6 +1562,13 @@ mod tests {
             register(5, 6, 7, 6, 0),
             register(5, 6, 7, 7, 0),
             register(5, 6, 7, 0, 1),
+            register(5, 6, 7, 1, 1),
+            register(5, 6, 7, 2, 1),
+            register(5, 6, 7, 3, 1),
+            register(5, 6, 7, 4, 1),
+            register(5, 6, 7, 5, 1),
+            register(5, 6, 7, 6, 1),
+            register(5, 6, 7, 7, 1),
             0x0000_000f,
             (1 << 25) | (1 << 12) | (5 << 7) | 0x13,
             (2 << 25) | (7 << 20) | (6 << 15) | (5 << 7) | 0x33,
@@ -1116,23 +1599,250 @@ mod tests {
     fn assert_one_matches_interpreter(instruction: u32, registers: &[(usize, u32)]) {
         let image = image_with_code_at(&[instruction], IMAGE_START);
         let mut expected = Machine::new(&image, &[], 0);
+        let mut actual = Machine::new(&image, &[], 0);
         for &(register, value) in registers {
             expected.registers[register] = value;
+            actual.registers[register] = value;
         }
         let staged = block(&expected, IMAGE_START, 1);
         let program = LinkedProgram::publish(vec![staged], usize::MAX).unwrap();
-        let mut actual_registers = expected.registers;
 
         let decoded = expected.fetch_decode(IMAGE_START);
         assert!(expected.execute_one(decoded).is_none());
-        let actual = program
-            .entry(0)
-            .unwrap()
-            .execute(&mut actual_registers, IMAGE_START, 1);
+        let native_run = program.entry(0).unwrap().execute(
+            &mut actual.registers,
+            &mut actual.memory,
+            IMAGE_START,
+            1,
+        );
 
-        assert_eq!(actual.retired, 1);
-        assert_eq!(actual.pc, expected.pc);
-        assert_eq!(actual_registers, expected.registers);
+        assert_eq!(native_run.retired, 1);
+        assert_eq!(native_run.pc, expected.pc);
+        assert_eq!(actual.registers, expected.registers);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    struct Rv32mHarness {
+        machine: Machine,
+        initial_registers: [u32; 32],
+        program: LinkedProgram,
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    impl Rv32mHarness {
+        fn new() -> Self {
+            let code = (0..8)
+                .map(|funct3| register(5, 6, 7, funct3, 1))
+                .collect::<Vec<_>>();
+            let image = image_with_code_at(&code, IMAGE_START);
+            let machine = Machine::new(&image, &[], 0);
+            let blocks = (0..code.len())
+                .map(|index| block(&machine, IMAGE_START + index as u32 * 4, 1))
+                .collect();
+            let program = LinkedProgram::publish(blocks, usize::MAX).unwrap();
+            let initial_registers = machine.registers;
+            Self {
+                machine,
+                initial_registers,
+                program,
+            }
+        }
+
+        fn assert_case(&mut self, funct3: usize, left: u32, right: u32) {
+            let pc = IMAGE_START + funct3 as u32 * 4;
+            self.machine.registers = self.initial_registers;
+            self.machine.registers[6] = left;
+            self.machine.registers[7] = right;
+            self.machine.pc = pc;
+            self.machine.retired = 0;
+            let mut actual_registers = self.machine.registers;
+
+            let decoded = self.machine.fetch_decode(pc);
+            assert!(self.machine.execute_one(decoded).is_none());
+            let actual = self.program.entry(funct3).unwrap().execute(
+                &mut actual_registers,
+                &mut self.machine.memory,
+                pc,
+                1,
+            );
+
+            assert_eq!(actual.retired, 1);
+            assert_eq!(actual.pc, self.machine.pc);
+            assert_eq!(
+                actual_registers, self.machine.registers,
+                "RV32M funct3={funct3}, left={left:#010x}, right={right:#010x}"
+            );
+        }
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn rv32m_exhaustive_edge_value_table_matches_the_interpreter() {
+        const VALUES: [u32; 17] = [
+            0,
+            1,
+            2,
+            3,
+            0x0000_ffff,
+            0x0001_0000,
+            0x3fff_ffff,
+            0x4000_0000,
+            0x7fff_fffe,
+            0x7fff_ffff,
+            0x8000_0000,
+            0x8000_0001,
+            0xbfff_ffff,
+            0xffff_0000,
+            0xffff_fffd,
+            0xffff_fffe,
+            0xffff_ffff,
+        ];
+        let mut harness = Rv32mHarness::new();
+
+        for funct3 in 0..8 {
+            for left in VALUES {
+                for right in VALUES {
+                    harness.assert_case(funct3, left, right);
+                }
+            }
+        }
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn rv32m_deterministic_randomized_differential() {
+        fn next(state: &mut u64) -> u32 {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            (*state >> 16) as u32
+        }
+
+        let mut harness = Rv32mHarness::new();
+        let mut state = 0xd1b5_4a32_d192_ed03;
+        for _ in 0..4_096 {
+            let left = next(&mut state);
+            let right = next(&mut state);
+            for funct3 in 0..8 {
+                harness.assert_case(funct3, left, right);
+            }
+        }
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn rv32m_division_corner_cases_never_raise_host_divide_error() {
+        let cases = [
+            (4, 0x8000_0000, u32::MAX),
+            (4, 0x8000_0000, 0),
+            (4, 0x7fff_ffff, 0),
+            (5, u32::MAX, 0),
+            (6, 0x8000_0000, u32::MAX),
+            (6, 0x8000_0000, 0),
+            (7, u32::MAX, 0),
+        ];
+        for (funct3, left, right) in cases {
+            assert_one_matches_interpreter(register(5, 6, 7, funct3, 1), &[(6, left), (7, right)]);
+        }
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn rv32m_high_products_cover_signed_and_unsigned_extremes() {
+        let cases = [
+            (1, 0x8000_0000, 0x8000_0000),
+            (1, u32::MAX, u32::MAX),
+            (2, 0x8000_0000, u32::MAX),
+            (2, u32::MAX, 0x8000_0000),
+            (3, 0x8000_0000, 0x8000_0000),
+            (3, u32::MAX, u32::MAX),
+        ];
+        for (funct3, left, right) in cases {
+            assert_one_matches_interpreter(register(5, 6, 7, funct3, 1), &[(6, left), (7, right)]);
+        }
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn rv32m_preserves_operand_aliases_and_x0() {
+        for funct3 in 0..8 {
+            assert_one_matches_interpreter(
+                register(6, 6, 7, funct3, 1),
+                &[(6, 0x8000_0001), (7, 0xffff_fffd)],
+            );
+            assert_one_matches_interpreter(
+                register(7, 6, 7, funct3, 1),
+                &[(6, 0x8000_0001), (7, 3)],
+            );
+            assert_one_matches_interpreter(register(6, 6, 6, funct3, 1), &[(6, 0x8000_0001)]);
+            assert_one_matches_interpreter(
+                register(0, 6, 7, funct3, 1),
+                &[(6, 0x8000_0001), (7, 0)],
+            );
+            assert_one_matches_interpreter(register(5, 0, 7, funct3, 1), &[(7, 3)]);
+            assert_one_matches_interpreter(register(5, 6, 0, funct3, 1), &[(6, 0x8000_0001)]);
+        }
+    }
+
+    #[cfg(all(
+        feature = "profile",
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn rv32m_generated_register_traffic_is_exact() {
+        let code = (0..8)
+            .map(|funct3| register(5, 6, 7, funct3, 1))
+            .collect::<Vec<_>>();
+        let image = image_with_code_at(&code, IMAGE_START);
+        let mut machine = Machine::new(&image, &[], 0);
+        let program =
+            LinkedProgram::publish(vec![block(&machine, IMAGE_START, code.len())], usize::MAX)
+                .unwrap();
+        let mut registers = machine.registers;
+        registers[6] = 0x8000_0001;
+        registers[7] = 3;
+
+        let result = program.entry(0).unwrap().execute(
+            &mut registers,
+            &mut machine.memory,
+            IMAGE_START,
+            code.len() as u64,
+        );
+
+        assert_eq!(result.retired, code.len() as u64);
+        assert_eq!(result.profile.blocks, 1);
+        assert_eq!(result.profile.register_loads, 16);
+        assert_eq!(result.profile.register_stores, 8);
     }
 
     #[cfg(all(
@@ -1239,7 +1949,7 @@ mod tests {
     fn links_forward_fallthrough_and_returns_missing_successor() {
         let code = [addi(5, 5, 1), addi(5, 5, 1)];
         let image = image_with_code_at(&code, IMAGE_START);
-        let machine = Machine::new(&image, &[], 0);
+        let mut machine = Machine::new(&image, &[], 0);
         let program = LinkedProgram::publish(
             vec![
                 block(&machine, IMAGE_START, 1),
@@ -1250,10 +1960,11 @@ mod tests {
         .unwrap();
         let mut registers = [0; 32];
 
-        let result = program
-            .entry(0)
-            .unwrap()
-            .execute(&mut registers, IMAGE_START, 2);
+        let result =
+            program
+                .entry(0)
+                .unwrap()
+                .execute(&mut registers, &mut machine.memory, IMAGE_START, 2);
 
         assert_eq!(result.pc, IMAGE_START + 8);
         assert_eq!(result.retired, 2);
@@ -1280,7 +1991,7 @@ mod tests {
     fn links_backward_branch_cycles_until_the_next_block_reservation() {
         let code = [addi(5, 5, 1), beq(0, 0, -4)];
         let image = image_with_code_at(&code, IMAGE_START);
-        let machine = Machine::new(&image, &[], 0);
+        let mut machine = Machine::new(&image, &[], 0);
         let program = LinkedProgram::publish(
             vec![
                 block(&machine, IMAGE_START, 1),
@@ -1291,10 +2002,11 @@ mod tests {
         .unwrap();
         let mut registers = [0; 32];
 
-        let result = program
-            .entry(0)
-            .unwrap()
-            .execute(&mut registers, IMAGE_START, 4);
+        let result =
+            program
+                .entry(0)
+                .unwrap()
+                .execute(&mut registers, &mut machine.memory, IMAGE_START, 4);
 
         assert_eq!(result.pc, IMAGE_START);
         assert_eq!(result.retired, 4);
@@ -1311,7 +2023,7 @@ mod tests {
     fn links_both_conditional_branch_successors() {
         let code = [beq(5, 0, 8), addi(6, 6, 1), addi(7, 7, 1)];
         let image = image_with_code_at(&code, IMAGE_START);
-        let machine = Machine::new(&image, &[], 0);
+        let mut machine = Machine::new(&image, &[], 0);
         let program = LinkedProgram::publish(
             vec![
                 block(&machine, IMAGE_START, 1),
@@ -1323,10 +2035,11 @@ mod tests {
         .unwrap();
 
         let mut taken = [0; 32];
-        let taken_result = program
-            .entry(0)
-            .unwrap()
-            .execute(&mut taken, IMAGE_START, 2);
+        let taken_result =
+            program
+                .entry(0)
+                .unwrap()
+                .execute(&mut taken, &mut machine.memory, IMAGE_START, 2);
         assert_eq!(taken_result.pc, IMAGE_START + 12);
         assert_eq!(taken_result.retired, 2);
         assert_eq!(taken[6], 0);
@@ -1334,11 +2047,12 @@ mod tests {
 
         let mut fallthrough = [0; 32];
         fallthrough[5] = 1;
-        let fallthrough_result =
-            program
-                .entry(0)
-                .unwrap()
-                .execute(&mut fallthrough, IMAGE_START, 3);
+        let fallthrough_result = program.entry(0).unwrap().execute(
+            &mut fallthrough,
+            &mut machine.memory,
+            IMAGE_START,
+            3,
+        );
         assert_eq!(fallthrough_result.pc, IMAGE_START + 12);
         assert_eq!(fallthrough_result.retired, 3);
         assert_eq!(fallthrough[6], 1);
@@ -1354,7 +2068,7 @@ mod tests {
     fn links_jal_and_commits_the_link_register() {
         let code = [jal(5, 8), addi(6, 6, 99), addi(7, 7, 1)];
         let image = image_with_code_at(&code, IMAGE_START);
-        let machine = Machine::new(&image, &[], 0);
+        let mut machine = Machine::new(&image, &[], 0);
         let program = LinkedProgram::publish(
             vec![
                 block(&machine, IMAGE_START, 1),
@@ -1365,10 +2079,11 @@ mod tests {
         .unwrap();
         let mut registers = [0; 32];
 
-        let result = program
-            .entry(0)
-            .unwrap()
-            .execute(&mut registers, IMAGE_START, 2);
+        let result =
+            program
+                .entry(0)
+                .unwrap()
+                .execute(&mut registers, &mut machine.memory, IMAGE_START, 2);
 
         assert_eq!(result.pc, IMAGE_START + 12);
         assert_eq!(result.retired, 2);
@@ -1386,16 +2101,18 @@ mod tests {
     fn short_budgets_change_no_guest_state() {
         let code = [addi(5, 5, 1), addi(5, 5, 1), addi(5, 5, 1)];
         let image = image_with_code_at(&code, IMAGE_START);
-        let machine = Machine::new(&image, &[], 0);
+        let mut machine = Machine::new(&image, &[], 0);
         let program =
             LinkedProgram::publish(vec![block(&machine, IMAGE_START, 3)], usize::MAX).unwrap();
 
         for remaining in 0..3 {
             let mut registers = [0; 32];
-            let result = program
-                .entry(0)
-                .unwrap()
-                .execute(&mut registers, IMAGE_START, remaining);
+            let result = program.entry(0).unwrap().execute(
+                &mut registers,
+                &mut machine.memory,
+                IMAGE_START,
+                remaining,
+            );
             assert_eq!(result.pc, IMAGE_START);
             assert_eq!(result.retired, 0);
             assert_eq!(result.stop, NativeStop::Budget);
@@ -1412,17 +2129,19 @@ mod tests {
     fn repeated_invocations_have_run_local_budget_and_register_state() {
         let code = [addi(5, 5, 1), beq(0, 0, -4)];
         let image = image_with_code_at(&code, IMAGE_START);
-        let machine = Machine::new(&image, &[], 0);
+        let mut machine = Machine::new(&image, &[], 0);
         let program =
             LinkedProgram::publish(vec![block(&machine, IMAGE_START, 2)], usize::MAX).unwrap();
 
         for expected in [2, 3] {
             let mut registers = [0; 32];
             registers[5] = expected - 1;
-            let result = program
-                .entry(0)
-                .unwrap()
-                .execute(&mut registers, IMAGE_START, 2);
+            let result = program.entry(0).unwrap().execute(
+                &mut registers,
+                &mut machine.memory,
+                IMAGE_START,
+                2,
+            );
             assert_eq!(result.retired, 2);
             assert_eq!(registers[5], expected);
         }
