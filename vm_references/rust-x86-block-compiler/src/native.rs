@@ -292,6 +292,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
     ];
 
     use rv32vm_rust_common::{
+        GuestTrap,
         machine::{Machine, Termination},
         memory::{ADDRESS_SPACE_SIZE, IMAGE_START, PAGE_SIZE, STACK_END, STACK_START},
     };
@@ -436,6 +437,19 @@ rv32vm_test_call_loop_with_callee_sentinels:
     fn execute_native(native: &NativeBlock, machine: &mut Machine) -> NativeOutcome {
         let memory = machine.memory.native_view();
         native.execute(&mut machine.registers, memory)
+    }
+
+    fn interpret_side_exit(machine: &mut Machine, outcome: NativeOutcome) -> GuestTrap {
+        assert!(outcome.needs_interpreter());
+        machine.pc = outcome.next_pc();
+        machine.retired += u64::from(outcome.retired());
+        let retired_before = machine.retired;
+        let instruction = machine.fetch_decode(machine.pc);
+        let Some(Termination::Trap(trap)) = machine.execute_one(instruction) else {
+            panic!("native memory side exit must reproduce an interpreter trap");
+        };
+        assert_eq!(machine.retired, retired_before);
+        trap
     }
 
     fn execute_loop(
@@ -1675,18 +1689,31 @@ rv32vm_test_call_loop_with_callee_sentinels:
     #[test]
     fn memory_fault_side_exits_preserve_destination_and_memory() {
         let cases = [
-            (load(5, 6, 2, 1), STACK_START, "LoadAddressMisaligned"),
-            (load(5, 6, 2, 0), 0, "LoadAccessFault"),
-            (load(5, 6, 2, 0), ADDRESS_SPACE_SIZE, "LoadAccessFault"),
-            (load(5, 6, 2, 1), u32::MAX, "LoadAccessFault"),
+            (
+                load(5, 6, 2, 1),
+                STACK_START,
+                "LoadAddressMisaligned",
+                STACK_START + 1,
+            ),
+            (load(5, 6, 2, 0), 0, "LoadAccessFault", 0),
+            (
+                load(5, 6, 2, 0),
+                ADDRESS_SPACE_SIZE,
+                "LoadAccessFault",
+                ADDRESS_SPACE_SIZE,
+            ),
+            // The immediate addition wraps to zero before range and
+            // permission checks, matching RV32 arithmetic.
+            (load(5, 6, 2, 1), u32::MAX, "LoadAccessFault", 0),
             (
                 load(5, 6, 2, 0),
                 ADDRESS_SPACE_SIZE + 1,
                 "LoadAddressMisaligned",
+                ADDRESS_SPACE_SIZE + 1,
             ),
         ];
 
-        for (instruction, base, cause) in cases {
+        for (instruction, base, cause, value) in cases {
             let code = [addi(8, 8, 1), instruction];
             let native = native_block(&code);
             let mut actual = machine_with_code(&code, IMAGE_START);
@@ -1706,6 +1733,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
                 panic!("side-exit fallback must trap");
             };
             assert_eq!(trap.cause, cause);
+            assert_eq!(trap.value, value);
             assert_eq!(actual.retired, 1);
             assert_eq!(actual.registers[5], 0xfeed_face);
         }
@@ -1734,6 +1762,143 @@ rv32vm_test_call_loop_with_callee_sentinels:
         assert!(outcome.needs_interpreter());
         assert_eq!(outcome.retired(), 0);
         assert_eq!(actual.memory.load_u32(IMAGE_START), original);
+    }
+
+    #[test]
+    fn maximum_rv32_page_faults_safely_for_every_native_memory_width() {
+        // These aligned addresses exercise the final padded permission byte.
+        // A missing byte or a nonzero tail would permit an out-of-bounds access
+        // relative to the 64 MiB flat data allocation.
+        let load_cases = [
+            (0, u32::MAX),
+            (4, u32::MAX),
+            (1, u32::MAX - 1),
+            (5, u32::MAX - 1),
+            (2, u32::MAX - 3),
+        ];
+        for (funct3, address) in load_cases {
+            let code = [load(5, 6, funct3, 0)];
+            let native = native_block(&code);
+            let mut machine = machine_with_code(&code, IMAGE_START);
+            machine.registers[5] = 0xfeed_face;
+            machine.registers[6] = address;
+
+            let outcome = execute_native(&native, &mut machine);
+
+            assert_eq!(outcome.next_pc(), IMAGE_START);
+            assert_eq!(outcome.retired(), 0);
+            assert_eq!(machine.registers[5], 0xfeed_face);
+            let trap = interpret_side_exit(&mut machine, outcome);
+            assert_eq!(trap.cause, "LoadAccessFault");
+            assert_eq!(trap.pc, IMAGE_START);
+            assert_eq!(trap.value, address);
+            assert_eq!(machine.registers[5], 0xfeed_face);
+        }
+
+        let store_cases = [(0, u32::MAX), (1, u32::MAX - 1), (2, u32::MAX - 3)];
+        for (funct3, address) in store_cases {
+            let code = [store(7, 6, funct3, 0)];
+            let native = native_block(&code);
+            let mut machine = machine_with_code(&code, IMAGE_START);
+            machine.registers[6] = address;
+            machine.registers[7] = 0xaabb_ccdd;
+            machine
+                .memory
+                .store(STACK_START, 4, 0x4433_2211, IMAGE_START)
+                .unwrap();
+
+            let outcome = execute_native(&native, &mut machine);
+
+            assert_eq!(outcome.next_pc(), IMAGE_START);
+            assert_eq!(outcome.retired(), 0);
+            assert_eq!(machine.memory.load_u32(STACK_START), 0x4433_2211);
+            let trap = interpret_side_exit(&mut machine, outcome);
+            assert_eq!(trap.cause, "StoreAccessFault");
+            assert_eq!(trap.pc, IMAGE_START);
+            assert_eq!(trap.value, address);
+            assert_eq!(machine.memory.load_u32(STACK_START), 0x4433_2211);
+        }
+    }
+
+    #[test]
+    fn wrapping_memory_offsets_and_out_of_range_alignment_keep_exact_traps() {
+        let wrapping_loads = [
+            (load(5, 6, 0, -1), 0, u32::MAX),
+            (load(5, 6, 1, -2), 0, u32::MAX - 1),
+            (load(5, 6, 2, 1), u32::MAX, 0),
+        ];
+        for (instruction, base, address) in wrapping_loads {
+            let code = [instruction];
+            let native = native_block(&code);
+            let mut machine = machine_with_code(&code, IMAGE_START);
+            machine.registers[5] = 0xfeed_face;
+            machine.registers[6] = base;
+
+            let outcome = execute_native(&native, &mut machine);
+            let trap = interpret_side_exit(&mut machine, outcome);
+
+            assert_eq!(trap.cause, "LoadAccessFault");
+            assert_eq!(trap.value, address);
+            assert_eq!(machine.registers[5], 0xfeed_face);
+        }
+
+        let wrapping_stores = [
+            (store(7, 6, 0, -1), 0, u32::MAX),
+            (store(7, 6, 1, -2), 0, u32::MAX - 1),
+            (store(7, 6, 2, 1), u32::MAX, 0),
+        ];
+        for (instruction, base, address) in wrapping_stores {
+            let code = [instruction];
+            let native = native_block(&code);
+            let mut machine = machine_with_code(&code, IMAGE_START);
+            machine.registers[6] = base;
+            machine.registers[7] = 0xaabb_ccdd;
+
+            let outcome = execute_native(&native, &mut machine);
+            let trap = interpret_side_exit(&mut machine, outcome);
+
+            assert_eq!(trap.cause, "StoreAccessFault");
+            assert_eq!(trap.value, address);
+        }
+
+        // Alignment is architecturally checked before the now-combined
+        // range/permission guard, even when the address is already outside the
+        // 64 MiB data allocation.
+        let precedence_cases = [
+            (
+                load(5, 6, 1, 0),
+                ADDRESS_SPACE_SIZE + 1,
+                "LoadAddressMisaligned",
+            ),
+            (
+                load(5, 6, 2, 0),
+                ADDRESS_SPACE_SIZE + 2,
+                "LoadAddressMisaligned",
+            ),
+            (
+                store(7, 6, 1, 0),
+                ADDRESS_SPACE_SIZE + 1,
+                "StoreAddressMisaligned",
+            ),
+            (
+                store(7, 6, 2, 0),
+                ADDRESS_SPACE_SIZE + 2,
+                "StoreAddressMisaligned",
+            ),
+        ];
+        for (instruction, address, cause) in precedence_cases {
+            let code = [instruction];
+            let native = native_block(&code);
+            let mut machine = machine_with_code(&code, IMAGE_START);
+            machine.registers[6] = address;
+            machine.registers[7] = 0xaabb_ccdd;
+
+            let outcome = execute_native(&native, &mut machine);
+            let trap = interpret_side_exit(&mut machine, outcome);
+
+            assert_eq!(trap.cause, cause);
+            assert_eq!(trap.value, address);
+        }
     }
 
     #[test]

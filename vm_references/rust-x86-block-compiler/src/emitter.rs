@@ -4,7 +4,7 @@ use std::mem;
 
 use rv32vm_rust_common::{
     machine::DecodedInstruction,
-    memory::{ADDRESS_SPACE_SIZE, PAGE_SHIFT, PERM_READ, PERM_WRITE},
+    memory::{PAGE_SHIFT, PERM_READ, PERM_WRITE},
 };
 
 use crate::{
@@ -1306,14 +1306,12 @@ impl Emitter {
             self.side_exit_conditional(0x85, pc, retired)?;
         }
 
-        self.code.push(0x3d);
-        self.code
-            .extend_from_slice(&(ADDRESS_SPACE_SIZE - bytes).to_le_bytes());
-        self.side_exit_conditional(0x87, pc, retired)?;
-
         // Naturally aligned byte, halfword, and word accesses cannot cross a
         // 4 KiB guest page, so checking the first page is sufficient. The
-        // complete guest address remains in eax for direct flat-memory access.
+        // permission table has a permanent zero guard entry for every RV32
+        // page outside the architectural address space, making this check the
+        // range guard as well. The complete guest address remains in eax for
+        // direct flat-memory access after the check passes.
         self.code
             .extend_from_slice(&[0x89, 0xc1, 0xc1, 0xe9, PAGE_SHIFT as u8]);
         self.code.extend_from_slice(&[0xf6, 0x04, 0x0e, permission]);
@@ -2230,18 +2228,19 @@ mod tests {
     }
 
     #[test]
-    fn explicit_grouped_loop_encoder_limit_does_not_change_default_loop_policy() {
+    fn padded_permission_guard_reduces_exits_without_changing_default_loop_policy() {
         let load_count = MAX_REGION_INSTRUCTIONS - 1;
         let mut code = vec![lw(5, 6, 0); load_count];
         code.push(jal(0, -508));
         let machine = machine_with_code(&code, IMAGE_START);
         let instructions = decoded(&machine, IMAGE_START, code.len());
 
-        // Each checked word load records alignment, range, and permission
-        // exits. One copy remains bounded while four copies exceed the
-        // encoder's deferred-patch budget.
-        assert!(load_count * 3 <= MAX_DEFERRED_EXIT_PATCHES);
-        assert!(load_count * MAX_LOOP_GROUP_FACTOR * 3 > MAX_DEFERRED_EXIT_PATCHES);
+        // Each checked word load now records only alignment and permission
+        // exits: the padded permission table makes the latter the range guard.
+        // Four explicit copies therefore remain inside the encoder's bounded
+        // deferred-patch budget.
+        assert!(load_count * 2 <= MAX_DEFERRED_EXIT_PATCHES);
+        assert!(load_count * MAX_LOOP_GROUP_FACTOR * 2 <= MAX_DEFERRED_EXIT_PATCHES);
 
         let compiled = compile_loop(&[RegionBlock::new(&instructions)]).unwrap();
         assert_eq!(compiled.instruction_count(), MAX_REGION_INSTRUCTIONS);
@@ -2250,7 +2249,8 @@ mod tests {
             MAX_REGION_INSTRUCTIONS
         );
         assert_eq!(compiled.loop_unroll_factor(), 1);
-        assert!(compile_grouped_loop(&[RegionBlock::new(&instructions)], 4).is_none());
+        let grouped = compile_grouped_loop(&[RegionBlock::new(&instructions)], 4).unwrap();
+        assert_eq!(grouped.loop_unroll_factor(), 4);
     }
 
     #[test]

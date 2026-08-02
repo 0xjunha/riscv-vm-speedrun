@@ -12,6 +12,13 @@ trapping memory paths and exceptional division paths leave state unmodified
 and side exit. Native scalar memory operations preserve the EEI's alignment,
 range, and page-permission checks, then access the checked guest address
 directly from the flat base without a sparse-page lookup or allocation exit.
+The native permission view has one byte for every possible RV32 page index;
+all indices beyond the architectural 64 MiB address space are permanently
+zero. A loaded program constructs this immutable padded table once and shares
+it across fresh runs; registers, guest data, output, and retirement state remain
+per-run. Because naturally aligned byte, halfword, and word accesses cannot
+cross a 4 KiB page, one permission lookup safely performs both the range and
+page permission guard before any flat-memory access.
 
 Within each compiled block, frequently reused guest registers are held in a
 bounded host-register cache. Bounded blocks and regions use only the three
