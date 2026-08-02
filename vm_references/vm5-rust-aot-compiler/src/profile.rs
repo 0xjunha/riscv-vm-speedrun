@@ -49,10 +49,17 @@ pub(crate) struct LoadProfile {
     pub(crate) compiled_blocks: u64,
     pub(crate) native_guest_instructions: u64,
     pub(crate) code_bytes: u64,
+    pub(crate) hot_code_bytes: u64,
+    pub(crate) cold_code_bytes: u64,
     pub(crate) mapped_bytes: u64,
     pub(crate) dispatch_table_entries: u64,
     pub(crate) dispatch_table_pages: u64,
     pub(crate) dispatch_table_bytes: u64,
+    pub(crate) register_cache_count: u64,
+    pub(crate) register_cache_guest_registers: [u8; 6],
+    pub(crate) external_thunk_bytes: u64,
+    pub(crate) shared_prologue_bytes: u64,
+    pub(crate) exit_trampoline_bytes: u64,
     pub(crate) fallthrough_blocks: u64,
     pub(crate) branch_blocks: u64,
     pub(crate) direct_jump_blocks: u64,
@@ -132,8 +139,17 @@ pub(crate) struct RunProfile {
     pub(crate) fallback_fetch_traps: u64,
     pub(crate) generated_guest_register_loads: u64,
     pub(crate) generated_guest_register_stores: u64,
+    pub(crate) generated_register_cache_fills: u64,
+    pub(crate) generated_register_cache_spills: u64,
+    pub(crate) generated_register_cache_read_hits: u64,
+    pub(crate) generated_register_cache_write_hits: u64,
     pub(crate) native_memory_loads: u64,
     pub(crate) native_memory_stores: u64,
+    pub(crate) direct_immediate_lowerings: u64,
+    pub(crate) direct_register_lowerings: u64,
+    pub(crate) direct_branch_lowerings: u64,
+    pub(crate) direct_memory_load_lowerings: u64,
+    pub(crate) direct_memory_store_lowerings: u64,
     pub(crate) native_fallthrough_dispatches: u64,
     pub(crate) native_branch_dispatches: u64,
     pub(crate) native_direct_jump_dispatches: u64,
@@ -156,8 +172,17 @@ impl RunProfile {
         self.native_indirect_link_misses += native.indirect_misses;
         self.generated_guest_register_loads += native.register_loads;
         self.generated_guest_register_stores += native.register_stores;
+        self.generated_register_cache_fills += native.cache_fills;
+        self.generated_register_cache_spills += native.cache_spills;
+        self.generated_register_cache_read_hits += native.cache_read_hits;
+        self.generated_register_cache_write_hits += native.cache_write_hits;
         self.native_memory_loads += native.memory_loads;
         self.native_memory_stores += native.memory_stores;
+        self.direct_immediate_lowerings += native.direct_immediate;
+        self.direct_register_lowerings += native.direct_register;
+        self.direct_branch_lowerings += native.direct_branch;
+        self.direct_memory_load_lowerings += native.direct_memory_load;
+        self.direct_memory_store_lowerings += native.direct_memory_store;
         self.native_fallthrough_dispatches += native.fallthrough_blocks;
         self.native_branch_dispatches += native.branch_blocks;
         self.native_direct_jump_dispatches += native.jump_blocks;
@@ -198,10 +223,24 @@ impl RunProfile {
             Termination::InstructionLimit => "instruction_limit",
         };
         let opcodes = self.opcodes;
+        let mut cached_guest_registers = String::from("[");
+        for (index, guest) in load
+            .register_cache_guest_registers
+            .iter()
+            .take(load.register_cache_count as usize)
+            .enumerate()
+        {
+            if index != 0 {
+                cached_guest_registers.push(',');
+            }
+            write!(cached_guest_registers, "{guest}")
+                .expect("writing cache mapping into a String cannot fail");
+        }
+        cached_guest_registers.push(']');
         let mut json = String::with_capacity(1_500);
         write!(
             json,
-            "{{\"kind\":\"vm5_profile\",\"schema_version\":4,\"termination\":\"{termination}\",\
+            "{{\"kind\":\"vm5_profile\",\"schema_version\":6,\"termination\":\"{termination}\",\
              \"retired\":{{\"total\":{total_retired},\"native\":{},\"fallback\":{}}},\
              \"dispatch\":{{\"native_invocations\":{},\"native_blocks\":{},\
              \"direct_link_hits\":{},\"indirect_link_hits\":{},\"indirect_link_misses\":{},\
@@ -215,10 +254,18 @@ impl RunProfile {
              \"branch_0x63\":{},\"jalr_0x67\":{},\"jal_0x6f\":{},\"system_0x73\":{},\
              \"other\":{},\"fetch_traps\":{}}},\
              \"generated_guest_register_traffic\":{{\"loads\":{},\"stores\":{}}},\
+             \"generated_register_cache_traffic\":{{\"fills\":{},\"spills\":{},\
+             \"read_hits\":{},\"write_hits\":{},\"avoided_array_accesses\":{}}},\
              \"native_memory_traffic\":{{\"loads\":{},\"stores\":{}}},\
+             \"direct_operand_lowering\":{{\"immediate\":{},\"register\":{},\"branch\":{},\
+             \"memory_load\":{},\"memory_store\":{}}},\
              \"load\":{{\"compiled_blocks\":{},\"native_guest_instructions\":{},\
-             \"code_bytes\":{},\"mapped_bytes\":{},\"dispatch_table_entries\":{},\
+             \"code_bytes\":{},\"hot_code_bytes\":{},\"cold_code_bytes\":{},\
+             \"mapped_bytes\":{},\"dispatch_table_entries\":{},\
              \"dispatch_table_pages\":{},\"dispatch_table_bytes\":{},\
+             \"register_cache_count\":{},\"register_cache_guest_registers\":{},\
+             \"external_thunk_bytes\":{},\"shared_prologue_bytes\":{},\
+             \"exit_trampoline_bytes\":{},\
              \"fallthrough_blocks\":{},\"branch_blocks\":{},\"direct_jump_blocks\":{},\
              \"indirect_jump_blocks\":{}}}}}",
             self.native_retired,
@@ -259,15 +306,32 @@ impl RunProfile {
             self.fallback_fetch_traps,
             self.generated_guest_register_loads,
             self.generated_guest_register_stores,
+            self.generated_register_cache_fills,
+            self.generated_register_cache_spills,
+            self.generated_register_cache_read_hits,
+            self.generated_register_cache_write_hits,
+            self.generated_register_cache_read_hits + self.generated_register_cache_write_hits,
             self.native_memory_loads,
             self.native_memory_stores,
+            self.direct_immediate_lowerings,
+            self.direct_register_lowerings,
+            self.direct_branch_lowerings,
+            self.direct_memory_load_lowerings,
+            self.direct_memory_store_lowerings,
             load.compiled_blocks,
             load.native_guest_instructions,
             load.code_bytes,
+            load.hot_code_bytes,
+            load.cold_code_bytes,
             load.mapped_bytes,
             load.dispatch_table_entries,
             load.dispatch_table_pages,
             load.dispatch_table_bytes,
+            load.register_cache_count,
+            cached_guest_registers,
+            load.external_thunk_bytes,
+            load.shared_prologue_bytes,
+            load.exit_trampoline_bytes,
             load.fallthrough_blocks,
             load.branch_blocks,
             load.direct_jump_blocks,
@@ -377,8 +441,17 @@ mod tests {
             fallback_fetch_traps: 116,
             generated_guest_register_loads: 117,
             generated_guest_register_stores: 118,
+            generated_register_cache_fills: 128,
+            generated_register_cache_spills: 129,
+            generated_register_cache_read_hits: 130,
+            generated_register_cache_write_hits: 131,
             native_memory_loads: 123,
             native_memory_stores: 124,
+            direct_immediate_lowerings: 132,
+            direct_register_lowerings: 133,
+            direct_branch_lowerings: 134,
+            direct_memory_load_lowerings: 135,
+            direct_memory_store_lowerings: 136,
             native_fallthrough_dispatches: 119,
             native_branch_dispatches: 120,
             native_direct_jump_dispatches: 121,
@@ -405,10 +478,17 @@ mod tests {
             compiled_blocks: 301,
             native_guest_instructions: 302,
             code_bytes: 303,
+            hot_code_bytes: 315,
+            cold_code_bytes: 316,
             mapped_bytes: 304,
             dispatch_table_entries: 308,
             dispatch_table_pages: 309,
             dispatch_table_bytes: 310,
+            register_cache_count: 6,
+            register_cache_guest_registers: [5, 6, 7, 8, 9, 10],
+            external_thunk_bytes: 312,
+            shared_prologue_bytes: 313,
+            exit_trampoline_bytes: 314,
             fallthrough_blocks: 305,
             branch_blocks: 306,
             direct_jump_blocks: 307,
@@ -418,7 +498,7 @@ mod tests {
 
     fn expected_populated_record() -> &'static str {
         concat!(
-            "{\"kind\":\"vm5_profile\",\"schema_version\":4,",
+            "{\"kind\":\"vm5_profile\",\"schema_version\":6,",
             "\"termination\":\"instruction_limit\",",
             "\"retired\":{\"total\":999,\"native\":101,\"fallback\":102},",
             "\"dispatch\":{\"native_invocations\":103,\"native_blocks\":104,",
@@ -437,17 +517,25 @@ mod tests {
             "\"jalr_0x67\":209,\"jal_0x6f\":210,\"system_0x73\":211,",
             "\"other\":212,\"fetch_traps\":116},",
             "\"generated_guest_register_traffic\":{\"loads\":117,\"stores\":118},",
+            "\"generated_register_cache_traffic\":{\"fills\":128,\"spills\":129,",
+            "\"read_hits\":130,\"write_hits\":131,\"avoided_array_accesses\":261},",
             "\"native_memory_traffic\":{\"loads\":123,\"stores\":124},",
+            "\"direct_operand_lowering\":{\"immediate\":132,\"register\":133,",
+            "\"branch\":134,\"memory_load\":135,\"memory_store\":136},",
             "\"load\":{\"compiled_blocks\":301,\"native_guest_instructions\":302,",
-            "\"code_bytes\":303,\"mapped_bytes\":304,\"dispatch_table_entries\":308,",
+            "\"code_bytes\":303,\"hot_code_bytes\":315,\"cold_code_bytes\":316,",
+            "\"mapped_bytes\":304,\"dispatch_table_entries\":308,",
             "\"dispatch_table_pages\":309,\"dispatch_table_bytes\":310,",
+            "\"register_cache_count\":6,\"register_cache_guest_registers\":[5,6,7,8,9,10],",
+            "\"external_thunk_bytes\":312,\"shared_prologue_bytes\":313,",
+            "\"exit_trampoline_bytes\":314,",
             "\"fallthrough_blocks\":305,\"branch_blocks\":306,",
             "\"direct_jump_blocks\":307,\"indirect_jump_blocks\":311}}"
         )
     }
 
     #[test]
-    fn profile_json_matches_the_complete_schema_v4_record() {
+    fn profile_json_matches_the_complete_schema_v6_record() {
         let json =
             populated_profile().json(Termination::InstructionLimit, 999, populated_load_profile());
 

@@ -699,6 +699,10 @@ mod tests {
         assert_eq!(hit.native_missing_exits, 1);
         assert_eq!(hit.generated_guest_register_loads, 2);
         assert_eq!(hit.generated_guest_register_stores, 2);
+        assert_eq!(hit.generated_register_cache_fills, 0);
+        assert_eq!(hit.generated_register_cache_spills, 0);
+        assert_eq!(hit.generated_register_cache_read_hits, 0);
+        assert_eq!(hit.generated_register_cache_write_hits, 0);
         assert_eq!(hit.fallback_jalr, 0);
 
         let miss_image = image_with_code_at(
@@ -723,6 +727,10 @@ mod tests {
         assert_eq!(miss.lookup_fallbacks, 1);
         assert_eq!(miss.generated_guest_register_loads, 1);
         assert_eq!(miss.generated_guest_register_stores, 1);
+        assert_eq!(miss.generated_register_cache_fills, 0);
+        assert_eq!(miss.generated_register_cache_spills, 0);
+        assert_eq!(miss.generated_register_cache_read_hits, 0);
+        assert_eq!(miss.generated_register_cache_write_hits, 0);
         assert_eq!(miss.fallback_other, 1);
 
         let retry_image = image_with_code_at(&[jalr(5, 10, 0)], IMAGE_START);
@@ -744,6 +752,10 @@ mod tests {
         assert_eq!(retry.native_interpret_one_exits, 1);
         assert_eq!(retry.generated_guest_register_loads, 1);
         assert_eq!(retry.generated_guest_register_stores, 0);
+        assert_eq!(retry.generated_register_cache_fills, 0);
+        assert_eq!(retry.generated_register_cache_spills, 0);
+        assert_eq!(retry.generated_register_cache_read_hits, 0);
+        assert_eq!(retry.generated_register_cache_write_hits, 0);
         assert_eq!(retry.fallback_jalr, 1);
         assert_eq!(retry_machine.registers[5], 0xfeed_face);
     }
@@ -1346,6 +1358,8 @@ mod tests {
         assert_eq!(profile.native_retired, 2);
         assert_eq!(profile.generated_guest_register_loads, 2);
         assert_eq!(profile.generated_guest_register_stores, 2);
+        assert_eq!(profile.generated_register_cache_read_hits, 0);
+        assert_eq!(profile.generated_register_cache_write_hits, 0);
         assert_eq!(profile.native_memory_loads, 1);
         assert_eq!(profile.native_memory_stores, 0);
         assert_eq!(profile.native_fallthrough_dispatches, 1);
@@ -1359,6 +1373,8 @@ mod tests {
         assert_eq!(profile.native_retired, 1);
         assert_eq!(profile.generated_guest_register_loads, 2);
         assert_eq!(profile.generated_guest_register_stores, 1);
+        assert_eq!(profile.generated_register_cache_read_hits, 0);
+        assert_eq!(profile.generated_register_cache_write_hits, 0);
         assert_eq!(profile.native_memory_loads, 0);
         assert_eq!(profile.native_fallthrough_dispatches, 0);
         assert_eq!(profile.native_interpret_one_exits, 1);
@@ -1374,6 +1390,8 @@ mod tests {
         assert_eq!(profile.native_retired, 0);
         assert_eq!(profile.generated_guest_register_loads, 2);
         assert_eq!(profile.generated_guest_register_stores, 0);
+        assert_eq!(profile.generated_register_cache_read_hits, 0);
+        assert_eq!(profile.generated_register_cache_write_hits, 0);
         assert_eq!(profile.native_memory_stores, 0);
         assert_eq!(profile.native_fallthrough_dispatches, 0);
         assert_eq!(profile.native_interpret_one_exits, 1);
@@ -1390,6 +1408,8 @@ mod tests {
         assert_eq!(profile.native_retired, 1);
         assert_eq!(profile.generated_guest_register_loads, 2);
         assert_eq!(profile.generated_guest_register_stores, 0);
+        assert_eq!(profile.generated_register_cache_read_hits, 0);
+        assert_eq!(profile.generated_register_cache_write_hits, 0);
         assert_eq!(profile.native_memory_loads, 0);
         assert_eq!(profile.native_memory_stores, 1);
         assert_eq!(profile.native_fallthrough_dispatches, 1);
@@ -1429,8 +1449,10 @@ mod tests {
         assert_eq!(native_profile.native_direct_link_hits, 1);
         assert_eq!(native_profile.native_budget_exits, 1);
         assert_eq!(native_profile.native_branch_dispatches, 1);
-        assert_eq!(native_profile.generated_guest_register_loads, 3);
+        assert_eq!(native_profile.generated_guest_register_loads, 1);
         assert_eq!(native_profile.generated_guest_register_stores, 1);
+        assert_eq!(native_profile.generated_register_cache_read_hits, 1);
+        assert_eq!(native_profile.generated_register_cache_write_hits, 1);
     }
 
     #[cfg(all(
@@ -1469,8 +1491,12 @@ mod tests {
         assert_eq!(profile.native_missing_exits, 1);
         assert_eq!(profile.native_branch_dispatches, 1);
         assert_eq!(profile.native_fallthrough_dispatches, 1);
-        assert_eq!(profile.generated_guest_register_loads, 5);
+        assert_eq!(profile.generated_guest_register_loads, 3);
         assert_eq!(profile.generated_guest_register_stores, 3);
+        assert_eq!(profile.generated_register_cache_fills, 0);
+        assert_eq!(profile.generated_register_cache_spills, 0);
+        assert_eq!(profile.generated_register_cache_read_hits, 0);
+        assert_eq!(profile.generated_register_cache_write_hits, 0);
     }
 
     #[cfg(all(
@@ -1531,7 +1557,9 @@ mod tests {
         assert_eq!(profile.native_retired, 8);
         assert_eq!(profile.fallback_retired, 0);
         assert_eq!(profile.fallback_m_ops, 0);
-        assert_eq!(profile.generated_guest_register_loads, 16);
-        assert_eq!(profile.generated_guest_register_stores, 8);
+        assert_eq!(profile.generated_guest_register_loads, 3);
+        assert_eq!(profile.generated_guest_register_stores, 3);
+        assert_eq!(profile.generated_register_cache_read_hits, 16);
+        assert_eq!(profile.generated_register_cache_write_hits, 8);
     }
 }

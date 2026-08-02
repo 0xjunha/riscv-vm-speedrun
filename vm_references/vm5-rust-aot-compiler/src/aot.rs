@@ -192,6 +192,14 @@ impl NativeImage {
         #[cfg(feature = "profile")]
         {
             native.load_profile.code_bytes = publication.1 as u64;
+            native.load_profile.hot_code_bytes = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.hot_code_bytes() as u64);
+            native.load_profile.cold_code_bytes = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.cold_code_bytes() as u64);
             native.load_profile.mapped_bytes = native
                 .program
                 .as_ref()
@@ -208,6 +216,26 @@ impl NativeImage {
                 .program
                 .as_ref()
                 .map_or(0, |program| program.dispatch_bytes() as u64);
+            native.load_profile.register_cache_count = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.cached_register_count() as u64);
+            native.load_profile.register_cache_guest_registers = native
+                .program
+                .as_ref()
+                .map_or([0; 6], LinkedProgram::cached_guest_registers);
+            native.load_profile.external_thunk_bytes = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.external_thunk_bytes() as u64);
+            native.load_profile.shared_prologue_bytes = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.shared_prologue_bytes() as u64);
+            native.load_profile.exit_trampoline_bytes = native
+                .program
+                .as_ref()
+                .map_or(0, |program| program.exit_trampoline_bytes() as u64);
         }
         native
     }
@@ -584,21 +612,22 @@ mod tests {
         let machine = Machine::new(&image, &[], 0);
         let first = LinkedBlock::compile(&native_sequence(&machine, IMAGE_START)).unwrap();
         let second = LinkedBlock::compile(&native_sequence(&machine, IMAGE_START + 4)).unwrap();
-        let reserved_code_len = LinkedProgram::fixed_code_len()
-            + first.reserved_code_len()
-            + second.reserved_code_len();
+        let first_admission_len = LinkedProgram::fixed_code_len() + first.reserved_code_len();
+        let reserved_code_len = first_admission_len + second.reserved_code_len();
         let (_, actual_code_len) =
             LinkedProgram::publish_with_code_len(vec![first, second], usize::MAX);
         assert!(actual_code_len < reserved_code_len);
+        let partial_limit = actual_code_len.max(first_admission_len);
+        assert!(partial_limit < reserved_code_len);
 
-        let actual_limit =
-            NativeImage::prepare_with_limits(&image, PreparationLimits::new(3, 2, actual_code_len));
+        let partial =
+            NativeImage::prepare_with_limits(&image, PreparationLimits::new(3, 2, partial_limit));
         let reserved_limit = NativeImage::prepare_with_limits(
             &image,
             PreparationLimits::new(3, 2, reserved_code_len),
         );
 
-        assert_eq!(actual_limit.staged_block_count(), 1);
+        assert_eq!(partial.staged_block_count(), 1);
         assert_eq!(reserved_limit.staged_block_count(), 2);
         #[cfg(feature = "profile")]
         assert_eq!(
@@ -655,5 +684,30 @@ mod tests {
             target_pointer_width = "64"
         ))]
         assert!(profile.mapped_bytes >= profile.code_bytes);
+    }
+
+    #[cfg(all(
+        feature = "profile",
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn uncached_inline_entry_has_exact_load_profile_sizes() {
+        let image = image_with_code_at(&[addi(5, 5, 1), 0x0000_0073], IMAGE_START);
+
+        let native = NativeImage::prepare(&image);
+        let profile = native.load_profile();
+
+        assert_eq!(profile.compiled_blocks, 1);
+        assert_eq!(profile.register_cache_count, 0);
+        assert_eq!(profile.register_cache_guest_registers, [0; 6]);
+        assert_eq!(profile.external_thunk_bytes, 0);
+        assert_eq!(profile.shared_prologue_bytes, 0);
+        assert_eq!(profile.exit_trampoline_bytes, 33);
+        assert_eq!(
+            profile.hot_code_bytes + profile.cold_code_bytes,
+            profile.code_bytes
+        );
     }
 }
