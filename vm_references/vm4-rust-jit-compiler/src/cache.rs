@@ -403,6 +403,30 @@ pub(crate) enum BlockLookup {
     Transient(BasicBlock),
 }
 
+/// Exact native successor selected from immutable edge metadata.
+#[derive(Clone, Copy)]
+pub(crate) enum NativeContinuation<'a> {
+    /// The source must return through the ordinary dispatcher so its edge can
+    /// still contribute to demand-driven region formation.
+    Profiling,
+    /// The actual successor is not present in the source's bounded profile.
+    Miss,
+    /// The exact target needs publication, compilation, or interpretation.
+    Unavailable,
+    /// Native code exists, but the exact remaining budget cannot enter it.
+    Budget,
+    /// The current basic tier is ready. The flag preserves a region budget
+    /// fallback that ordinary dispatch would have profiled first.
+    Basic {
+        entry: NativeEntry<'a>,
+        source: BlockId,
+        region_budget_fallback: bool,
+        region_loop_budget_fallback: bool,
+    },
+    /// The current region tier is ready and remains preferred over basic code.
+    Region(NativeRegionEntry<'a>),
+}
+
 /// A bounded sparse cache indexed by guest program counter.
 pub(crate) struct BlockCache {
     pages: Box<[Option<Box<BlockPage>>]>,
@@ -523,6 +547,91 @@ impl BlockCache {
         self.blocks
             .get(id.index())
             .is_some_and(|block| matches!(block.region_tier, RegionTier::Profiling))
+    }
+
+    /// Resolves an exact successor only after the source edge profile freezes.
+    ///
+    /// `observe_edge` mutates metadata exclusively while `region_tier` is
+    /// `Profiling`, so every other tier makes these bounded entries immutable.
+    /// Matching both the recorded PC and the target block's current start PC
+    /// prevents a stale or inconsistent ID from becoming a continuation.
+    pub(crate) fn native_continuation(
+        &self,
+        source: BlockId,
+        target_pc: u32,
+        remaining: u64,
+    ) -> NativeContinuation<'_> {
+        let Some(source) = self.blocks.get(source.index()) else {
+            return NativeContinuation::Miss;
+        };
+        if matches!(source.region_tier, RegionTier::Profiling) {
+            return NativeContinuation::Profiling;
+        }
+        let Some(successor) = source
+            .edges
+            .successors
+            .iter()
+            .flatten()
+            .find(|successor| successor.target_pc == target_pc)
+        else {
+            return NativeContinuation::Miss;
+        };
+        let Some(block) = self
+            .blocks
+            .get(successor.target.index())
+            .filter(|target| target.start_pc == target_pc)
+        else {
+            return NativeContinuation::Miss;
+        };
+        if matches!(block.region_tier, RegionTier::Staged)
+            || matches!(block.basic_tier, BasicTier::Staged)
+        {
+            return NativeContinuation::Unavailable;
+        }
+
+        let mut region_budget_fallback = false;
+        let mut region_loop_budget_fallback = false;
+        if let RegionTier::Native(handle) = &block.region_tier {
+            let Some(entry) = self
+                .programs
+                .get(handle.native.program)
+                .and_then(|program| program.entry(handle.native.entry))
+            else {
+                return NativeContinuation::Unavailable;
+            };
+            if remaining >= entry.minimum_instruction_count() as u64 {
+                return NativeContinuation::Region(NativeRegionEntry {
+                    entry,
+                    metadata: &handle.metadata,
+                });
+            }
+            region_budget_fallback = true;
+            region_loop_budget_fallback = handle.metadata.is_loop();
+        }
+        if let BasicTier::Native(handle) = block.basic_tier {
+            let Some(entry) = self
+                .programs
+                .get(handle.program)
+                .and_then(|program| program.entry(handle.entry))
+            else {
+                return NativeContinuation::Unavailable;
+            };
+            if remaining >= entry.instruction_count() as u64 {
+                return NativeContinuation::Basic {
+                    entry,
+                    source: successor.target,
+                    region_budget_fallback,
+                    region_loop_budget_fallback,
+                };
+            }
+            return NativeContinuation::Budget;
+        }
+
+        if region_budget_fallback {
+            NativeContinuation::Budget
+        } else {
+            NativeContinuation::Unavailable
+        }
     }
 
     #[cfg(test)]
@@ -1166,8 +1275,8 @@ mod tests {
     ))]
     use super::DOMINANT_EDGE_MINIMUM_OBSERVATIONS;
     use super::{
-        BasicTier, BlockCache, BlockId, BlockLookup, MAX_REGION_EDGE_OBSERVATIONS, RegionTier,
-        STAGED_REVISIT_FLUSH_INTERVAL,
+        BasicTier, BlockCache, BlockId, BlockLookup, MAX_REGION_EDGE_OBSERVATIONS,
+        NativeContinuation, RegionTier, STAGED_REVISIT_FLUSH_INTERVAL,
     };
     #[cfg(feature = "profile")]
     use crate::profile::ProfileCounters as TestProfile;
@@ -1539,6 +1648,42 @@ mod tests {
     }
 
     #[test]
+    fn frozen_successors_require_exact_pc_and_validated_block_ids() {
+        let machine = machine_with_code_at(&[0x0000_0063; 3], IMAGE_START);
+        let mut cache = BlockCache::default();
+        let mut profile = test_profile();
+        let source = cached_id(&mut cache, &machine, IMAGE_START, &mut profile);
+        let target = cached_id(&mut cache, &machine, IMAGE_START + 4, &mut profile);
+        assert!(observe_edge(
+            &mut cache,
+            source,
+            IMAGE_START + 4,
+            target,
+            &mut profile,
+        ));
+
+        assert!(matches!(
+            cache.native_continuation(source, IMAGE_START + 4, u64::MAX),
+            NativeContinuation::Profiling
+        ));
+        cache.blocks[source.index()].region_tier = RegionTier::Disabled;
+        assert!(matches!(
+            cache.native_continuation(source, IMAGE_START + 4, u64::MAX),
+            NativeContinuation::Unavailable
+        ));
+        assert!(matches!(
+            cache.native_continuation(source, IMAGE_START + 8, u64::MAX),
+            NativeContinuation::Miss
+        ));
+
+        cache.blocks[target.index()].start_pc = IMAGE_START + 8;
+        assert!(matches!(
+            cache.native_continuation(source, IMAGE_START + 4, u64::MAX),
+            NativeContinuation::Miss
+        ));
+    }
+
+    #[test]
     fn nondominant_edges_freeze_at_the_exact_profile_bound() {
         let machine = machine_with_code_at(&[0x0000_0063; 3], IMAGE_START);
         let mut cache = BlockCache::default();
@@ -1673,6 +1818,54 @@ mod tests {
         assert!(matches!(
             cache.blocks[id.index()].basic_tier,
             BasicTier::Disabled
+        ));
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn native_continuation_status_stops_for_staging_and_exact_budgets() {
+        let machine = machine_with_code_at(
+            &[addi(5, 5, 1), 0x0000_0063, addi(6, 6, 1), 0x0000_0063],
+            IMAGE_START,
+        );
+        let mut cache = BlockCache::default();
+        let mut profile = test_profile();
+        let source = cached_id(&mut cache, &machine, IMAGE_START, &mut profile);
+        let target = cached_id(&mut cache, &machine, IMAGE_START + 8, &mut profile);
+        assert!(observe_edge(
+            &mut cache,
+            source,
+            IMAGE_START + 8,
+            target,
+            &mut profile,
+        ));
+        cache.blocks[source.index()].region_tier = RegionTier::Disabled;
+
+        assert!(matches!(
+            cache.native_continuation(source, IMAGE_START + 8, u64::MAX),
+            NativeContinuation::Unavailable
+        ));
+        heat(&mut cache, target, usize::MAX, &mut profile);
+        assert!(matches!(
+            cache.native_continuation(source, IMAGE_START + 8, u64::MAX),
+            NativeContinuation::Unavailable
+        ));
+
+        assert_ne!(flush_pending(&mut cache, usize::MAX, &mut profile), 0);
+        assert!(matches!(
+            cache.native_continuation(source, IMAGE_START + 8, 1),
+            NativeContinuation::Budget
+        ));
+        assert!(matches!(
+            cache.native_continuation(source, IMAGE_START + 8, 2),
+            NativeContinuation::Basic {
+                source: continuation_source,
+                ..
+            } if continuation_source == target
         ));
     }
 

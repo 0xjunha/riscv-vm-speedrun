@@ -10,13 +10,14 @@ use rv32vm_rust_x86_block_compiler::{NativeEntry, NativeEntryKind};
 use crate::profile::ProfileCounters;
 use crate::{
     block::BasicBlock,
-    cache::{BlockCache, BlockId, BlockLookup, RegionMetadata},
+    cache::{BlockCache, BlockId, BlockLookup, NativeContinuation, RegionMetadata},
 };
 
 const MAX_CODE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_LINKED_CONTINUATION_HOPS: usize = 32;
 
 enum CachedExecution {
-    NormalExit(BlockId),
+    NormalExit { source: BlockId, native: bool },
     UnprofiledContinue,
     Terminated(RunResult),
 }
@@ -116,7 +117,13 @@ impl JitInterpreter {
                     Self::execute_block(machine, instruction_limit, cache.block(id), profile);
                 #[cfg(not(feature = "profile"))]
                 let result = Self::execute_block(machine, instruction_limit, cache.block(id));
-                return result.map_or(CachedExecution::NormalExit(id), CachedExecution::Terminated);
+                return result.map_or(
+                    CachedExecution::NormalExit {
+                        source: id,
+                        native: false,
+                    },
+                    CachedExecution::Terminated,
+                );
             }
 
             Self::execute_native(
@@ -135,7 +142,13 @@ impl JitInterpreter {
                     Self::execute_block(machine, instruction_limit, cache.block(id), profile);
                 #[cfg(not(feature = "profile"))]
                 let result = Self::execute_block(machine, instruction_limit, cache.block(id));
-                return result.map_or(CachedExecution::NormalExit(id), CachedExecution::Terminated);
+                return result.map_or(
+                    CachedExecution::NormalExit {
+                        source: id,
+                        native: false,
+                    },
+                    CachedExecution::Terminated,
+                );
             }
 
             #[cfg(feature = "profile")]
@@ -151,7 +164,154 @@ impl JitInterpreter {
                     profile,
                 );
             }
-            result.map_or(CachedExecution::NormalExit(id), CachedExecution::Terminated)
+            result.map_or(
+                CachedExecution::NormalExit {
+                    source: id,
+                    native: false,
+                },
+                CachedExecution::Terminated,
+            )
+        }
+    }
+
+    fn execute_linked(
+        cache: &mut BlockCache,
+        id: BlockId,
+        machine: &mut Machine,
+        instruction_limit: u64,
+        code_bytes: &mut usize,
+        #[cfg(feature = "profile")] profile: &mut ProfileCounters,
+    ) -> CachedExecution {
+        let mut continuation_hops = 0;
+        let mut execution = Self::execute_cached(
+            cache,
+            id,
+            machine,
+            instruction_limit,
+            code_bytes,
+            #[cfg(feature = "profile")]
+            profile,
+        );
+        loop {
+            let CachedExecution::NormalExit {
+                source,
+                native: true,
+            } = &execution
+            else {
+                #[cfg(feature = "profile")]
+                if continuation_hops != 0
+                    && matches!(
+                        execution,
+                        CachedExecution::UnprofiledContinue | CachedExecution::Terminated(_)
+                    )
+                {
+                    profile.record_continuation_non_normal_stop();
+                }
+                return execution;
+            };
+            let source = *source;
+
+            #[cfg(feature = "profile")]
+            profile.record_continuation_attempt();
+            if continuation_hops == MAX_LINKED_CONTINUATION_HOPS {
+                #[cfg(feature = "profile")]
+                profile.record_continuation_cap_stop();
+                return CachedExecution::NormalExit {
+                    source,
+                    native: true,
+                };
+            }
+
+            let remaining = instruction_limit.saturating_sub(machine.retired);
+            execution = match cache.native_continuation(source, machine.pc, remaining) {
+                NativeContinuation::Profiling => {
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_profile_stop();
+                    return CachedExecution::NormalExit {
+                        source,
+                        native: true,
+                    };
+                }
+                NativeContinuation::Miss => {
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_link_miss();
+                    return CachedExecution::NormalExit {
+                        source,
+                        native: true,
+                    };
+                }
+                NativeContinuation::Unavailable => {
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_link_hit();
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_target_stop();
+                    return CachedExecution::NormalExit {
+                        source,
+                        native: true,
+                    };
+                }
+                NativeContinuation::Budget => {
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_link_hit();
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_budget_stop();
+                    return CachedExecution::NormalExit {
+                        source,
+                        native: true,
+                    };
+                }
+                NativeContinuation::Basic {
+                    entry,
+                    source,
+                    region_budget_fallback,
+                    region_loop_budget_fallback,
+                } => {
+                    #[cfg(feature = "profile")]
+                    {
+                        profile.record_continuation_link_hit();
+                        if region_budget_fallback {
+                            profile.record_region_budget_fallback();
+                        }
+                        if region_loop_budget_fallback {
+                            profile.record_loop_budget_fallback();
+                        }
+                    }
+                    #[cfg(not(feature = "profile"))]
+                    let _ = (region_budget_fallback, region_loop_budget_fallback);
+                    continuation_hops += 1;
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_hop();
+                    let instruction_count = entry.instruction_count();
+                    Self::execute_native(
+                        entry,
+                        instruction_count,
+                        NativeExecution::Basic { source },
+                        machine,
+                        instruction_limit,
+                        #[cfg(feature = "profile")]
+                        profile,
+                    )
+                }
+                NativeContinuation::Region(region) => {
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_link_hit();
+                    continuation_hops += 1;
+                    #[cfg(feature = "profile")]
+                    profile.record_continuation_hop();
+                    let instruction_count = region.entry.instruction_count();
+                    Self::execute_native(
+                        region.entry,
+                        instruction_count,
+                        NativeExecution::Region {
+                            metadata: region.metadata,
+                        },
+                        machine,
+                        instruction_limit,
+                        #[cfg(feature = "profile")]
+                        profile,
+                    )
+                }
+            };
         }
     }
 
@@ -195,7 +355,10 @@ impl JitInterpreter {
 
         if !outcome.needs_interpreter() {
             return match execution {
-                NativeExecution::Basic { source } => CachedExecution::NormalExit(source),
+                NativeExecution::Basic { source } => CachedExecution::NormalExit {
+                    source,
+                    native: true,
+                },
                 NativeExecution::Region { metadata } => {
                     if metadata.is_loop_budget_completion(retired as usize, machine.pc) {
                         #[cfg(feature = "profile")]
@@ -212,17 +375,21 @@ impl JitInterpreter {
                         debug_assert_eq!(retired, entry_instruction_count as u64);
                         #[cfg(feature = "profile")]
                         profile.record_region_completed_call();
-                        return CachedExecution::NormalExit(metadata.final_source());
+                        return CachedExecution::NormalExit {
+                            source: metadata.final_source(),
+                            native: true,
+                        };
                     }
                     #[cfg(feature = "profile")]
                     if metadata.is_loop() {
                         profile.record_loop_guard_exit();
                     }
-                    CachedExecution::NormalExit(
-                        metadata
+                    CachedExecution::NormalExit {
+                        source: metadata
                             .source_for_retired(retired as usize)
                             .expect("normal region guards occur at exact block boundaries"),
-                    )
+                        native: true,
+                    }
                 }
             };
         }
@@ -329,7 +496,7 @@ impl Engine for JitInterpreter {
                             );
                         }
                     }
-                    match Self::execute_cached(
+                    match Self::execute_linked(
                         &mut self.cache,
                         id,
                         machine,
@@ -338,7 +505,7 @@ impl Engine for JitInterpreter {
                         #[cfg(feature = "profile")]
                         &mut self.profile,
                     ) {
-                        CachedExecution::NormalExit(source) => {
+                        CachedExecution::NormalExit { source, .. } => {
                             pending_edge = self
                                 .cache
                                 .profiles_edges(source)
@@ -402,6 +569,55 @@ mod tests {
     ))]
     use crate::cache::STAGED_REVISIT_FLUSH_INTERVAL;
     use crate::test_support::{NOP, addi, image_with_code_at, lw, machine_with_code_at};
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    fn long_cycle_code(blocks: usize, load_block: Option<usize>) -> Vec<u32> {
+        use crate::test_support::beq;
+
+        assert!(blocks > 8);
+        let instruction_count = blocks * 2;
+        let mut code = Vec::with_capacity(instruction_count);
+        for block in 0..blocks {
+            code.push(if load_block == Some(block) {
+                lw(6, 7, 0)
+            } else {
+                addi(5, 5, 1)
+            });
+            let branch_index = block * 2 + 1;
+            let offset = if block + 1 == blocks {
+                -i32::try_from(branch_index * 4).unwrap()
+            } else {
+                4
+            };
+            code.push(beq(0, 0, offset));
+        }
+        code
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    fn warm_long_cycle(
+        engine: &mut JitInterpreter,
+        image: &rv32vm_rust_common::memory::Image,
+        load_address: Option<u32>,
+    ) {
+        for _ in 0..3 {
+            let mut machine = Machine::new(image, &[], 0);
+            if let Some(address) = load_address {
+                machine.registers[7] = address;
+            }
+            let result = engine.run(&mut machine, 4_096);
+            assert_eq!(result.termination, Termination::InstructionLimit);
+        }
+        assert!(engine.cache.native_region_count() > 0);
+    }
 
     #[test]
     fn exact_budget_stops_before_the_next_instruction() {
@@ -663,6 +879,117 @@ mod tests {
             engine.cache.edge_snapshot(source).unwrap().observations,
             observations_before
         );
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn linked_continuations_preserve_every_exact_limit_and_stop_at_the_hop_cap() {
+        let blocks = 10;
+        let cycle_instructions = blocks * 2;
+        let image = image_with_code_at(&long_cycle_code(blocks, None), IMAGE_START);
+        let mut engine = JitInterpreter::default();
+        warm_long_cycle(&mut engine, &image, None);
+        #[cfg(feature = "profile")]
+        let hops_before = engine.profile.continuation_hops();
+
+        for instruction_limit in 0..cycle_instructions as u64 * 4 {
+            let mut machine = Machine::new(&image, &[], 0);
+            let result = engine.run(&mut machine, instruction_limit);
+            let complete_cycles = instruction_limit / cycle_instructions as u64;
+            let tail = instruction_limit % cycle_instructions as u64;
+            let expected_increments = complete_cycles * blocks as u64 + tail.div_ceil(2);
+
+            assert_eq!(result.termination, Termination::InstructionLimit);
+            assert_eq!(machine.retired, instruction_limit);
+            assert_eq!(u64::from(machine.registers[5]), expected_increments);
+            assert_eq!(machine.pc, IMAGE_START + u32::try_from(tail * 4).unwrap());
+        }
+        #[cfg(feature = "profile")]
+        assert!(engine.profile.continuation_hops() > hops_before);
+
+        #[cfg(feature = "profile")]
+        let caps_before = engine.profile.continuation_cap_stops();
+        let instruction_limit = (cycle_instructions * 2_000) as u64;
+        let mut capped = Machine::new(&image, &[], 0);
+        let result = engine.run(&mut capped, instruction_limit);
+        assert_eq!(result.termination, Termination::InstructionLimit);
+        assert_eq!(capped.retired, instruction_limit);
+        assert_eq!(capped.registers[5], 20_000);
+        assert_eq!(capped.pc, IMAGE_START);
+        #[cfg(feature = "profile")]
+        assert!(engine.profile.continuation_cap_stops() > caps_before);
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn linked_target_fault_preserves_prior_retirement_and_stops_the_chain() {
+        let blocks = 10;
+        let fault_block = 8;
+        let image = image_with_code_at(&long_cycle_code(blocks, Some(fault_block)), IMAGE_START);
+        let mut engine = JitInterpreter::default();
+        warm_long_cycle(&mut engine, &image, Some(STACK_END - 4));
+        #[cfg(feature = "profile")]
+        let hops_before = engine.profile.continuation_hops();
+        #[cfg(feature = "profile")]
+        let stops_before = engine.profile.continuation_non_normal_stops();
+        #[cfg(feature = "profile")]
+        let exits_before = engine.profile.native_side_exits();
+
+        let mut faulting = Machine::new(&image, &[], 0);
+        faulting.registers[7] = 1;
+        let result = engine.run(&mut faulting, 100);
+
+        assert!(matches!(result.termination, Termination::Trap(_)));
+        assert_eq!(faulting.retired, (fault_block * 2) as u64);
+        assert_eq!(faulting.registers[5], fault_block as u32);
+        assert_eq!(faulting.registers[6], 0);
+        assert_eq!(faulting.pc, IMAGE_START + (fault_block * 8) as u32);
+        #[cfg(feature = "profile")]
+        {
+            assert!(engine.profile.continuation_hops() > hops_before);
+            assert_eq!(
+                engine.profile.continuation_non_normal_stops(),
+                stops_before + 1
+            );
+            assert_eq!(engine.profile.native_side_exits(), exits_before + 1);
+        }
+    }
+
+    #[cfg(all(
+        feature = "profile",
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn prepare_discards_frozen_continuations_for_same_pc_replacement_image() {
+        let image = image_with_code_at(&long_cycle_code(10, None), IMAGE_START);
+        let mut engine = JitInterpreter::default();
+        engine.prepare(&image).unwrap();
+        warm_long_cycle(&mut engine, &image, None);
+        let mut steady = Machine::new(&image, &[], 0);
+        engine.run(&mut steady, 4_096);
+        assert!(engine.profile.continuation_hops() > 0);
+
+        let replacement = image_with_code_at(&[addi(5, 0, 99), 0x0000_0073], IMAGE_START);
+        engine.prepare(&replacement).unwrap();
+        let mut replaced = Machine::new(&replacement, &[], 0);
+        let result = engine.run(&mut replaced, 2);
+
+        assert!(matches!(result.termination, Termination::Exit(_)));
+        assert_eq!(replaced.registers[5], 99);
+        assert_eq!(replaced.retired, 2);
+        assert_eq!(engine.profile.continuation_hops(), 0);
+        assert_eq!(engine.profile.continuation_attempts(), 0);
+        assert_eq!(engine.cache.block_count(), 1);
     }
 
     #[cfg(all(
@@ -961,7 +1288,7 @@ mod tests {
         assert_eq!(machine.pc, IMAGE_START + 8);
         assert!(matches!(
             execution,
-            CachedExecution::NormalExit(source) if source == head
+            CachedExecution::NormalExit { source, native: true } if source == head
         ));
         #[cfg(feature = "profile")]
         {
@@ -1034,7 +1361,7 @@ mod tests {
         assert_eq!(machine.pc, IMAGE_START + 16);
         assert!(matches!(
             execution,
-            CachedExecution::NormalExit(source) if source == successor
+            CachedExecution::NormalExit { source, native: true } if source == successor
         ));
         assert_eq!(
             engine.cache.edge_snapshot(head).unwrap().observations,

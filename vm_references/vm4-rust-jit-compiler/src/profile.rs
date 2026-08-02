@@ -19,6 +19,15 @@ struct RunMetrics {
     interpreted_retired: u64,
     native_calls: u64,
     native_side_exits: u64,
+    continuation_attempts: u64,
+    continuation_link_hits: u64,
+    continuation_hops: u64,
+    continuation_profile_stops: u64,
+    continuation_link_misses: u64,
+    continuation_target_stops: u64,
+    continuation_budget_stops: u64,
+    continuation_non_normal_stops: u64,
+    continuation_cap_stops: u64,
     region_retired: u64,
     region_calls: u64,
     region_completed_calls: u64,
@@ -80,6 +89,15 @@ impl RunMetrics {
             interpreted_retired: profile.interpreted_retired,
             native_calls: profile.native_calls,
             native_side_exits: profile.native_side_exits,
+            continuation_attempts: profile.continuation_attempts,
+            continuation_link_hits: profile.continuation_link_hits,
+            continuation_hops: profile.continuation_hops,
+            continuation_profile_stops: profile.continuation_profile_stops,
+            continuation_link_misses: profile.continuation_link_misses,
+            continuation_target_stops: profile.continuation_target_stops,
+            continuation_budget_stops: profile.continuation_budget_stops,
+            continuation_non_normal_stops: profile.continuation_non_normal_stops,
+            continuation_cap_stops: profile.continuation_cap_stops,
             region_retired: profile.region_retired,
             region_calls: profile.region_calls,
             region_completed_calls: profile.region_completed_calls,
@@ -145,6 +163,33 @@ impl RunMetrics {
             native_side_exits: self
                 .native_side_exits
                 .saturating_sub(earlier.native_side_exits),
+            continuation_attempts: self
+                .continuation_attempts
+                .saturating_sub(earlier.continuation_attempts),
+            continuation_link_hits: self
+                .continuation_link_hits
+                .saturating_sub(earlier.continuation_link_hits),
+            continuation_hops: self
+                .continuation_hops
+                .saturating_sub(earlier.continuation_hops),
+            continuation_profile_stops: self
+                .continuation_profile_stops
+                .saturating_sub(earlier.continuation_profile_stops),
+            continuation_link_misses: self
+                .continuation_link_misses
+                .saturating_sub(earlier.continuation_link_misses),
+            continuation_target_stops: self
+                .continuation_target_stops
+                .saturating_sub(earlier.continuation_target_stops),
+            continuation_budget_stops: self
+                .continuation_budget_stops
+                .saturating_sub(earlier.continuation_budget_stops),
+            continuation_non_normal_stops: self
+                .continuation_non_normal_stops
+                .saturating_sub(earlier.continuation_non_normal_stops),
+            continuation_cap_stops: self
+                .continuation_cap_stops
+                .saturating_sub(earlier.continuation_cap_stops),
             region_retired: self.region_retired.saturating_sub(earlier.region_retired),
             region_calls: self.region_calls.saturating_sub(earlier.region_calls),
             region_completed_calls: self
@@ -305,6 +350,15 @@ pub(crate) struct ProfileCounters {
     interpreted_retired: u64,
     native_calls: u64,
     native_side_exits: u64,
+    continuation_attempts: u64,
+    continuation_link_hits: u64,
+    continuation_hops: u64,
+    continuation_profile_stops: u64,
+    continuation_link_misses: u64,
+    continuation_target_stops: u64,
+    continuation_budget_stops: u64,
+    continuation_non_normal_stops: u64,
+    continuation_cap_stops: u64,
     region_retired: u64,
     region_calls: u64,
     region_completed_calls: u64,
@@ -373,6 +427,15 @@ impl Default for ProfileCounters {
             interpreted_retired: 0,
             native_calls: 0,
             native_side_exits: 0,
+            continuation_attempts: 0,
+            continuation_link_hits: 0,
+            continuation_hops: 0,
+            continuation_profile_stops: 0,
+            continuation_link_misses: 0,
+            continuation_target_stops: 0,
+            continuation_budget_stops: 0,
+            continuation_non_normal_stops: 0,
+            continuation_cap_stops: 0,
             region_retired: 0,
             region_calls: 0,
             region_completed_calls: 0,
@@ -479,6 +542,42 @@ impl ProfileCounters {
                 1,
             );
         }
+    }
+
+    pub(crate) fn record_continuation_attempt(&mut self) {
+        increment(&mut self.continuation_attempts, 1);
+    }
+
+    pub(crate) fn record_continuation_link_hit(&mut self) {
+        increment(&mut self.continuation_link_hits, 1);
+    }
+
+    pub(crate) fn record_continuation_hop(&mut self) {
+        increment(&mut self.continuation_hops, 1);
+    }
+
+    pub(crate) fn record_continuation_profile_stop(&mut self) {
+        increment(&mut self.continuation_profile_stops, 1);
+    }
+
+    pub(crate) fn record_continuation_link_miss(&mut self) {
+        increment(&mut self.continuation_link_misses, 1);
+    }
+
+    pub(crate) fn record_continuation_target_stop(&mut self) {
+        increment(&mut self.continuation_target_stops, 1);
+    }
+
+    pub(crate) fn record_continuation_budget_stop(&mut self) {
+        increment(&mut self.continuation_budget_stops, 1);
+    }
+
+    pub(crate) fn record_continuation_non_normal_stop(&mut self) {
+        increment(&mut self.continuation_non_normal_stops, 1);
+    }
+
+    pub(crate) fn record_continuation_cap_stop(&mut self) {
+        increment(&mut self.continuation_cap_stops, 1);
     }
 
     pub(crate) fn record_region_call(&mut self, retired: usize) {
@@ -698,6 +797,11 @@ impl ProfileCounters {
             "{{\"schema\":\"rv32vm.vm4.profile\",\"schema_version\":1,\
              \"runs\":{},\"retired\":{retired},\"native_retired\":{},\
              \"interpreted_retired\":{},\"native_calls\":{},\"native_side_exits\":{},\
+             \"continuation_attempts\":{},\"continuation_link_hits\":{},\
+             \"continuation_hops\":{},\"continuation_profile_stops\":{},\
+             \"continuation_link_misses\":{},\"continuation_target_stops\":{},\
+             \"continuation_budget_stops\":{},\"continuation_non_normal_stops\":{},\
+             \"continuation_cap_stops\":{},\
              \"region_retired\":{},\"region_calls\":{},\"region_completed_calls\":{},\
              \"region_guard_exits\":{},\"region_side_exits\":{},\
              \"region_budget_fallbacks\":{},\
@@ -732,6 +836,15 @@ impl ProfileCounters {
             self.interpreted_retired,
             self.native_calls,
             self.native_side_exits,
+            self.continuation_attempts,
+            self.continuation_link_hits,
+            self.continuation_hops,
+            self.continuation_profile_stops,
+            self.continuation_link_misses,
+            self.continuation_target_stops,
+            self.continuation_budget_stops,
+            self.continuation_non_normal_stops,
+            self.continuation_cap_stops,
             self.region_retired,
             self.region_calls,
             self.region_completed_calls,
@@ -830,6 +943,51 @@ impl ProfileCounters {
     ))]
     pub(crate) const fn native_side_exit_opcode_count(&self, opcode: usize) -> u64 {
         self.native_side_exit_opcodes[opcode]
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_attempts(&self) -> u64 {
+        self.continuation_attempts
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_link_hits(&self) -> u64 {
+        self.continuation_link_hits
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_hops(&self) -> u64 {
+        self.continuation_hops
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_profile_stops(&self) -> u64 {
+        self.continuation_profile_stops
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_link_misses(&self) -> u64 {
+        self.continuation_link_misses
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_target_stops(&self) -> u64 {
+        self.continuation_target_stops
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_budget_stops(&self) -> u64 {
+        self.continuation_budget_stops
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_non_normal_stops(&self) -> u64 {
+        self.continuation_non_normal_stops
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn continuation_cap_stops(&self) -> u64 {
+        self.continuation_cap_stops
     }
 
     #[cfg(test)]
@@ -1053,6 +1211,11 @@ fn write_run_summaries(output: &mut String, summaries: &VecDeque<RunSummary>) {
             output,
             "{{\"run\":{},\"retired\":{retired},\"native_retired\":{},\
              \"interpreted_retired\":{},\"native_calls\":{},\"native_side_exits\":{},\
+             \"continuation_attempts\":{},\"continuation_link_hits\":{},\
+             \"continuation_hops\":{},\"continuation_profile_stops\":{},\
+             \"continuation_link_misses\":{},\"continuation_target_stops\":{},\
+             \"continuation_budget_stops\":{},\"continuation_non_normal_stops\":{},\
+             \"continuation_cap_stops\":{},\
              \"region_retired\":{},\"region_calls\":{},\"region_completed_calls\":{},\
              \"region_guard_exits\":{},\"region_side_exits\":{},\
              \"region_budget_fallbacks\":{},\
@@ -1086,6 +1249,15 @@ fn write_run_summaries(output: &mut String, summaries: &VecDeque<RunSummary>) {
             metrics.interpreted_retired,
             metrics.native_calls,
             metrics.native_side_exits,
+            metrics.continuation_attempts,
+            metrics.continuation_link_hits,
+            metrics.continuation_hops,
+            metrics.continuation_profile_stops,
+            metrics.continuation_link_misses,
+            metrics.continuation_target_stops,
+            metrics.continuation_budget_stops,
+            metrics.continuation_non_normal_stops,
+            metrics.continuation_cap_stops,
             metrics.region_retired,
             metrics.region_calls,
             metrics.region_completed_calls,
@@ -1188,7 +1360,12 @@ mod tests {
             profile.json(),
             "{\"schema\":\"rv32vm.vm4.profile\",\"schema_version\":1,\"runs\":1,\
              \"retired\":1,\"native_retired\":0,\"interpreted_retired\":1,\
-             \"native_calls\":1,\"native_side_exits\":1,\"region_retired\":0,\
+             \"native_calls\":1,\"native_side_exits\":1,\
+             \"continuation_attempts\":0,\"continuation_link_hits\":0,\
+             \"continuation_hops\":0,\"continuation_profile_stops\":0,\
+             \"continuation_link_misses\":0,\"continuation_target_stops\":0,\
+             \"continuation_budget_stops\":0,\"continuation_non_normal_stops\":0,\
+             \"continuation_cap_stops\":0,\"region_retired\":0,\
              \"region_calls\":0,\"region_completed_calls\":0,\
              \"region_guard_exits\":0,\"region_side_exits\":0,\
              \"region_budget_fallbacks\":0,\"loop_retired\":0,\"loop_calls\":0,\
@@ -1219,7 +1396,12 @@ mod tests {
              \"compile_elapsed_ns\":23,\
              \"run_history_capacity\":64,\"run_summaries_dropped\":0,\"recent_runs\":[{\
              \"run\":1,\"retired\":1,\"native_retired\":0,\"interpreted_retired\":1,\
-             \"native_calls\":1,\"native_side_exits\":1,\"region_retired\":0,\
+             \"native_calls\":1,\"native_side_exits\":1,\
+             \"continuation_attempts\":0,\"continuation_link_hits\":0,\
+             \"continuation_hops\":0,\"continuation_profile_stops\":0,\
+             \"continuation_link_misses\":0,\"continuation_target_stops\":0,\
+             \"continuation_budget_stops\":0,\"continuation_non_normal_stops\":0,\
+             \"continuation_cap_stops\":0,\"region_retired\":0,\
              \"region_calls\":0,\"region_completed_calls\":0,\
              \"region_guard_exits\":0,\"region_side_exits\":0,\
              \"region_budget_fallbacks\":0,\"loop_retired\":0,\"loop_calls\":0,\
@@ -1290,6 +1472,48 @@ mod tests {
             profile.recent_runs.back().unwrap().run,
             RUN_HISTORY_CAPACITY as u64 + 1
         );
+    }
+
+    #[test]
+    fn serializes_continuation_reach_and_stop_counters() {
+        let mut profile = ProfileCounters::default();
+        profile.start_image();
+        profile.begin_run();
+        profile.record_continuation_attempt();
+        profile.record_continuation_link_hit();
+        profile.record_continuation_hop();
+        profile.record_continuation_profile_stop();
+        profile.record_continuation_link_miss();
+        profile.record_continuation_target_stop();
+        profile.record_continuation_budget_stop();
+        profile.record_continuation_non_normal_stop();
+        profile.record_continuation_cap_stop();
+        profile.end_run();
+
+        assert_eq!(profile.continuation_attempts(), 1);
+        assert_eq!(profile.continuation_link_hits(), 1);
+        assert_eq!(profile.continuation_hops(), 1);
+        assert_eq!(profile.continuation_profile_stops(), 1);
+        assert_eq!(profile.continuation_link_misses(), 1);
+        assert_eq!(profile.continuation_target_stops(), 1);
+        assert_eq!(profile.continuation_budget_stops(), 1);
+        assert_eq!(profile.continuation_non_normal_stops(), 1);
+        assert_eq!(profile.continuation_cap_stops(), 1);
+
+        let json = profile.json();
+        for field in [
+            "\"continuation_attempts\":1",
+            "\"continuation_link_hits\":1",
+            "\"continuation_hops\":1",
+            "\"continuation_profile_stops\":1",
+            "\"continuation_link_misses\":1",
+            "\"continuation_target_stops\":1",
+            "\"continuation_budget_stops\":1",
+            "\"continuation_non_normal_stops\":1",
+            "\"continuation_cap_stops\":1",
+        ] {
+            assert_eq!(json.matches(field).count(), 2, "missing {field}");
+        }
     }
 
     #[test]
