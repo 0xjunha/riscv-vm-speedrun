@@ -147,6 +147,13 @@ impl CacheHost {
 }
 
 #[derive(Clone, Copy)]
+enum RegisterOperand {
+    Zero,
+    Host(CacheHost),
+    Canonical(u8),
+}
+
+#[derive(Clone, Copy)]
 struct PlannedRegister {
     guest: usize,
     host: CacheHost,
@@ -978,8 +985,10 @@ impl Emitter {
         link: u32,
     ) -> Option<Flow> {
         self.load_eax(source);
-        self.eax_immediate(0x05, offset);
-        self.eax_immediate(0x25, !1);
+        if offset != 0 {
+            self.eax_alu_immediate(0, 0x05, offset);
+        }
+        self.eax_alu_immediate(4, 0x25, !1);
         self.code.push(0xa9);
         self.code.extend_from_slice(&3_u32.to_le_bytes());
         self.side_exit_conditional(0x85, pc, retired)?;
@@ -1014,10 +1023,10 @@ impl Emitter {
 
         self.load_eax(source);
         match operation {
-            ImmediateOperation::Add(value) => self.eax_immediate(0x05, value),
-            ImmediateOperation::Xor(value) => self.eax_immediate(0x35, value),
-            ImmediateOperation::Or(value) => self.eax_immediate(0x0d, value),
-            ImmediateOperation::And(value) => self.eax_immediate(0x25, value),
+            ImmediateOperation::Add(value) => self.eax_alu_immediate(0, 0x05, value),
+            ImmediateOperation::Xor(value) => self.eax_alu_immediate(6, 0x35, value),
+            ImmediateOperation::Or(value) => self.eax_alu_immediate(1, 0x0d, value),
+            ImmediateOperation::And(value) => self.eax_alu_immediate(4, 0x25, value),
             ImmediateOperation::ShiftLeft(count) => self.eax_shift(0xe0, count),
             ImmediateOperation::ShiftRight(count) => self.eax_shift(0xe8, count),
             ImmediateOperation::ShiftRightArithmetic(count) => self.eax_shift(0xf8, count),
@@ -1054,33 +1063,30 @@ impl Emitter {
             return Some(Flow::Continue);
         }
 
+        if matches!(
+            operation,
+            RegisterOperation::Add
+                | RegisterOperation::Subtract
+                | RegisterOperation::Xor
+                | RegisterOperation::Or
+                | RegisterOperation::And
+                | RegisterOperation::Multiply
+        ) {
+            self.simple_register(destination, left, right, operation);
+            return Some(Flow::Continue);
+        }
+
         if destination != 0
             && let Some(slot) = self.cache_index(destination)
         {
             let direct = matches!(
                 operation,
-                RegisterOperation::Add
-                    | RegisterOperation::Subtract
-                    | RegisterOperation::ShiftLeft
+                RegisterOperation::ShiftLeft
                     | RegisterOperation::ShiftRight
                     | RegisterOperation::ShiftRightArithmetic
-                    | RegisterOperation::Xor
-                    | RegisterOperation::Or
-                    | RegisterOperation::And
-                    | RegisterOperation::Multiply
-            );
-            let commutative = matches!(
-                operation,
-                RegisterOperation::Add
-                    | RegisterOperation::Xor
-                    | RegisterOperation::Or
-                    | RegisterOperation::And
-                    | RegisterOperation::Multiply
             );
             let other = if destination == left {
                 Some(right)
-            } else if destination == right && commutative {
-                Some(left)
             } else {
                 None
             };
@@ -1150,6 +1156,43 @@ impl Emitter {
         Some(Flow::Continue)
     }
 
+    fn simple_register(
+        &mut self,
+        destination: usize,
+        left: usize,
+        right: usize,
+        operation: RegisterOperation,
+    ) {
+        debug_assert!(destination != 0);
+        // Resolve and preload both sources before a cached destination can
+        // overwrite either one; this is the aliasing invariant for this path.
+        let left_operand = self.register_operand(left);
+        let right_operand = self.register_operand(right);
+
+        if let Some(slot) = self.cache_index(destination) {
+            let host = self.cache[slot].expect("cache slot exists").register.host;
+            let source = if destination == left {
+                Some(right_operand)
+            } else if destination == right && is_commutative(operation) {
+                Some(left_operand)
+            } else if destination != right {
+                self.move_host_operand(host, left_operand);
+                Some(right_operand)
+            } else {
+                None
+            };
+            if let Some(source) = source {
+                self.host_register_operand(host, source, operation);
+                self.mark_cache_written(slot);
+                return;
+            }
+        }
+
+        self.move_eax_operand(left_operand);
+        self.eax_register_operand(right_operand, operation);
+        self.store_eax(destination);
+    }
+
     fn signed_divide_checks(&mut self, pc: u32, retired: usize) -> Option<()> {
         self.code.extend_from_slice(&[0x85, 0xc9]);
         self.side_exit_conditional(0x84, pc, retired)?;
@@ -1183,9 +1226,11 @@ impl Emitter {
             BranchCondition::AboveOrEqual => 0x83,
         };
 
-        self.load_eax(left);
-        self.load_ecx(right);
-        self.code.extend_from_slice(&[0x39, 0xc8]);
+        let left = self.register_operand(left);
+        let right = self.register_operand(right);
+        // Keep the flag producer adjacent to the branch below. The operand
+        // resolver may emit lazy cache loads, so both operands come first.
+        self.compare_register_operands(left, right);
         if !target.is_multiple_of(4) {
             self.side_exit_conditional(condition, pc, retired)?;
             if preferred_successor == Some(fallthrough) {
@@ -1298,7 +1343,9 @@ impl Emitter {
         retired: usize,
     ) -> Option<()> {
         self.load_eax(base);
-        self.eax_immediate(0x05, offset);
+        if offset != 0 {
+            self.eax_alu_immediate(0, 0x05, offset);
+        }
         let bytes = width.bytes();
         if bytes != 1 {
             self.code.push(0xa9);
@@ -1397,6 +1444,188 @@ impl Emitter {
         let slot = self.cache_index(register)?;
         self.ensure_cache_loaded(slot);
         Some(self.cache[slot].expect("cache slot exists").register.host)
+    }
+
+    fn register_operand(&mut self, register: usize) -> RegisterOperand {
+        if register == 0 {
+            RegisterOperand::Zero
+        } else if let Some(host) = self.cached_host_for_read(register) {
+            RegisterOperand::Host(host)
+        } else {
+            RegisterOperand::Canonical(register_offset(register))
+        }
+    }
+
+    fn compare_register_operands(&mut self, left: RegisterOperand, right: RegisterOperand) {
+        match (left, right) {
+            (RegisterOperand::Zero, RegisterOperand::Zero) => {
+                self.code.extend_from_slice(&[0x31, 0xc0]);
+            }
+            (RegisterOperand::Host(left), RegisterOperand::Zero) => {
+                let left = left.code() & 7;
+                self.code
+                    .extend_from_slice(&[0x45, 0x85, 0xc0 | (left << 3) | left]);
+            }
+            (RegisterOperand::Canonical(left), RegisterOperand::Zero) => {
+                self.code.extend_from_slice(&[0x83, 0x7f, left, 0x00]);
+            }
+            (RegisterOperand::Zero, RegisterOperand::Host(right)) => {
+                self.code.extend_from_slice(&[0x31, 0xc0]);
+                self.code
+                    .extend_from_slice(&[0x41, 0x3b, 0xc0 | (right.code() & 7)]);
+            }
+            (RegisterOperand::Zero, RegisterOperand::Canonical(right)) => {
+                self.code
+                    .extend_from_slice(&[0x31, 0xc0, 0x3b, 0x47, right]);
+            }
+            (RegisterOperand::Host(left), RegisterOperand::Host(right)) => {
+                self.code.extend_from_slice(&[
+                    0x45,
+                    0x39,
+                    0xc0 | ((right.code() & 7) << 3) | (left.code() & 7),
+                ]);
+            }
+            (RegisterOperand::Host(left), RegisterOperand::Canonical(right)) => {
+                self.code
+                    .extend_from_slice(&[0x44, 0x3b, 0x47 | ((left.code() & 7) << 3), right]);
+            }
+            (RegisterOperand::Canonical(left), RegisterOperand::Host(right)) => {
+                self.code
+                    .extend_from_slice(&[0x44, 0x39, 0x47 | ((right.code() & 7) << 3), left]);
+            }
+            (RegisterOperand::Canonical(left), RegisterOperand::Canonical(right)) => {
+                self.code
+                    .extend_from_slice(&[0x8b, 0x47, left, 0x3b, 0x47, right]);
+            }
+        }
+    }
+
+    fn move_eax_operand(&mut self, source: RegisterOperand) {
+        match source {
+            RegisterOperand::Zero => self.code.extend_from_slice(&[0x31, 0xc0]),
+            RegisterOperand::Host(source) => self.mov_eax_host(source),
+            RegisterOperand::Canonical(source) => {
+                self.code.extend_from_slice(&[0x8b, 0x47, source]);
+            }
+        }
+    }
+
+    fn move_host_operand(&mut self, host: CacheHost, source: RegisterOperand) {
+        let host = host.code() & 7;
+        match source {
+            RegisterOperand::Zero => {
+                self.code
+                    .extend_from_slice(&[0x45, 0x31, 0xc0 | (host << 3) | host])
+            }
+            RegisterOperand::Host(source) => {
+                self.code
+                    .extend_from_slice(&[0x45, 0x89, 0xc0 | ((source.code() & 7) << 3) | host])
+            }
+            RegisterOperand::Canonical(source) => {
+                self.code
+                    .extend_from_slice(&[0x44, 0x8b, 0x47 | (host << 3), source])
+            }
+        }
+    }
+
+    fn eax_register_operand(&mut self, source: RegisterOperand, operation: RegisterOperation) {
+        match source {
+            RegisterOperand::Zero => self.zero_eax_for_operation(operation),
+            RegisterOperand::Host(source) => {
+                let source = source.code() & 7;
+                if matches!(operation, RegisterOperation::Multiply) {
+                    self.code
+                        .extend_from_slice(&[0x41, 0x0f, 0xaf, 0xc0 | source]);
+                } else {
+                    self.code.extend_from_slice(&[
+                        0x41,
+                        register_source_opcode(operation),
+                        0xc0 | source,
+                    ]);
+                }
+            }
+            RegisterOperand::Canonical(source) => {
+                if matches!(operation, RegisterOperation::Multiply) {
+                    self.code.extend_from_slice(&[0x0f, 0xaf, 0x47, source]);
+                } else {
+                    self.code
+                        .extend_from_slice(&[register_source_opcode(operation), 0x47, source]);
+                }
+            }
+        }
+    }
+
+    fn host_register_operand(
+        &mut self,
+        host: CacheHost,
+        source: RegisterOperand,
+        operation: RegisterOperation,
+    ) {
+        let host = host.code() & 7;
+        match source {
+            RegisterOperand::Zero => self.zero_host_for_operation(host, operation),
+            RegisterOperand::Host(source) => {
+                let source = source.code() & 7;
+                if matches!(operation, RegisterOperation::Multiply) {
+                    self.code
+                        .extend_from_slice(&[0x45, 0x0f, 0xaf, 0xc0 | (host << 3) | source]);
+                } else {
+                    self.code.extend_from_slice(&[
+                        0x45,
+                        register_destination_opcode(operation),
+                        0xc0 | (source << 3) | host,
+                    ]);
+                }
+            }
+            RegisterOperand::Canonical(source) => {
+                if matches!(operation, RegisterOperation::Multiply) {
+                    self.code
+                        .extend_from_slice(&[0x44, 0x0f, 0xaf, 0x47 | (host << 3), source]);
+                } else {
+                    self.code.extend_from_slice(&[
+                        0x44,
+                        register_source_opcode(operation),
+                        0x47 | (host << 3),
+                        source,
+                    ]);
+                }
+            }
+        }
+    }
+
+    fn zero_eax_for_operation(&mut self, operation: RegisterOperation) {
+        if matches!(
+            operation,
+            RegisterOperation::And | RegisterOperation::Multiply
+        ) {
+            self.code.extend_from_slice(&[0x31, 0xc0]);
+        } else {
+            debug_assert!(matches!(
+                operation,
+                RegisterOperation::Add
+                    | RegisterOperation::Subtract
+                    | RegisterOperation::Xor
+                    | RegisterOperation::Or
+            ));
+        }
+    }
+
+    fn zero_host_for_operation(&mut self, host: u8, operation: RegisterOperation) {
+        if matches!(
+            operation,
+            RegisterOperation::And | RegisterOperation::Multiply
+        ) {
+            self.code
+                .extend_from_slice(&[0x45, 0x31, 0xc0 | (host << 3) | host]);
+        } else {
+            debug_assert!(matches!(
+                operation,
+                RegisterOperation::Add
+                    | RegisterOperation::Subtract
+                    | RegisterOperation::Xor
+                    | RegisterOperation::Or
+            ));
+        }
     }
 
     fn ensure_cache_loaded(&mut self, slot: usize) {
@@ -1567,9 +1796,13 @@ impl Emitter {
             | ImmediateOperation::And(value) => value,
             _ => unreachable!(),
         };
-        self.code
-            .extend_from_slice(&[0x41, 0x81, 0xc0 | (extension << 3) | (host.code() & 7)]);
-        self.code.extend_from_slice(&value.to_le_bytes());
+        let operand = 0xc0 | (extension << 3) | (host.code() & 7);
+        if let Some(value) = sign_extended_imm8(value) {
+            self.code.extend_from_slice(&[0x41, 0x83, operand, value]);
+        } else {
+            self.code.extend_from_slice(&[0x41, 0x81, operand]);
+            self.code.extend_from_slice(&value.to_le_bytes());
+        }
         true
     }
 
@@ -1626,9 +1859,14 @@ impl Emitter {
         self.code.extend_from_slice(&value.to_le_bytes());
     }
 
-    fn eax_immediate(&mut self, opcode: u8, value: u32) {
-        self.code.push(opcode);
-        self.code.extend_from_slice(&value.to_le_bytes());
+    fn eax_alu_immediate(&mut self, extension: u8, opcode: u8, value: u32) {
+        if let Some(value) = sign_extended_imm8(value) {
+            self.code
+                .extend_from_slice(&[0x83, 0xc0 | (extension << 3), value]);
+        } else {
+            self.code.push(opcode);
+            self.code.extend_from_slice(&value.to_le_bytes());
+        }
     }
 
     fn eax_shift(&mut self, extension: u8, count: u8) {
@@ -1780,6 +2018,44 @@ impl Emitter {
     }
 }
 
+const fn is_commutative(operation: RegisterOperation) -> bool {
+    matches!(
+        operation,
+        RegisterOperation::Add
+            | RegisterOperation::Xor
+            | RegisterOperation::Or
+            | RegisterOperation::And
+            | RegisterOperation::Multiply
+    )
+}
+
+const fn register_destination_opcode(operation: RegisterOperation) -> u8 {
+    match operation {
+        RegisterOperation::Add => 0x01,
+        RegisterOperation::Subtract => 0x29,
+        RegisterOperation::Xor => 0x31,
+        RegisterOperation::Or => 0x09,
+        RegisterOperation::And => 0x21,
+        _ => unreachable!(),
+    }
+}
+
+const fn register_source_opcode(operation: RegisterOperation) -> u8 {
+    match operation {
+        RegisterOperation::Add => 0x03,
+        RegisterOperation::Subtract => 0x2b,
+        RegisterOperation::Xor => 0x33,
+        RegisterOperation::Or => 0x0b,
+        RegisterOperation::And => 0x23,
+        _ => unreachable!(),
+    }
+}
+
+fn sign_extended_imm8(value: u32) -> Option<u8> {
+    let byte = value as u8;
+    ((byte as i8 as i32 as u32) == value).then_some(byte)
+}
+
 fn encode_high(retired: usize, side_exit: bool) -> Option<u32> {
     let retired = u32::try_from(retired).ok()?;
     if retired & SIDE_EXIT_FLAG != 0 {
@@ -1849,6 +2125,10 @@ mod tests {
         (0..count)
             .map(|index| machine.fetch_decode(start + index as u32 * 4))
             .collect()
+    }
+
+    fn contains_bytes(code: &[u8], bytes: &[u8]) -> bool {
+        code.windows(bytes.len()).any(|window| window == bytes)
     }
 
     #[test]
@@ -1933,6 +2213,158 @@ mod tests {
         let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
         assert_eq!(compiled.uncached_register_accesses(), 4);
         assert_eq!(compiled.cached_register_accesses(), 2);
+    }
+
+    #[test]
+    fn emits_compact_immediates_and_omits_zero_address_adds() {
+        let machine = machine_with_code(
+            &[addi(5, 5, -128), addi(5, 5, 127), addi(5, 5, 128), NOP],
+            IMAGE_START,
+        );
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(&compiled.code, &[0x41, 0x83, 0xc1, 0x80]));
+        assert!(contains_bytes(&compiled.code, &[0x41, 0x83, 0xc1, 0x7f]));
+        assert!(contains_bytes(
+            &compiled.code,
+            &[0x41, 0x81, 0xc1, 0x80, 0x00, 0x00, 0x00]
+        ));
+
+        let zero_machine = machine_with_code(&[lw(5, 6, 0), NOP], IMAGE_START);
+        let offset_machine = machine_with_code(&[lw(5, 6, 4), NOP], IMAGE_START);
+        let zero = compile(&decoded_block(&zero_machine, IMAGE_START)).unwrap();
+        let offset = compile(&decoded_block(&offset_machine, IMAGE_START)).unwrap();
+        assert_eq!(offset.code_len(), zero.code_len() + 3);
+        assert!(!contains_bytes(&zero.code, &[0x83, 0xc0, 0x00]));
+        assert!(contains_bytes(&offset.code, &[0x83, 0xc0, 0x04]));
+
+        let zero_machine = machine_with_code(&[jalr(0, 6, 0)], IMAGE_START);
+        let offset_machine = machine_with_code(&[jalr(0, 6, 4)], IMAGE_START);
+        let zero = compile(&decoded_block(&zero_machine, IMAGE_START)).unwrap();
+        let offset = compile(&decoded_block(&offset_machine, IMAGE_START)).unwrap();
+        assert_eq!(offset.code_len(), zero.code_len() + 3);
+        assert!(contains_bytes(&zero.code, &[0x83, 0xe0, 0xfe]));
+    }
+
+    #[test]
+    fn emits_direct_branch_comparisons_for_every_operand_location() {
+        let cached = |left: u32, right: u32| {
+            let mut code = Vec::new();
+            for register in [5, 6] {
+                code.push(addi(register, register, 0));
+                code.push(addi(register, register, 0));
+            }
+            code.push(branch(0, left, right, 8));
+            let machine = machine_with_code(&code, IMAGE_START);
+            compile(&decoded_block(&machine, IMAGE_START)).unwrap()
+        };
+        let canonical = |left: u32, right: u32| {
+            let machine = machine_with_code(&[branch(0, left, right, 8)], IMAGE_START);
+            compile(&decoded_block(&machine, IMAGE_START)).unwrap()
+        };
+
+        assert!(contains_bytes(
+            &cached(5, 6).code,
+            &[0x45, 0x39, 0xd1, 0x0f, 0x84]
+        ));
+
+        let mut host_canonical = vec![addi(5, 5, 0), addi(5, 5, 0)];
+        host_canonical.push(branch(0, 5, 8, 8));
+        let machine = machine_with_code(&host_canonical, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(
+            &compiled.code,
+            &[0x44, 0x3b, 0x4f, 32, 0x0f, 0x84]
+        ));
+
+        *host_canonical.last_mut().unwrap() = branch(0, 8, 5, 8);
+        let machine = machine_with_code(&host_canonical, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(
+            &compiled.code,
+            &[0x44, 0x39, 0x4f, 32, 0x0f, 0x84]
+        ));
+
+        assert!(contains_bytes(
+            &cached(5, 0).code,
+            &[0x45, 0x85, 0xc9, 0x0f, 0x84]
+        ));
+        assert!(contains_bytes(
+            &cached(0, 5).code,
+            &[0x31, 0xc0, 0x41, 0x3b, 0xc1, 0x0f, 0x84]
+        ));
+        assert!(contains_bytes(
+            &canonical(8, 0).code,
+            &[0x83, 0x7f, 32, 0x00, 0x0f, 0x84]
+        ));
+        assert!(contains_bytes(
+            &canonical(0, 8).code,
+            &[0x31, 0xc0, 0x3b, 0x47, 32, 0x0f, 0x84]
+        ));
+        assert!(contains_bytes(
+            &canonical(6, 7).code,
+            &[0x8b, 0x47, 24, 0x3b, 0x47, 28, 0x0f, 0x84]
+        ));
+        assert!(contains_bytes(
+            &canonical(0, 0).code,
+            &[0x31, 0xc0, 0x0f, 0x84]
+        ));
+    }
+
+    #[test]
+    fn emits_direct_simple_alu_for_cached_and_canonical_operands() {
+        let mut three_cached = Vec::new();
+        for register in [5, 6, 7] {
+            three_cached.push(addi(register, register, 0));
+            three_cached.push(addi(register, register, 0));
+        }
+        three_cached.push(register(5, 6, 7, 0, 0));
+        let machine = machine_with_code(&three_cached, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(
+            &compiled.code,
+            &[0x45, 0x89, 0xd1, 0x45, 0x01, 0xd9]
+        ));
+
+        *three_cached.last_mut().unwrap() = register(5, 6, 7, 0, 1);
+        let machine = machine_with_code(&three_cached, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(
+            &compiled.code,
+            &[0x45, 0x89, 0xd1, 0x45, 0x0f, 0xaf, 0xcb]
+        ));
+
+        let code = [addi(5, 5, 0), addi(5, 5, 0), register(5, 5, 8, 0, 0)];
+        let machine = machine_with_code(&code, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(&compiled.code, &[0x44, 0x03, 0x4f, 32]));
+
+        let code = [
+            addi(5, 5, 0),
+            addi(5, 5, 0),
+            addi(6, 6, 0),
+            addi(6, 6, 0),
+            register(8, 5, 6, 0, 0),
+        ];
+        let machine = machine_with_code(&code, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(
+            &compiled.code,
+            &[0x44, 0x89, 0xc8, 0x41, 0x03, 0xc2, 0x89, 0x47, 32]
+        ));
+
+        let code = [
+            addi(5, 5, 0),
+            addi(5, 5, 0),
+            addi(6, 6, 0),
+            addi(6, 6, 0),
+            register(5, 6, 5, 0, 0x20),
+        ];
+        let machine = machine_with_code(&code, IMAGE_START);
+        let compiled = compile(&decoded_block(&machine, IMAGE_START)).unwrap();
+        assert!(contains_bytes(
+            &compiled.code,
+            &[0x44, 0x89, 0xd0, 0x41, 0x2b, 0xc1, 0x41, 0x89, 0xc1]
+        ));
     }
 
     #[test]

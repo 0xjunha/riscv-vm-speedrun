@@ -547,6 +547,23 @@ rv32vm_test_call_loop_with_callee_sentinels:
     }
 
     #[test]
+    fn compact_cached_immediates_match_the_interpreter_at_encoding_boundaries() {
+        let code = [
+            addi(5, 5, 0),
+            addi(5, 5, 0),
+            addi(5, 5, -129),
+            addi(5, 5, -128),
+            addi(5, 5, 127),
+            addi(5, 5, 128),
+            immediate(5, 5, 4, 0x07f),
+            immediate(5, 5, 6, 0xf80),
+            immediate(5, 5, 7, 0x055),
+            NOP,
+        ];
+        assert_matches_interpreter(&code, &[(5, 0x8765_4321)]);
+    }
+
+    #[test]
     fn executes_register_operations() {
         let cases = [
             (register(5, 6, 7, 0, 0), u32::MAX, 1),
@@ -589,6 +606,8 @@ rv32vm_test_call_loop_with_callee_sentinels:
             register(5, 5, 6, 6, 0),
             register(5, 5, 6, 7, 0),
             register(5, 5, 6, 0, 1),
+            register(5, 6, 5, 0, 0x20),
+            register(5, 6, 5, 0, 1),
             NOP,
         ];
 
@@ -619,6 +638,48 @@ rv32vm_test_call_loop_with_callee_sentinels:
             NOP,
         ];
         assert_matches_interpreter(&three_slots, &[(5, 10), (6, 20), (7, 30)]);
+    }
+
+    #[test]
+    fn direct_simple_alu_operand_locations_match_the_interpreter() {
+        let operations = [(0, 0), (0, 0x20), (4, 0), (6, 0), (7, 0), (0, 1)];
+        for (funct3, funct7) in operations {
+            let hot_three = [
+                addi(5, 5, 0),
+                addi(5, 5, 0),
+                addi(6, 6, 0),
+                addi(6, 6, 0),
+                addi(7, 7, 0),
+                addi(7, 7, 0),
+            ];
+            let registers = [(5, 0x8765_4321), (6, 0x1020_3040), (7, 0x0506_0708)];
+
+            let mut code = hot_three.to_vec();
+            code.extend_from_slice(&[register(5, 6, 7, funct3, funct7), NOP]);
+            assert_matches_interpreter(&code, &registers);
+
+            let mut code = hot_three[..4].to_vec();
+            code.extend_from_slice(&[register(8, 5, 6, funct3, funct7), NOP]);
+            assert_matches_interpreter(&code, &registers);
+
+            let mut code = hot_three[..2].to_vec();
+            code.extend_from_slice(&[register(5, 5, 8, funct3, funct7), NOP]);
+            assert_matches_interpreter(&code, &[(5, 0x8765_4321), (8, 0x1020_3040)]);
+
+            let mut code = hot_three[..2].to_vec();
+            code.extend_from_slice(&[register(5, 5, 0, funct3, funct7), NOP]);
+            assert_matches_interpreter(&code, &[(5, 0x8765_4321)]);
+
+            let mut code = hot_three[..2].to_vec();
+            code.extend_from_slice(&[register(5, 0, 8, funct3, funct7), NOP]);
+            assert_matches_interpreter(&code, &[(5, 0x8765_4321), (8, 0x1020_3040)]);
+
+            if funct7 != 0x20 {
+                let mut code = hot_three[..4].to_vec();
+                code.extend_from_slice(&[register(5, 6, 5, funct3, funct7), NOP]);
+                assert_matches_interpreter(&code, &registers);
+            }
+        }
     }
 
     #[test]
@@ -1116,6 +1177,22 @@ rv32vm_test_call_loop_with_callee_sentinels:
         assert_eq!(actual.registers, expected.registers);
         assert_eq!(actual.pc, expected.pc);
         assert_eq!(actual.retired, expected.retired);
+    }
+
+    #[test]
+    fn counted_loop_zero_left_guard_spills_prior_direct_state() {
+        let code = [addi(6, 6, 1), branch(6, 0, 5, -4), NOP];
+        let template = machine_with_code(&code, IMAGE_START);
+        let native = native_loop(&template, &[(IMAGE_START, 2)]);
+        let mut actual = machine_with_code(&code, IMAGE_START);
+        actual.registers[5] = 0;
+        actual.registers[6] = 41;
+
+        let outcome = execute_loop(&native, &mut actual, 20).unwrap();
+        assert!(!outcome.needs_interpreter());
+        assert_eq!(outcome.retired(), 2);
+        assert_eq!(outcome.next_pc(), IMAGE_START + 8);
+        assert_eq!(actual.registers[6], 42);
     }
 
     #[test]
@@ -1915,6 +1992,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
             (jalr(5, 6, 0), Some((6, IMAGE_START + 2))),
             (jal(5, 2), None),
             (branch(0, 6, 7, 2), Some((6, 9))),
+            (branch(0, 0, 0, 2), None),
         ];
 
         for (instruction, setup) in cases {
@@ -1983,6 +2061,48 @@ rv32vm_test_call_loop_with_callee_sentinels:
             let code = [NOP, branch(funct3, 6, 7, 8)];
             assert_matches_interpreter(&code, &[(6, taken.0), (7, taken.1)]);
             assert_matches_interpreter(&code, &[(6, not_taken.0), (7, not_taken.1)]);
+        }
+    }
+
+    #[test]
+    fn cached_and_zero_branch_operands_match_the_interpreter() {
+        let cases = [
+            (0, (5, 5), (5, 6)),
+            (1, (5, 6), (5, 5)),
+            (4, (u32::MAX, 0), (0, u32::MAX)),
+            (5, (0, u32::MAX), (u32::MAX, 0)),
+            (6, (0, 1), (1, 0)),
+            (7, (1, 0), (0, 1)),
+        ];
+        for (funct3, taken, not_taken) in cases {
+            let cached = [
+                addi(6, 6, 0),
+                addi(6, 6, 0),
+                addi(7, 7, 0),
+                addi(7, 7, 0),
+                branch(funct3, 6, 7, 8),
+            ];
+            assert_matches_interpreter(&cached, &[(6, taken.0), (7, taken.1)]);
+            assert_matches_interpreter(&cached, &[(6, not_taken.0), (7, not_taken.1)]);
+
+            let cached_canonical = [addi(6, 6, 0), addi(6, 6, 0), branch(funct3, 6, 8, 8)];
+            assert_matches_interpreter(&cached_canonical, &[(6, taken.0), (8, taken.1)]);
+            assert_matches_interpreter(&cached_canonical, &[(6, not_taken.0), (8, not_taken.1)]);
+
+            let canonical_cached = [addi(6, 6, 0), addi(6, 6, 0), branch(funct3, 8, 6, 8)];
+            assert_matches_interpreter(&canonical_cached, &[(8, taken.0), (6, taken.1)]);
+            assert_matches_interpreter(&canonical_cached, &[(8, not_taken.0), (6, not_taken.1)]);
+        }
+
+        for funct3 in [0, 1, 4, 5, 6, 7] {
+            for value in [0, 1, u32::MAX, 0x8000_0000] {
+                let cached_right_zero = [addi(6, 6, 0), addi(6, 6, 0), branch(funct3, 6, 0, 8)];
+                assert_matches_interpreter(&cached_right_zero, &[(6, value)]);
+
+                let zero_left_cached = [addi(6, 6, 0), addi(6, 6, 0), branch(funct3, 0, 6, 8)];
+                assert_matches_interpreter(&zero_left_cached, &[(6, value)]);
+            }
+            assert_matches_interpreter(&[branch(funct3, 0, 0, 8)], &[]);
         }
     }
 
