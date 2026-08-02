@@ -37,6 +37,8 @@ const EXIT_BUDGET: u32 = 2;
 const EXIT_INTERPRET_ONE: u32 = 3;
 const _: () = assert!(PAGE_SIZE.is_power_of_two());
 const _: () = assert!(PAGE_SIZE == 1_usize << PAGE_SHIFT);
+const _: () = assert!(ADDRESS_SPACE_SIZE.is_power_of_two());
+const _: () = assert!(ADDRESS_SPACE_SIZE.is_multiple_of(4));
 const INSTRUCTIONS_PER_PAGE: usize = PAGE_SIZE / size_of::<u32>();
 pub(crate) const MAX_LINKED_BLOCKS: usize = 8_192;
 const MAX_DISPATCH_BYTES: usize = PAGE_COUNT * size_of::<usize>()
@@ -1895,23 +1897,15 @@ impl Emitter {
         signed: bool,
     ) -> Option<()> {
         let pc = successor.wrapping_sub(4);
-        let failures = self.checked_memory_address(base, immediate, width, PERM_READ, None)?;
+        let failures = self.checked_memory_address(base, immediate, width, PERM_READ)?;
         let result = self
             .cache
             .host(destination)
             .map(CachedHost::register)
             .unwrap_or(Register32::Eax);
 
-        // A readable sparse page has the architecturally defined value zero.
-        self.code.extend_from_slice(&[0x48, 0x85, 0xd2]); // test rdx, rdx
-        let sparse = self.local_jcc(0x84)?; // jz sparse
-        self.mask_page_offset()?;
-        self.emit_indexed_load(result, width, signed);
-        let loaded = self.local_jump()?;
-        self.bind_local(sparse)?;
-        self.zero_register(result);
-        self.bind_local(loaded)?;
         if destination != 0 {
+            self.emit_flat_load(result, width, signed);
             if result == Register32::Eax {
                 self.store_eax(destination);
             } else {
@@ -1936,17 +1930,18 @@ impl Emitter {
         width: MemoryWidth,
     ) -> Option<()> {
         let pc = successor.wrapping_sub(4);
-        let mut failures =
-            self.checked_memory_address(base, immediate, width, PERM_WRITE, Some(source))?;
-        let source = self
-            .cache
-            .host(source)
-            .map(CachedHost::register)
-            .unwrap_or(Register32::Ecx);
-        self.code.extend_from_slice(&[0x48, 0x85, 0xd2]); // test rdx, rdx
-        failures.push(self.cold_jcc(0x84)?); // sparse stores allocate in Rust
-        self.mask_page_offset()?;
-        self.emit_indexed_store(source, width);
+        let failures = self.checked_memory_address(base, immediate, width, PERM_WRITE)?;
+        let source = if source == 0 {
+            self.zero_register(Register32::Ecx);
+            Register32::Ecx
+        } else if let Some(host) = self.cache.host(source) {
+            self.profile_guest_read(source);
+            host.register()
+        } else {
+            self.move_guest_to_register(Register32::Ecx, source);
+            Register32::Ecx
+        };
+        self.emit_flat_store(source, width);
         #[cfg(feature = "profile")]
         {
             self.increment_context(PROFILE_MEMORY_STORES_OFFSET);
@@ -1956,7 +1951,7 @@ impl Emitter {
         self.interpret_one_exit(failures, pc)
     }
 
-    /// Computes EAX = wrapping guest address and RDX = resident page base.
+    /// Computes EAX = wrapping guest address and EDX = permission page index.
     /// Every returned fixup targets the caller's single precise slow exit.
     fn checked_memory_address(
         &mut self,
@@ -1964,35 +1959,21 @@ impl Emitter {
         immediate: u32,
         width: MemoryWidth,
         permission: u8,
-        store_source: Option<usize>,
     ) -> Option<Vec<LocalFixup>> {
         self.load_eax(base);
-        if let Some(source) = store_source {
-            if source == 0 {
-                self.zero_register(Register32::Ecx);
-            } else if self.cache.host(source).is_some() {
-                // Account at the same point as the old ECX preload. This is
-                // deliberately before any precise failure branch.
-                self.profile_guest_read(source);
-            } else {
-                self.move_guest_to_register(Register32::Ecx, source);
-            }
-        }
         if immediate != 0 {
             self.add_eax_immediate(immediate);
         }
 
-        let mut failures = Vec::with_capacity(3);
-        let alignment_mask = width.bytes() - 1;
-        if alignment_mask != 0 {
-            self.code.extend_from_slice(&[0xa8, alignment_mask as u8]); // test al, mask
-            failures.push(self.cold_jcc(0x85)?); // jnz slow
-        }
-
-        self.code.push(0x3d); // cmp eax, last valid start address
-        self.code
-            .extend_from_slice(&(ADDRESS_SPACE_SIZE - width.bytes()).to_le_bytes());
-        failures.push(self.cold_jcc(0x87)?); // ja slow
+        // ADDRESS_SPACE_SIZE is a power of two and every supported width
+        // divides it. One mask therefore rejects both out-of-range addresses
+        // and misalignment. The precise Rust retry retains the required trap
+        // ordering when both conditions hold.
+        let invalid_mask = !(ADDRESS_SPACE_SIZE - 1) | (width.bytes() - 1);
+        self.code.push(0xa9); // test eax, invalid mask
+        self.code.extend_from_slice(&invalid_mask.to_le_bytes());
+        let mut failures = Vec::with_capacity(2);
+        failures.push(self.cold_jcc(0x85)?); // jnz slow
 
         self.code.extend_from_slice(&[0x89, 0xc2]); // mov edx, eax
         let page_shift = u8::try_from(PAGE_SHIFT).ok()?;
@@ -2000,16 +1981,15 @@ impl Emitter {
         self.code
             .extend_from_slice(&[0x41, 0xf6, 0x04, 0x10, permission]); // test [r8+rdx], perm
         failures.push(self.cold_jcc(0x84)?); // jz slow
-        self.code.extend_from_slice(&[0x49, 0x8b, 0x14, 0xd1]); // mov rdx, [r9+rdx*8]
         Some(failures)
     }
 
-    /// Emits `destination = [RDX + RAX]` after the checked-address path has
-    /// established that RDX names a resident page and EAX holds its offset.
-    fn emit_indexed_load(&mut self, destination: Register32, width: MemoryWidth, signed: bool) {
-        if destination.encoding() & 8 != 0 {
-            self.code.push(0x44); // REX.R
-        }
+    /// Emits `destination = [R9 + RAX]` after the checked-address path has
+    /// established that EAX names a valid, aligned, permitted guest address.
+    fn emit_flat_load(&mut self, destination: Register32, width: MemoryWidth, signed: bool) {
+        // REX.B selects R9 as the SIB base; REX.R selects a high destination.
+        self.code
+            .push(0x41 | (u8::from(destination.encoding() & 8 != 0) << 2));
         match (width, signed) {
             (MemoryWidth::Byte, true) => self.code.extend_from_slice(&[0x0f, 0xbe]),
             (MemoryWidth::Byte, false) => self.code.extend_from_slice(&[0x0f, 0xb6]),
@@ -2018,36 +1998,24 @@ impl Emitter {
             (MemoryWidth::Word, _) => self.code.push(0x8b),
         }
         self.code.push(((destination.encoding() & 7) << 3) | 0x04);
-        self.code.push(0x02); // scale 1, index EAX, base RDX
+        self.code.push(0x01); // scale 1, index RAX, base R9
     }
 
-    /// Emits `[RDX + RAX] = source`. Byte stores force a neutral REX prefix
-    /// for BPL and use REX.R for R12B-R15B, avoiding the legacy high-byte
-    /// register namespace.
-    fn emit_indexed_store(&mut self, source: Register32, width: MemoryWidth) {
+    /// Emits `[R9 + RAX] = source`. The mandatory REX.B prefix selects R9 and
+    /// also makes byte stores from EBP use BPL rather than the legacy CH.
+    fn emit_flat_store(&mut self, source: Register32, width: MemoryWidth) {
         if width == MemoryWidth::Half {
             self.code.push(0x66);
         }
         let high = source.encoding() & 8 != 0;
-        let force_byte_rex =
-            width == MemoryWidth::Byte && source.encoding() & 7 >= Register32::Ebp.encoding();
-        if high || force_byte_rex {
-            self.code.push(0x40 | u8::from(high) << 2);
-        }
+        self.code.push(0x41 | u8::from(high) << 2); // REX.R | REX.B
         self.code.push(if width == MemoryWidth::Byte {
             0x88
         } else {
             0x89
         });
         self.code.push(((source.encoding() & 7) << 3) | 0x04);
-        self.code.push(0x02); // scale 1, index EAX, base RDX
-    }
-
-    fn mask_page_offset(&mut self) -> Option<()> {
-        let page_mask = u32::try_from(PAGE_SIZE.checked_sub(1)?).ok()?;
-        self.code.push(0x25); // and eax, PAGE_SIZE - 1
-        self.code.extend_from_slice(&page_mask.to_le_bytes());
-        Some(())
+        self.code.push(0x01); // scale 1, index RAX, base R9
     }
 
     fn interpret_one_exit(&mut self, branches: Vec<LocalFixup>, pc: u32) -> Option<()> {
@@ -2634,7 +2602,7 @@ struct RunContext {
     pc: u32,
     exit: u32,
     permissions: *const u8,
-    page_addresses: *const usize,
+    address_space: *mut u8,
     dispatch_pages: *const usize,
     code_base: *const u8,
     #[cfg(feature = "profile")]
@@ -2690,7 +2658,7 @@ impl RunContext {
             pc,
             exit: 0,
             permissions: direct_memory.permissions_ptr(),
-            page_addresses: direct_memory.page_addresses_ptr(),
+            address_space: direct_memory.address_space_ptr(),
             dispatch_pages,
             code_base,
             #[cfg(feature = "profile")]
@@ -2738,7 +2706,7 @@ const _: () = assert!(std::mem::offset_of!(RunContext, remaining) == 8);
 const _: () = assert!(std::mem::offset_of!(RunContext, pc) == 16);
 const _: () = assert!(std::mem::offset_of!(RunContext, exit) == 20);
 const _: () = assert!(std::mem::offset_of!(RunContext, permissions) == 24);
-const _: () = assert!(std::mem::offset_of!(RunContext, page_addresses) == 32);
+const _: () = assert!(std::mem::offset_of!(RunContext, address_space) == 32);
 const _: () = assert!(std::mem::offset_of!(RunContext, dispatch_pages) == 40);
 const _: () = assert!(std::mem::offset_of!(RunContext, code_base) == 48);
 #[cfg(feature = "profile")]
@@ -3439,34 +3407,37 @@ mod tests {
         assert_eq!(emitter.code, [0x41, 0xd1, 0xef]);
 
         let byte_stores = [
-            (Register32::Ebx, &[0x88, 0x1c, 0x02][..]),
-            (Register32::Ebp, &[0x40, 0x88, 0x2c, 0x02][..]),
-            (Register32::R12d, &[0x44, 0x88, 0x24, 0x02][..]),
-            (Register32::R13d, &[0x44, 0x88, 0x2c, 0x02][..]),
-            (Register32::R14d, &[0x44, 0x88, 0x34, 0x02][..]),
-            (Register32::R15d, &[0x44, 0x88, 0x3c, 0x02][..]),
+            (Register32::Ecx, &[0x41, 0x88, 0x0c, 0x01][..]),
+            (Register32::Ebx, &[0x41, 0x88, 0x1c, 0x01][..]),
+            (Register32::Ebp, &[0x41, 0x88, 0x2c, 0x01][..]),
+            (Register32::R12d, &[0x45, 0x88, 0x24, 0x01][..]),
+            (Register32::R13d, &[0x45, 0x88, 0x2c, 0x01][..]),
+            (Register32::R14d, &[0x45, 0x88, 0x34, 0x01][..]),
+            (Register32::R15d, &[0x45, 0x88, 0x3c, 0x01][..]),
         ];
         for (source, expected) in byte_stores {
             emitter.code.clear();
-            emitter.emit_indexed_store(source, MemoryWidth::Byte);
+            emitter.emit_flat_store(source, MemoryWidth::Byte);
             assert_eq!(emitter.code, expected);
         }
 
         let half_stores = [
-            (Register32::Ebx, &[0x66, 0x89, 0x1c, 0x02][..]),
-            (Register32::Ebp, &[0x66, 0x89, 0x2c, 0x02][..]),
-            (Register32::R12d, &[0x66, 0x44, 0x89, 0x24, 0x02][..]),
-            (Register32::R13d, &[0x66, 0x44, 0x89, 0x2c, 0x02][..]),
-            (Register32::R14d, &[0x66, 0x44, 0x89, 0x34, 0x02][..]),
-            (Register32::R15d, &[0x66, 0x44, 0x89, 0x3c, 0x02][..]),
+            (Register32::Ecx, &[0x66, 0x41, 0x89, 0x0c, 0x01][..]),
+            (Register32::Ebx, &[0x66, 0x41, 0x89, 0x1c, 0x01][..]),
+            (Register32::Ebp, &[0x66, 0x41, 0x89, 0x2c, 0x01][..]),
+            (Register32::R12d, &[0x66, 0x45, 0x89, 0x24, 0x01][..]),
+            (Register32::R13d, &[0x66, 0x45, 0x89, 0x2c, 0x01][..]),
+            (Register32::R14d, &[0x66, 0x45, 0x89, 0x34, 0x01][..]),
+            (Register32::R15d, &[0x66, 0x45, 0x89, 0x3c, 0x01][..]),
         ];
         let word_stores = [
-            (Register32::Ebx, &[0x89, 0x1c, 0x02][..]),
-            (Register32::Ebp, &[0x89, 0x2c, 0x02][..]),
-            (Register32::R12d, &[0x44, 0x89, 0x24, 0x02][..]),
-            (Register32::R13d, &[0x44, 0x89, 0x2c, 0x02][..]),
-            (Register32::R14d, &[0x44, 0x89, 0x34, 0x02][..]),
-            (Register32::R15d, &[0x44, 0x89, 0x3c, 0x02][..]),
+            (Register32::Ecx, &[0x41, 0x89, 0x0c, 0x01][..]),
+            (Register32::Ebx, &[0x41, 0x89, 0x1c, 0x01][..]),
+            (Register32::Ebp, &[0x41, 0x89, 0x2c, 0x01][..]),
+            (Register32::R12d, &[0x45, 0x89, 0x24, 0x01][..]),
+            (Register32::R13d, &[0x45, 0x89, 0x2c, 0x01][..]),
+            (Register32::R14d, &[0x45, 0x89, 0x34, 0x01][..]),
+            (Register32::R15d, &[0x45, 0x89, 0x3c, 0x01][..]),
         ];
         for (width, cases) in [
             (MemoryWidth::Half, &half_stores[..]),
@@ -3474,27 +3445,67 @@ mod tests {
         ] {
             for &(source, expected) in cases {
                 emitter.code.clear();
-                emitter.emit_indexed_store(source, width);
+                emitter.emit_flat_store(source, width);
                 assert_eq!(emitter.code, expected);
             }
         }
 
-        let word_loads = [
-            (Register32::Ebx, &[0x8b, 0x1c, 0x02][..]),
-            (Register32::Ebp, &[0x8b, 0x2c, 0x02][..]),
-            (Register32::R12d, &[0x44, 0x8b, 0x24, 0x02][..]),
-            (Register32::R13d, &[0x44, 0x8b, 0x2c, 0x02][..]),
-            (Register32::R14d, &[0x44, 0x8b, 0x34, 0x02][..]),
-            (Register32::R15d, &[0x44, 0x8b, 0x3c, 0x02][..]),
+        let load_destinations = [
+            (Register32::Eax, 0x41, 0x04),
+            (Register32::Ebx, 0x41, 0x1c),
+            (Register32::Ebp, 0x41, 0x2c),
+            (Register32::R12d, 0x45, 0x24),
+            (Register32::R13d, 0x45, 0x2c),
+            (Register32::R14d, 0x45, 0x34),
+            (Register32::R15d, 0x45, 0x3c),
         ];
-        for (destination, expected) in word_loads {
-            emitter.code.clear();
-            emitter.emit_indexed_load(destination, MemoryWidth::Word, false);
-            assert_eq!(emitter.code, expected);
+        let load_operations = [
+            (MemoryWidth::Byte, true, &[0x0f, 0xbe][..]),
+            (MemoryWidth::Byte, false, &[0x0f, 0xb6][..]),
+            (MemoryWidth::Half, true, &[0x0f, 0xbf][..]),
+            (MemoryWidth::Half, false, &[0x0f, 0xb7][..]),
+            (MemoryWidth::Word, false, &[0x8b][..]),
+        ];
+        for (width, signed, opcode) in load_operations {
+            for (destination, rex, modrm) in load_destinations {
+                let mut expected = vec![rex];
+                expected.extend_from_slice(opcode);
+                expected.extend_from_slice(&[modrm, 0x01]);
+                emitter.code.clear();
+                emitter.emit_flat_load(destination, width, signed);
+                assert_eq!(emitter.code, expected);
+            }
         }
-        emitter.code.clear();
-        emitter.emit_indexed_load(Register32::R12d, MemoryWidth::Byte, true);
-        assert_eq!(emitter.code, [0x44, 0x0f, 0xbe, 0x24, 0x02]);
+    }
+
+    #[test]
+    fn flat_memory_validation_combines_bounds_alignment_and_permissions() {
+        for (width, permission, mask) in [
+            (MemoryWidth::Byte, 1_u8, 0xfc00_0000_u32),
+            (MemoryWidth::Half, 2_u8, 0xfc00_0001),
+            (MemoryWidth::Word, 1_u8, 0xfc00_0003),
+        ] {
+            let mut emitter = Emitter::new(RegisterCache::empty());
+            let failures = emitter
+                .checked_memory_address(0, 0, width, permission)
+                .unwrap();
+
+            let mut expected = vec![0x31, 0xc0, 0xa9]; // xor eax,eax; test eax, mask
+            expected.extend_from_slice(&mask.to_le_bytes());
+            expected.extend_from_slice(&[
+                0x0f, 0x85, 0, 0, 0, 0, // jnz precise slow path
+                0x89, 0xc2, // mov edx, eax
+                0xc1, 0xea, 0x0c, // shr edx, PAGE_SHIFT
+                0x41, 0xf6, 0x04, 0x10, permission, // test [r8+rdx], permission
+                0x0f, 0x84, 0, 0, 0, 0, // jz precise slow path
+            ]);
+            assert_eq!(emitter.code, expected);
+            assert_eq!(failures.len(), 2);
+            assert_eq!(failures[0].displacement_offset, 9);
+            assert_eq!(failures[0].instruction_end, 13);
+            assert_eq!(failures[1].displacement_offset, 25);
+            assert_eq!(failures[1].instruction_end, 29);
+        }
     }
 
     #[test]
@@ -3898,28 +3909,76 @@ mod tests {
         let sparse_program = publish_singletons(&sparse, sparse_code.len());
         assert!(sparse_program.cache.host(5).is_some());
         let before = sparse.registers;
-        let failed = sparse_program.entry(0).unwrap().execute(
+        let native = sparse_program.entry(0).unwrap().execute(
             &mut sparse.registers,
             &mut sparse.memory,
             IMAGE_START,
             1,
         );
-        assert_eq!(failed.stop, NativeStop::InterpretOne);
-        assert_eq!(failed.retired, 0);
-        assert_eq!(failed.pc, IMAGE_START);
+        assert_eq!(native.stop, NativeStop::Budget);
+        assert_eq!(native.retired, 1);
+        assert_eq!(native.pc, IMAGE_START + 4);
         assert_eq!(sparse.registers, before);
         #[cfg(feature = "profile")]
-        assert_eq!(failed.profile.direct_memory_store, 1);
-
-        assert!(
-            sparse
-                .execute_one(sparse.fetch_decode(IMAGE_START))
-                .is_none()
-        );
+        assert_eq!(native.profile.direct_memory_store, 1);
         assert_eq!(
             sparse.memory.read(sparse_address, 4),
             0xaabb_ccdd_u32.to_le_bytes()
         );
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_pointer_width = "64"
+    ))]
+    #[test]
+    fn flat_sparse_store_is_visible_to_fallback_and_the_next_native_run() {
+        let code = [store(10, 5, 2, 0), load(6, 10, 2, 0)];
+        let address = 0x0100_0000;
+        let mut image = image_with_code_at(&code, IMAGE_START);
+        image.permissions[(address >> PAGE_SHIFT) as usize] = PERM_READ | PERM_WRITE;
+        let mut machine = Machine::new(&image, &[], 0);
+        machine.registers[5] = 0x4433_2211;
+        machine.registers[10] = address;
+        let blocks = vec![
+            block(&machine, IMAGE_START, 1),
+            block(&machine, IMAGE_START + 4, 1),
+        ];
+        let program = LinkedProgram::publish(blocks, usize::MAX).unwrap();
+
+        let stored = program.entry(0).unwrap().execute(
+            &mut machine.registers,
+            &mut machine.memory,
+            IMAGE_START,
+            1,
+        );
+        assert_eq!(stored.stop, NativeStop::Budget);
+        assert_eq!(stored.retired, 1);
+        assert_eq!(stored.pc, IMAGE_START + 4);
+        assert_eq!(
+            machine.memory.read(address, 4),
+            0x4433_2211_u32.to_le_bytes()
+        );
+
+        machine.pc = IMAGE_START + 4;
+        assert!(
+            machine
+                .execute_one(machine.fetch_decode(IMAGE_START + 4))
+                .is_none()
+        );
+        assert_eq!(machine.registers[6], 0x4433_2211);
+
+        machine.registers[6] = 0;
+        let loaded = program.entry(1).unwrap().execute(
+            &mut machine.registers,
+            &mut machine.memory,
+            IMAGE_START + 4,
+            1,
+        );
+        assert_eq!(loaded.retired, 1);
+        assert_eq!(loaded.pc, IMAGE_START + 8);
+        assert_eq!(machine.registers[6], 0x4433_2211);
     }
 
     #[cfg(all(
@@ -4584,9 +4643,12 @@ mod tests {
             load(5, 5, 0, 127),
             load(6, 6, 5, -128),
             load(10, 10, 2, 2_047),
+            load(0, 5, 2, 0),
+            load(5, 0, 0, 0),
             store(5, 6, 0, -128),
             store(7, 8, 1, 127),
             store(9, 10, 2, -2_048),
+            store(5, 0, 2, 0),
             branch(0, 5, 6, 4),
             branch(1, 7, 0, 4),
             branch(4, 0, 8, 4),
@@ -5118,6 +5180,7 @@ mod tests {
             .unwrap();
         let hot_len = emitter.code.len();
         let failures = emitter.interpret_one_exits[0].branches.clone();
+        assert_eq!(failures.len(), 2);
 
         let resolved = emitter.resolve().unwrap();
         let exit_start = hot_len + resolved.external_thunk_bytes + resolved.shared_prologue_bytes;

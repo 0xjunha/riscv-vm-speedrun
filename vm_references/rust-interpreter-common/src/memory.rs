@@ -33,7 +33,7 @@ pub struct Image {
 pub struct Memory {
     permissions: Vec<u8>,
     pages: Vec<Option<Page>>,
-    page_addresses: Option<Box<[usize]>>,
+    address_space: Option<Box<[u8]>>,
 }
 
 /// A run-local, direct view of guest-memory metadata.
@@ -43,7 +43,7 @@ pub struct Memory {
 /// underlying [`Memory`] while a native runner is using them.
 pub struct DirectMemory<'a> {
     permissions: *const u8,
-    page_addresses: *const usize,
+    address_space: *mut u8,
     _memory: PhantomData<&'a mut Memory>,
 }
 
@@ -53,12 +53,13 @@ impl DirectMemory<'_> {
         self.permissions
     }
 
-    /// Returns the base of the immutable, page-indexed page-address table.
+    /// Returns the mutable base of the contiguous guest address space.
     ///
-    /// Each entry is either zero for a sparse page or the address of the
-    /// corresponding resident page's first byte.
-    pub const fn page_addresses_ptr(&self) -> *const usize {
-        self.page_addresses
+    /// The allocation has exactly [`ADDRESS_SPACE_SIZE`] bytes and remains
+    /// stable for the lifetime of the owning [`Memory`]. Sparse pages are
+    /// present as zero-filled bytes.
+    pub const fn address_space_ptr(&self) -> *mut u8 {
+        self.address_space
     }
 }
 
@@ -67,7 +68,7 @@ impl Memory {
         let mut memory = Self {
             permissions: image.permissions.clone(),
             pages: image.pages.clone(),
-            page_addresses: None,
+            address_space: None,
         };
 
         let input_first = (INPUT_START >> PAGE_SHIFT) as usize;
@@ -87,24 +88,31 @@ impl Memory {
         memory
     }
 
-    /// Creates a direct view for one run, initializing its bounded address
-    /// table on first use.
+    /// Creates a direct view for one run, initializing its bounded contiguous
+    /// address space on first use.
     pub fn direct_memory(&mut self) -> DirectMemory<'_> {
-        if self.page_addresses.is_none() {
-            let mut page_addresses = vec![0; PAGE_COUNT].into_boxed_slice();
-            for (address, page) in page_addresses.iter_mut().zip(&mut self.pages) {
-                *address = page.as_mut().map_or(0, |page| page.as_mut_ptr() as usize);
+        if self.address_space.is_none() {
+            let mut address_space = vec![0; ADDRESS_SPACE_SIZE as usize].into_boxed_slice();
+            for (page_number, page) in self.pages.iter_mut().enumerate() {
+                let Some(page) = page.take() else {
+                    continue;
+                };
+                let offset = page_number * PAGE_SIZE;
+                address_space[offset..offset + PAGE_SIZE].copy_from_slice(page.as_ref());
             }
-            self.page_addresses = Some(page_addresses);
+            self.pages = Vec::new();
+            self.address_space = Some(address_space);
         }
 
-        let page_addresses = self
-            .page_addresses
-            .as_ref()
-            .expect("direct page-address table was initialized above");
+        let permissions = self.permissions.as_ptr();
+        let address_space = self
+            .address_space
+            .as_mut()
+            .expect("direct address space was initialized above")
+            .as_mut_ptr();
         DirectMemory {
-            permissions: self.permissions.as_ptr(),
-            page_addresses: page_addresses.as_ptr(),
+            permissions,
+            address_space,
             _memory: PhantomData,
         }
     }
@@ -136,12 +144,19 @@ impl Memory {
     }
 
     pub fn load_u8(&self, address: u32) -> u8 {
+        if let Some(address_space) = &self.address_space {
+            return address_space[address as usize];
+        }
         self.pages[(address >> PAGE_SHIFT) as usize]
             .as_ref()
             .map_or(0, |page| page[address as usize & (PAGE_SIZE - 1)])
     }
 
     pub fn load_u16(&self, address: u32) -> u16 {
+        if let Some(address_space) = &self.address_space {
+            let offset = address as usize;
+            return u16::from_le_bytes([address_space[offset], address_space[offset + 1]]);
+        }
         let page = &self.pages[(address >> PAGE_SHIFT) as usize];
         let offset = address as usize & (PAGE_SIZE - 1);
         page.as_ref().map_or(0, |bytes| {
@@ -150,6 +165,15 @@ impl Memory {
     }
 
     pub fn load_u32(&self, address: u32) -> u32 {
+        if let Some(address_space) = &self.address_space {
+            let offset = address as usize;
+            return u32::from_le_bytes([
+                address_space[offset],
+                address_space[offset + 1],
+                address_space[offset + 2],
+                address_space[offset + 3],
+            ]);
+        }
         let page = &self.pages[(address >> PAGE_SHIFT) as usize];
         let offset = address as usize & (PAGE_SIZE - 1);
         page.as_ref().map_or(0, |bytes| {
@@ -172,13 +196,17 @@ impl Memory {
 
     pub fn store(&mut self, address: u32, size: u32, value: u32, pc: u32) -> Result<(), GuestTrap> {
         self.check(address, size, PERM_WRITE, "StoreAccessFault", pc)?;
-        let page_number = (address >> PAGE_SHIFT) as usize;
-        let page = self.pages[page_number].get_or_insert_with(|| Box::new([0; PAGE_SIZE]));
-        let offset = address as usize & (PAGE_SIZE - 1);
         let bytes = value.to_le_bytes();
-        page[offset..offset + size as usize].copy_from_slice(&bytes[..size as usize]);
-        if let Some(page_addresses) = &mut self.page_addresses {
-            page_addresses[page_number] = page.as_mut_ptr() as usize;
+
+        if let Some(address_space) = &mut self.address_space {
+            let address = address as usize;
+            address_space[address..address + size as usize]
+                .copy_from_slice(&bytes[..size as usize]);
+        } else {
+            let page_number = (address >> PAGE_SHIFT) as usize;
+            let offset = address as usize & (PAGE_SIZE - 1);
+            let page = self.pages[page_number].get_or_insert_with(|| Box::new([0; PAGE_SIZE]));
+            page[offset..offset + size as usize].copy_from_slice(&bytes[..size as usize]);
         }
         Ok(())
     }
@@ -201,7 +229,11 @@ impl Memory {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    static DIRECT_MEMORY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn image_with_resident_page(page_number: usize, permission: u8) -> Image {
         let mut permissions = vec![0; PAGE_COUNT];
@@ -221,92 +253,144 @@ mod tests {
     }
 
     #[test]
-    fn direct_view_reports_permissions_and_resident_pages() {
+    fn direct_address_space_is_not_allocated_until_requested() {
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let memory = Memory::new(&image_with_resident_page(resident, PERM_READ), &[]);
+
+        assert!(memory.address_space.is_none());
+        assert_eq!(memory.pages.len(), PAGE_COUNT);
+        assert!(memory.pages[resident].is_some());
+    }
+
+    #[test]
+    fn direct_view_allocates_exact_address_space_and_converts_residency() {
+        let _lock = DIRECT_MEMORY_TEST_LOCK.lock().unwrap();
         let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
         let sparse = resident + 1;
         let mut memory = Memory::new(
             &image_with_resident_page(resident, PERM_READ | PERM_EXEC),
             &[],
         );
-        assert!(memory.page_addresses.is_none());
+        assert!(memory.address_space.is_none());
 
-        let (permissions_ptr, page_addresses_ptr) = {
+        let (permissions_ptr, address_space_ptr) = {
             let direct = memory.direct_memory();
-            (direct.permissions_ptr(), direct.page_addresses_ptr())
+            (direct.permissions_ptr(), direct.address_space_ptr())
         };
 
-        let page_addresses = memory.page_addresses.as_ref().unwrap();
-        assert_eq!(page_addresses.len(), PAGE_COUNT);
+        let address_space = memory.address_space.as_ref().unwrap();
+        assert_eq!(address_space.len(), ADDRESS_SPACE_SIZE as usize);
         assert_eq!(permissions_ptr, memory.permissions.as_ptr());
-        assert_eq!(page_addresses_ptr, page_addresses.as_ptr());
+        assert_eq!(address_space_ptr, address_space.as_ptr().cast_mut());
+        assert!(memory.pages.is_empty());
         assert_eq!(memory.permissions[resident], PERM_READ | PERM_EXEC);
         assert_eq!(memory.permissions[sparse], 0);
-        assert_eq!(page_addresses[sparse], 0);
-        assert_eq!(
-            page_addresses[resident],
-            memory.pages[resident].as_ref().unwrap().as_ptr() as usize
+        assert_eq!(address_space[resident * PAGE_SIZE], 0xa5);
+        assert!(
+            address_space[sparse * PAGE_SIZE..(sparse + 1) * PAGE_SIZE]
+                .iter()
+                .all(|byte| *byte == 0)
         );
+        assert_eq!(memory.load_u8(IMAGE_START), 0xa5);
     }
 
     #[test]
-    fn store_refreshes_the_direct_table_after_every_write() {
+    fn stores_update_the_direct_address_space_after_every_write() {
+        let _lock = DIRECT_MEMORY_TEST_LOCK.lock().unwrap();
         let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
         let address = STACK_START + 8;
-        let page_number = (address >> PAGE_SHIFT) as usize;
         let mut memory = Memory::new(&image_with_resident_page(resident, PERM_READ), &[]);
         {
             let _direct = memory.direct_memory();
         }
-        assert_eq!(memory.page_addresses.as_ref().unwrap()[page_number], 0);
 
         memory.store(address, 4, 0x4433_2211, IMAGE_START).unwrap();
-        let page_address = memory.pages[page_number].as_ref().unwrap().as_ptr() as usize;
-        assert_eq!(
-            memory.page_addresses.as_ref().unwrap()[page_number],
-            page_address
-        );
         assert_eq!(memory.load_u32(address), 0x4433_2211);
 
-        // Replacing the derived entry models stale writable provenance and
-        // proves that a later safe mutable page borrow always refreshes it.
-        memory.page_addresses.as_mut().unwrap()[page_number] = 0;
         memory.store(address, 2, 0xbbaa, IMAGE_START).unwrap();
-        assert_eq!(
-            memory.page_addresses.as_ref().unwrap()[page_number],
-            page_address
-        );
         assert_eq!(memory.load_u16(address), 0xbbaa);
     }
 
     #[test]
-    fn repeated_views_reuse_the_same_tables() {
+    fn failed_direct_backing_store_preserves_bytes() {
+        let _lock = DIRECT_MEMORY_TEST_LOCK.lock().unwrap();
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let address = IMAGE_START + PAGE_SIZE as u32;
+        let mut memory = Memory::new(&image_with_resident_page(resident, PERM_READ), &[]);
+        {
+            let _direct = memory.direct_memory();
+        }
+
+        assert_eq!(
+            memory.store(address, 1, 0xaa, IMAGE_START),
+            Err(GuestTrap::new("StoreAccessFault", IMAGE_START, address))
+        );
+        assert_eq!(memory.load_u8(address), 0);
+    }
+
+    #[test]
+    fn direct_and_interpreter_access_share_the_authoritative_buffer() {
+        let _lock = DIRECT_MEMORY_TEST_LOCK.lock().unwrap();
+        let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
+        let image = image_with_resident_page(resident, PERM_READ | PERM_WRITE);
+        let mut memory = Memory::new(&image, &[]);
+        let address = IMAGE_START + 16;
+
+        {
+            let _direct = memory.direct_memory();
+        }
+        memory.store(address, 4, 0x4433_2211, IMAGE_START).unwrap();
+        let published_address_space = memory.direct_memory().address_space_ptr();
+        assert_eq!(
+            published_address_space,
+            memory.address_space.as_ref().unwrap().as_ptr().cast_mut()
+        );
+
+        // The common crate forbids unsafe code, so model the native byte write
+        // through the exact authoritative allocation exposed by the raw base.
+        let address_space = memory.address_space.as_mut().unwrap();
+        assert_eq!(address_space[address as usize], 0x11);
+        address_space[address as usize + 1] = 0xaa;
+
+        assert_eq!(memory.load_u32(address), 0x4433_aa11);
+        assert_eq!(memory.read(address, 4), [0x11, 0xaa, 0x33, 0x44]);
+        assert_eq!(
+            memory.inspect(address, 4).unwrap(),
+            [0x11, 0xaa, 0x33, 0x44]
+        );
+    }
+
+    #[test]
+    fn repeated_views_reuse_the_same_allocations() {
+        let _lock = DIRECT_MEMORY_TEST_LOCK.lock().unwrap();
         let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
         let mut memory = Memory::new(&image_with_resident_page(resident, PERM_READ), &[]);
 
-        let (first_permissions, first_pages) = {
+        let (first_permissions, first_address_space) = {
             let first = memory.direct_memory();
-            (first.permissions_ptr(), first.page_addresses_ptr())
+            (first.permissions_ptr(), first.address_space_ptr())
         };
         let second = memory.direct_memory();
 
         assert_eq!(second.permissions_ptr(), first_permissions);
-        assert_eq!(second.page_addresses_ptr(), first_pages);
+        assert_eq!(second.address_space_ptr(), first_address_space);
     }
 
     #[test]
-    fn direct_tables_are_isolated_between_memory_instances() {
+    fn direct_allocations_are_isolated_between_memory_instances() {
+        let _lock = DIRECT_MEMORY_TEST_LOCK.lock().unwrap();
         let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
         let image = image_with_resident_page(resident, PERM_READ);
         let mut first_memory = Memory::new(&image, &[]);
         let mut second_memory = Memory::new(&image, &[]);
 
-        let (first_permissions, first_pages) = {
+        let (first_permissions, first_address_space) = {
             let first = first_memory.direct_memory();
-            (first.permissions_ptr(), first.page_addresses_ptr())
+            (first.permissions_ptr(), first.address_space_ptr())
         };
         let second = second_memory.direct_memory();
 
         assert_ne!(second.permissions_ptr(), first_permissions);
-        assert_ne!(second.page_addresses_ptr(), first_pages);
+        assert_ne!(second.address_space_ptr(), first_address_space);
     }
 }

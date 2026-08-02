@@ -1029,7 +1029,7 @@ mod tests {
         target_pointer_width = "64"
     ))]
     #[test]
-    fn sparse_store_falls_back_once_then_reuses_the_resident_page_natively() {
+    fn sparse_stores_remain_native_across_repeated_runs() {
         let image = image_with_code_at(&[store(10, 5, 2, 0)], IMAGE_START);
         let mut engine = AotCompiler::default();
         engine.prepare(&image).unwrap();
@@ -1037,18 +1037,34 @@ mod tests {
         machine.registers[10] = STACK_START + 0x200;
         machine.registers[5] = 0x4433_2211;
 
+        #[cfg(not(feature = "profile"))]
         let first = engine.run(&mut machine, 1);
+        #[cfg(feature = "profile")]
+        let (first, first_profile) = engine.run_profiled(&mut machine, 1);
         assert_eq!(first.termination, Termination::InstructionLimit);
         assert_eq!(first.retired, 1);
-        assert_eq!(engine.native_retired(), 0);
+        assert_eq!(engine.native_retired(), 1);
+        #[cfg(feature = "profile")]
+        {
+            assert_eq!(first_profile.native_interpret_one_exits, 0);
+            assert_eq!(first_profile.native_memory_stores, 1);
+        }
         assert_eq!(machine.memory.load_u32(STACK_START + 0x200), 0x4433_2211);
 
         machine.pc = IMAGE_START;
         machine.retired = 0;
         machine.registers[5] = 0x8877_6655;
+        #[cfg(not(feature = "profile"))]
         let second = engine.run(&mut machine, 1);
+        #[cfg(feature = "profile")]
+        let (second, second_profile) = engine.run_profiled(&mut machine, 1);
         assert_eq!(second.termination, Termination::InstructionLimit);
-        assert_eq!(engine.native_retired(), 1);
+        assert_eq!(engine.native_retired(), 2);
+        #[cfg(feature = "profile")]
+        {
+            assert_eq!(second_profile.native_interpret_one_exits, 0);
+            assert_eq!(second_profile.native_memory_stores, 1);
+        }
         assert_eq!(machine.memory.load_u32(STACK_START + 0x200), 0x8877_6655);
     }
 
@@ -1387,16 +1403,17 @@ mod tests {
         sparse.registers[10] = STACK_START + 0x700;
         sparse.registers[5] = 0xaabb_ccdd;
         let (_, profile) = engine.run_profiled(&mut sparse, 1);
-        assert_eq!(profile.native_retired, 0);
+        assert_eq!(profile.native_retired, 1);
         assert_eq!(profile.generated_guest_register_loads, 2);
         assert_eq!(profile.generated_guest_register_stores, 0);
         assert_eq!(profile.generated_register_cache_read_hits, 0);
         assert_eq!(profile.generated_register_cache_write_hits, 0);
-        assert_eq!(profile.native_memory_stores, 0);
-        assert_eq!(profile.native_fallthrough_dispatches, 0);
-        assert_eq!(profile.native_interpret_one_exits, 1);
-        assert_eq!(profile.fallback_stores, 1);
-        assert_eq!(profile.fallback_retired, 1);
+        assert_eq!(profile.native_memory_stores, 1);
+        assert_eq!(profile.native_fallthrough_dispatches, 1);
+        assert_eq!(profile.native_interpret_one_exits, 0);
+        assert_eq!(profile.fallback_stores, 0);
+        assert_eq!(profile.fallback_retired, 0);
+        assert_eq!(sparse.memory.load_u32(STACK_START + 0x700), 0xaabb_ccdd);
 
         let mut resident = Machine::new(&store_image, &[], 0);
         let address = STACK_START + 0x780;
