@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+long = []
+
 [dependencies]
 heatshrink-lib = { path = "../../third_party/heatshrink" }
 qrcodegen = { path = "../../third_party/qrcodegen" }

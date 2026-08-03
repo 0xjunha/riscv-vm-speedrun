@@ -17,6 +17,7 @@ import reference
 
 def test_checked_in_artifacts() -> None:
     build.check()
+    build.check_long()
 
 
 def test_reference_records_are_stable() -> None:
@@ -110,12 +111,59 @@ def test_guest_source_checks_use_strict_targeted_commands(
             "-D",
             "clippy::all",
         ],
+        [
+            "cargo",
+            "test",
+            "--frozen",
+            "--package",
+            "rv32im-workloads",
+            "--lib",
+            "--all-features",
+            "--target",
+            build.NATIVE_TARGET,
+        ],
     ]
     for _, options in calls:
         assert options["cwd"] == build.GUEST
         assert options["check"] is True
         assert options["env"]["CARGO_TARGET_DIR"] == str(tmp_path)
         assert options["env"]["CARGO_NET_OFFLINE"] == "true"
+
+
+def test_long_cases_require_configured_case_ids() -> None:
+    case_id = build.load_long_suite().case_ids[0]
+    cases = tuple(case for case in build.load_cases() if case.id != case_id)
+    with pytest.raises(build.BuildError, match=f"missing long cases: {case_id}"):
+        build._long_cases(cases)
+
+
+@pytest.mark.parametrize(
+    ("field", "values", "message"),
+    [
+        ("horizons", [10, 10], "duplicate long horizon"),
+        ("case_ids", ["sha256", "sha256"], "duplicate long case id"),
+    ],
+)
+def test_long_suite_rejects_duplicates(
+    tmp_path: Path, field: str, values: list[object], message: str
+) -> None:
+    document = {
+        "schema_version": 1,
+        "horizons": [10, 100],
+        "case_ids": ["sha256"],
+    }
+    document[field] = values
+    path = tmp_path / "long_cases.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(build.BuildError, match=message):
+        build.load_long_suite(path)
+
+
+def test_only_long_manifest_tracks_long_suite_config() -> None:
+    path = build.ROOT / "long_cases.json"
+    assert path not in build._project_input_paths()
+    assert path in build._project_input_paths(long=True)
 
 
 @pytest.mark.parametrize(

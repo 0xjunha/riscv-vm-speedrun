@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "horizons": [
+    10,
+    100
+  ],
+  "case_ids": [
+    "sha256",
+    "heatshrink",
+    "depthconv",
+    "dijkstra",
+    "sort_records",
+    "qrcode"
+  ]
+}

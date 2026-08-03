@@ -10,6 +10,49 @@ const OUTPUT_MAGIC: u32 = 0x3142_5652; // bytes: RVB1
 /// Native or guest implementation of one public workload.
 pub type Workload = fn(&[u8]) -> [u8; 16];
 
+/// Run a workload, repeating when the `long` feature is enabled.
+#[inline]
+pub fn run(workload: Workload, input: &[u8]) -> [u8; 16] {
+    #[cfg(not(feature = "long"))]
+    {
+        workload(input)
+    }
+    #[cfg(feature = "long")]
+    {
+        let Some((repetitions, input)) = input.split_at_checked(4) else {
+            return workload(input);
+        };
+        let repetitions = u32::from_le_bytes(repetitions.try_into().unwrap());
+        let workload = core::hint::black_box(workload);
+        let mut output = [0; 16];
+        for _ in 0..repetitions {
+            output = core::hint::black_box(workload(core::hint::black_box(input)));
+        }
+        output
+    }
+}
+
+#[cfg(all(test, feature = "long"))]
+mod tests {
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    use super::run;
+
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+
+    fn counted(input: &[u8]) -> [u8; 16] {
+        CALLS.fetch_add(1, Ordering::Relaxed);
+        [input.len() as u8; 16]
+    }
+
+    #[test]
+    fn long_input_repeats_workload() {
+        CALLS.store(0, Ordering::Relaxed);
+        assert_eq!(run(counted, &[3, 0, 0, 0, 1, 2]), [2; 16]);
+        assert_eq!(CALLS.load(Ordering::Relaxed), 3);
+    }
+}
+
 /// Little-endian 32-bit words backed by the guest input bytes.
 pub struct Words<'a> {
     bytes: &'a [u8],

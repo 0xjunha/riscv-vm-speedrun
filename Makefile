@@ -385,7 +385,7 @@ contract-reproducible: conformance-image
 
 check: lock-check spec-check $(VM_LIST) vm4-x86-check vm5-x86-check \
 	native-vm-runtime-status harness-lint harness-test benchmark-check \
-	benchmark-correctness benchmark-lint benchmark-test conformance-lint \
-	conformance-test contract-lint \
-	contract-test $(VM_RUNTIME_CONFORMANCE_TARGETS) $(VM_RUNTIME_CONTRACT_TARGETS) \
+	benchmark-guest-lint benchmark-correctness benchmark-lint benchmark-test \
+	conformance-lint conformance-test contract-lint contract-test \
+	$(VM_RUNTIME_CONFORMANCE_TARGETS) $(VM_RUNTIME_CONTRACT_TARGETS) \
 	$(VM_RUNTIME_BENCHMARK_SMOKE_TARGETS)

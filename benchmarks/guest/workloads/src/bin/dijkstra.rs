@@ -78,7 +78,7 @@ fn dijkstra(input: &[u8]) -> [u8; 16] {
 
 #[cfg(target_os = "none")]
 fn guest_main(input: &[u8]) -> u32 {
-    rv32im_workloads::emit(&dijkstra(input))
+    rv32im_workloads::emit(&rv32im_workloads::run(dijkstra, input))
 }
 
 #[cfg(target_os = "none")]
@@ -86,5 +86,5 @@ guest_entry!(guest_main);
 
 #[cfg(not(target_os = "none"))]
 fn main() -> std::process::ExitCode {
-    rv32im_workloads::native::main(dijkstra)
+    rv32im_workloads::native::main(|input| rv32im_workloads::run(dijkstra, input))
 }
