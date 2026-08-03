@@ -9,7 +9,7 @@
     "RISCV_BINUTILS_VERSION": "2.46"
   },
   "project_inputs": {
-    "contracts/build.py": "39f03bad8762dd73b0e87f1d55a0f0761c4f8884e13372c6c955e4bcb99454cd",
+    "contracts/build.py": "753ceef5a21b857225e3aa0b52ab448a7458e8986138fd4758299417a6f19006",
     "contracts/cases.json": "9d45281609052c7c1184f54a4c3662783c5efdc7ec7f0f31e2dec706fc06ab54",
     "contracts/elf_builder.py": "44c1cb02a90d9dda9a6b744e6529604629a6d4d01955d60cabbb9e2affee743a",
     "conformance/Dockerfile": "b99e0e7247442da1f7c2c971f23c5b98d1eeb54666ff0a37467c4fe4caac05a7",

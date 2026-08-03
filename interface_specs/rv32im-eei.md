@@ -261,7 +261,7 @@ The run bounds are:
 |---|---:|---:|
 | input bytes | — | `4,194,304` |
 | output bytes | `1,048,576` | `1,048,576` |
-| retired instructions | `100,000,000` | `100,000,000` |
+| retired instructions | `100,000,000` | `1,000,000,000` |
 
 The caller may choose smaller instruction and output limits. Host time and
 memory limits are outside the guest execution environment.

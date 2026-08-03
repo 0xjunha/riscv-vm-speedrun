@@ -240,7 +240,7 @@ def serve(input_stream, output_stream) -> int:
                         opcode,
                         request_id,
                         STATUS_INVALID_PAYLOAD,
-                        "instruction limit exceeds 100000000",
+                        f"instruction limit exceeds {MAX_INSTRUCTION_LIMIT}",
                     )
                     continue
                 if output_limit > MAX_OUTPUT_LIMIT:

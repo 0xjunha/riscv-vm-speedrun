@@ -290,7 +290,11 @@ def _run_cli_contracts(
     invalid_limits = (
         ("instruction-negative", "--instruction-limit", "-1"),
         ("instruction-signed", "--instruction-limit", "+1"),
-        ("instruction-too-large", "--instruction-limit", "100000001"),
+        (
+            "instruction-too-large",
+            "--instruction-limit",
+            str(MAX_INSTRUCTION_LIMIT + 1),
+        ),
         ("output-negative", "--output-limit", "-1"),
         ("output-noninteger", "--output-limit", "1.0"),
         ("output-too-large", "--output-limit", "1048577"),

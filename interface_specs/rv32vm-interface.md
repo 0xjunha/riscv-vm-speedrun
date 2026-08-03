@@ -23,7 +23,7 @@ unsigned decimal integers:
 
 | Option | Default | Minimum | Maximum |
 |---|---:|---:|---:|
-| instruction limit | `100,000,000` | `0` | `100,000,000` |
+| instruction limit | `100,000,000` | `0` | `1,000,000,000` |
 | output limit | `1,048,576` | `0` | `1,048,576` |
 
 The ELF file may contain at most 8,388,608 bytes. The input file may contain

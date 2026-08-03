@@ -6,7 +6,7 @@ use crate::memory::{
 /// Instruction limit used when none is specified.
 pub const DEFAULT_INSTRUCTION_LIMIT: u64 = 100_000_000;
 /// Largest accepted instruction limit.
-pub const MAX_INSTRUCTION_LIMIT: u64 = 100_000_000;
+pub const MAX_INSTRUCTION_LIMIT: u64 = 1_000_000_000;
 /// Output limit used when none is specified, in bytes (1 MiB).
 pub const DEFAULT_OUTPUT_LIMIT: u32 = 1_048_576;
 /// Largest accepted output limit, in bytes (1 MiB).

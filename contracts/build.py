@@ -25,6 +25,8 @@ ARTIFACTS = HERE / "artifacts"
 MANIFEST = ARTIFACTS / "manifest.json"
 TOOLCHAIN_LOCK = ROOT / "conformance/toolchain.env"
 INSTALLED_TOOLCHAIN_LOCK = Path("/opt/conformance-toolchain.env")
+DEFAULT_INSTRUCTION_LIMIT = 100_000_000
+MAX_INSTRUCTION_LIMIT = 1_000_000_000
 
 GCC = "riscv64-unknown-elf-gcc"
 OBJCOPY = "riscv64-unknown-elf-objcopy"
@@ -207,7 +209,10 @@ def _validate_runs(case_id: str, runs: list[object]) -> None:
         if (
             not _hex(run.get("input_hex", ""), 4 * 1024 * 1024)
             or not _hex(run.get("output_hex", ""), 1024 * 1024)
-            or not _uint(run.get("instruction_limit", 100_000_000), 100_000_000)
+            or not _uint(
+                run.get("instruction_limit", DEFAULT_INSTRUCTION_LIMIT),
+                MAX_INSTRUCTION_LIMIT,
+            )
             or not _uint(run.get("output_limit", 1024 * 1024), 1024 * 1024)
             or not isinstance(run.get("repeat", 1), int)
             or isinstance(run.get("repeat", 1), bool)

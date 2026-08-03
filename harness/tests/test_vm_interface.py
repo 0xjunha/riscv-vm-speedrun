@@ -8,6 +8,7 @@ import pytest
 
 from rv32im_harness.vm_interface import (
     MAGIC,
+    MAX_INSTRUCTION_LIMIT,
     MESSAGE_HEADER_LAYOUT,
     RUN_RESPONSE_LAYOUT,
     VERSION,
@@ -286,7 +287,7 @@ def test_request_and_run_payload_have_exact_wire_encoding() -> None:
 
 @pytest.mark.parametrize(
     ("instruction_limit", "output_limit"),
-    [(-1, 0), (100_000_001, 0), (True, 0), (0, -1), (0, 1_048_577)],
+    [(-1, 0), (MAX_INSTRUCTION_LIMIT + 1, 0), (True, 0), (0, -1), (0, 1_048_577)],
 )
 def test_run_request_rejects_invalid_limits(
     instruction_limit: int, output_limit: int
