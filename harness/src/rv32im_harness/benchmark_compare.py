@@ -8,6 +8,7 @@ import math
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from .benchmark import (
@@ -27,6 +28,15 @@ _MATCHING_RUN_FIELDS = (
     "repetitions",
     "timeout_seconds",
 )
+
+
+@dataclass(frozen=True)
+class _AggregateContext:
+    baseline: str
+    native: str
+    labels: tuple[str, ...]
+    case_ids: tuple[str, ...]
+    medians: Mapping[str, Mapping[str, int | float]]
 
 
 def _valid_label(label: object) -> bool:
@@ -296,6 +306,63 @@ def _geometric_mean(values: Sequence[float]) -> float:
     return math.exp(math.fsum(math.log(value) for value in values) / len(values))
 
 
+def _aggregate_context(result: dict[str, object], report: str) -> _AggregateContext:
+    baseline = str(result["baseline"])
+    implementations = result.get("implementations")
+    if not isinstance(implementations, Mapping):
+        raise BenchmarkFailure("benchmark comparison implementations are invalid")
+    native_labels = [
+        str(label)
+        for label, record in implementations.items()
+        if isinstance(record, Mapping) and record.get("interface") == "native"
+    ]
+    if len(native_labels) != 1:
+        raise BenchmarkFailure(f"{report} requires exactly one native reference")
+    native = native_labels[0]
+    labels = tuple(
+        str(label)
+        for label, record in implementations.items()
+        if not (isinstance(record, Mapping) and record.get("interface") == "native")
+    ) + (native,)
+
+    case_ids, baseline_medians = _run_case_medians(result, baseline)
+    medians_by_implementation = {baseline: baseline_medians}
+    for implementation in labels:
+        if implementation == baseline:
+            continue
+        implementation_case_ids, medians = _run_case_medians(result, implementation)
+        if implementation_case_ids != case_ids:
+            raise BenchmarkFailure(
+                f"{implementation} run contains different benchmark cases"
+            )
+        medians_by_implementation[implementation] = medians
+    return _AggregateContext(
+        baseline, native, labels, case_ids, medians_by_implementation
+    )
+
+
+def _aggregate_ratios(
+    aggregate: _AggregateContext,
+    implementation: str,
+    case_ids: Sequence[str],
+) -> tuple[float, float]:
+    medians = aggregate.medians
+    return (
+        _geometric_mean(
+            [
+                medians[aggregate.baseline][case_id] / medians[implementation][case_id]
+                for case_id in case_ids
+            ]
+        ),
+        _geometric_mean(
+            [
+                medians[aggregate.native][case_id] / medians[implementation][case_id]
+                for case_id in case_ids
+            ]
+        ),
+    )
+
+
 def _application_summary_text(
     result: dict[str, object], application_case_ids: Sequence[str]
 ) -> str | None:
@@ -308,49 +375,28 @@ def _application_summary_text(
         raise BenchmarkFailure("application case selection contains duplicate IDs")
 
     baseline = str(result["baseline"])
-    baseline_case_ids, baseline_medians = _run_case_medians(result, baseline)
+    _, baseline_medians = _run_case_medians(result, baseline)
     selected = tuple(case_id for case_id in requested if case_id in baseline_medians)
     if not selected:
         return None
 
-    implementations = result.get("implementations")
-    if not isinstance(implementations, Mapping):
-        raise BenchmarkFailure("benchmark comparison implementations are invalid")
-    native_labels = [
-        str(label)
-        for label, record in implementations.items()
-        if isinstance(record, Mapping) and record.get("interface") == "native"
-    ]
-    if len(native_labels) != 1:
-        raise BenchmarkFailure(
-            "application aggregate requires exactly one native reference"
-        )
-    native = native_labels[0]
-    native_case_ids, native_medians = _run_case_medians(result, native)
-    if native_case_ids != baseline_case_ids:
-        raise BenchmarkFailure("native run contains different benchmark cases")
-
-    implementation_labels = [baseline]
-    implementation_labels.extend(
-        str(label)
-        for label, record in implementations.items()
-        if str(label) != baseline
-        and not (isinstance(record, Mapping) and record.get("interface") == "native")
+    aggregate = _aggregate_context(result, "application aggregate")
+    implementation_labels = (
+        aggregate.baseline,
+        *(
+            label
+            for label in aggregate.labels
+            if label not in (aggregate.baseline, aggregate.native)
+        ),
+        aggregate.native,
     )
-    implementation_labels.append(native)
 
     rows = []
     for implementation in implementation_labels:
-        case_ids, medians = _run_case_medians(result, implementation)
-        if case_ids != baseline_case_ids:
-            raise BenchmarkFailure(
-                f"{implementation} run contains different benchmark cases"
-            )
-        speedup = _geometric_mean(
-            [baseline_medians[case_id] / medians[case_id] for case_id in selected]
-        )
-        native_fraction = _geometric_mean(
-            [native_medians[case_id] / medians[case_id] for case_id in selected]
+        speedup, native_fraction = _aggregate_ratios(
+            aggregate,
+            implementation,
+            selected,
         )
         rows.append(
             (
@@ -363,12 +409,12 @@ def _application_summary_text(
 
     headers = (
         "implementation",
-        f"speedup vs {baseline}",
-        f"{native} performance",
-        f"time vs {native}",
+        f"speedup vs {aggregate.baseline}",
+        f"{aggregate.native} performance",
+        f"time vs {aggregate.native}",
     )
     excluded = tuple(
-        case_id for case_id in baseline_case_ids if case_id not in set(selected)
+        case_id for case_id in aggregate.case_ids if case_id not in set(selected)
     )
     description = (
         f"geometric mean across {len(selected)} application "
@@ -379,6 +425,69 @@ def _application_summary_text(
         lines.append(f"excluded cases: {', '.join(excluded)}")
     lines.extend(("", _table_text(headers, rows)))
     return "\n".join(lines)
+
+
+def _horizon_cases(case_ids: Sequence[str]) -> tuple[tuple[int, tuple[str, ...]], ...]:
+    groups: dict[int, dict[str, str]] = {}
+    for case_id in case_ids:
+        base, separator, suffix = case_id.rpartition("-")
+        horizon = suffix.removesuffix("x")
+        if (
+            not separator
+            or not base
+            or not suffix.endswith("x")
+            or not horizon.isdecimal()
+            or horizon.startswith("0")
+        ):
+            raise BenchmarkFailure("horizon case IDs must end in -Nx")
+        groups.setdefault(int(horizon), {})[base] = case_id
+
+    cohorts = {frozenset(group) for group in groups.values()}
+    if not groups or len(cohorts) != 1:
+        raise BenchmarkFailure("horizons contain different benchmark cases")
+    return tuple(
+        (horizon, tuple(group.values())) for horizon, group in sorted(groups.items())
+    )
+
+
+def _horizon_summary_text(result: dict[str, object]) -> str:
+    aggregate = _aggregate_context(result, "horizon report")
+    horizon_cases = _horizon_cases(aggregate.case_ids)
+
+    rows = []
+    workload_count = len(horizon_cases[0][1])
+    for horizon, selected in horizon_cases:
+        for implementation in aggregate.labels:
+            speedup, native_fraction = _aggregate_ratios(
+                aggregate,
+                implementation,
+                selected,
+            )
+            rows.append(
+                (
+                    f"{horizon}x",
+                    implementation,
+                    f"{speedup:.3f}x",
+                    f"{native_fraction * 100:.4f}%",
+                    f"{1 / native_fraction:.3f}x",
+                )
+            )
+
+    headers = (
+        "horizon",
+        "implementation",
+        f"speedup vs {aggregate.baseline}",
+        f"{aggregate.native} performance",
+        f"time vs {aggregate.native}",
+    )
+    return "\n".join(
+        (
+            "long-workload aggregate",
+            f"geometric mean across {workload_count} application workloads per horizon",
+            "",
+            _table_text(headers, rows),
+        )
+    )
 
 
 def _summary_text(
@@ -472,6 +581,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--horizon-report",
+        action="store_true",
+        help="group the aggregate by -Nx case suffix",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         required=True,
@@ -480,6 +594,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
 
     try:
+        if arguments.horizon_report and arguments.application_case_ids:
+            raise BenchmarkFailure("--horizon-report conflicts with --application-case")
         result = run_comparison(
             _vm_mapping(arguments.vms),
             arguments.baseline,
@@ -490,7 +606,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             case_ids=arguments.case_ids,
             native=arguments.native,
         )
-        summary = _summary_text(result, arguments.application_case_ids)
+        summary = (
+            _horizon_summary_text(result)
+            if arguments.horizon_report
+            else _summary_text(result, arguments.application_case_ids)
+        )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(_json_text(result), encoding="utf-8")
     except (BenchmarkFailure, OSError) as error:

@@ -47,3 +47,16 @@ make gcp-benchmark
 Results are stored below `benchmarks/out/gcp/` with the raw comparison JSON,
 source revision, resolved OS image, instance description, and host/container
 facts.
+
+## Long-horizon run
+
+Run the application workloads at 10x and 100x with VM4, VM5, and the
+native reference only:
+
+```sh
+make gcp-benchmark-long
+```
+
+The standard run is unchanged. This command prints native-relative geometric
+means by horizon and stores raw data in `comparison-long.json`. The instruction
+limit remains 100 million by default, with a 1 billion maximum.

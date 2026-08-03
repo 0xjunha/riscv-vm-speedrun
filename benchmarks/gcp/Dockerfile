@@ -21,7 +21,18 @@ RUN vm_references/vm0-python-interpreter/build.sh \
         --target x86_64-unknown-linux-gnu \
     && mkdir /native \
     && find /native-target/x86_64-unknown-linux-gnu/release \
-        -maxdepth 1 -type f -perm -111 -exec cp '{}' /native/ ';'
+        -maxdepth 1 -type f -perm -111 -exec cp '{}' /native/ ';' \
+    && CARGO_TARGET_DIR=/native-long-target cargo build \
+        --frozen \
+        --release \
+        --manifest-path benchmarks/guest/Cargo.toml \
+        --package rv32im-workloads \
+        --bins \
+        --features long \
+        --target x86_64-unknown-linux-gnu \
+    && mkdir /native-long \
+    && find /native-long-target/x86_64-unknown-linux-gnu/release \
+        -maxdepth 1 -type f -perm -111 -exec cp '{}' /native-long/ ';'
 
 FROM python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
 
@@ -42,13 +53,15 @@ COPY --from=build /source/vm_references/vm3-rust-block-interpreter/out /opt/rv32
 COPY --from=build /source/vm_references/vm4-rust-jit-compiler/out /opt/rv32im/vms/vm4
 COPY --from=build /source/vm_references/vm5-rust-aot-compiler/out /opt/rv32im/vms/vm5
 COPY --from=build /native /opt/rv32im/native
+COPY --from=build /native-long /opt/rv32im/native-long
 COPY harness/src /opt/rv32im/harness
 COPY benchmarks/artifacts /opt/rv32im/benchmarks
+COPY benchmarks/long_artifacts /opt/rv32im/long-benchmarks
 COPY benchmarks/gcp/run-benchmark.sh /usr/local/bin/run-benchmark
 
 RUN mkdir /results \
     && run-benchmark --case tiny --warmups 0 --repetitions 1 >/dev/null \
-    && rm /results/comparison.json \
+    && rm /results/* \
     && chown 65534:65534 /results
 
 USER 65534:65534

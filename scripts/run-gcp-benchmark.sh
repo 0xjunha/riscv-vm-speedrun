@@ -3,6 +3,19 @@ set -eu
 
 repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 env_file=${1:-"$repository/.env.gcp"}
+mode=${2:-standard}
+
+if [ "$#" -gt 2 ]; then
+    echo "usage: $(basename "$0") [ENV_FILE] [standard|long]" >&2
+    exit 2
+fi
+case "$mode" in
+    standard | long) ;;
+    *)
+        echo "benchmark mode must be standard or long" >&2
+        exit 2
+        ;;
+esac
 
 if [ ! -f "$env_file" ]; then
     echo "missing GCP configuration: $env_file" >&2
@@ -209,7 +222,7 @@ gcloud compute ssh "$instance" \
         '$remote_root/source/benchmarks/gcp/run-on-vm.sh' \
             '$remote_root/source' '$remote_root/results' '$revision' \
             '$BENCHMARK_WARMUPS' '$BENCHMARK_REPETITIONS' \
-            '$BENCHMARK_TIMEOUT_SECONDS'" \
+            '$BENCHMARK_TIMEOUT_SECONDS' '$mode'" \
     --quiet
 
 gcloud compute scp --recurse "$instance:$remote_root/results" "$result_dir" \
@@ -218,4 +231,4 @@ gcloud compute scp --recurse "$instance:$remote_root/results" "$result_dir" \
     ${iap_flag:+"$iap_flag"} \
     --quiet
 
-echo "GCP benchmark result: $result_dir/results/comparison.json"
+echo "GCP benchmark results: $result_dir/results"

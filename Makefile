@@ -60,7 +60,7 @@ CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 	conformance-reproducible conformance-sources conformance-test contract \
 	contract-build contract-check contract-format contract-lint \
 	contract-reproducible contract-test harness-format harness-lint \
-	gcp-benchmark harness-test lock-check python-vm-format python-vm-lint \
+	gcp-benchmark gcp-benchmark-long harness-test lock-check python-vm-format python-vm-lint \
 	rust-vm-common-format rust-vm-common-lint rust-vm-common-test \
 	rust-x86-compiler-format rust-x86-compiler-lint rust-x86-compiler-test \
 	native-vm-runtime-status native-x86-test spec-check \
@@ -313,6 +313,9 @@ benchmark-compare: native-vm-runtime-status $(VM_RUNTIME_BUILD_TARGETS) benchmar
 
 gcp-benchmark:
 	./scripts/run-gcp-benchmark.sh "$(GCP_ENV_FILE)"
+
+gcp-benchmark-long:
+	./scripts/run-gcp-benchmark.sh "$(GCP_ENV_FILE)" long
 
 conformance-sources:
 	PYTHONDONTWRITEBYTECODE=1 python3 conformance/build.py check-sources

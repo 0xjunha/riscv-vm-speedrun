@@ -67,6 +67,42 @@ def _multi_case_result(
     }
 
 
+def _horizon_result() -> dict[str, object]:
+    vm4 = {
+        "app-a-10x": 400,
+        "app-b-10x": 900,
+        "app-a-100x": 4_000,
+        "app-b-100x": 9_000,
+    }
+    vm5 = {
+        "app-a-10x": 100,
+        "app-b-10x": 100,
+        "app-a-100x": 2_000,
+        "app-b-100x": 1_000,
+    }
+    native = {
+        "app-a-10x": 25,
+        "app-b-10x": 100,
+        "app-a-100x": 1_000,
+        "app-b-100x": 1_000,
+    }
+    return {
+        "schema_version": 1,
+        "baseline": "vm4",
+        "implementations": {
+            "vm4": {"interface": "serve", "path": "vm4"},
+            "vm5": {"interface": "serve", "path": "vm5"},
+            "native": {"interface": "native", "path": "/native"},
+        },
+        "runs": {
+            "vm4": _multi_case_result(vm4),
+            "vm5": _multi_case_result(vm5),
+            "native": _multi_case_result(native, interface="native"),
+        },
+        "comparisons": [],
+    }
+
+
 def test_run_comparison_measures_vms_and_native_reference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -262,6 +298,60 @@ def test_application_summary_skips_runs_without_selected_application_cases() -> 
     }
 
     assert benchmark_compare._application_summary_text(result, ("sha256",)) is None
+
+
+def test_horizon_summary_groups_cases_and_compares_with_native() -> None:
+    summary = benchmark_compare._horizon_summary_text(_horizon_result())
+
+    assert "geometric mean across 2 application workloads per horizon" in summary
+    assert "10x      vm5" in summary
+    assert "6.000x" in summary
+    assert "4.243x" in summary
+    assert "50.0000%" in summary
+    assert "70.7107%" in summary
+
+
+def test_horizon_summary_rejects_different_case_cohorts() -> None:
+    result = _horizon_result()
+    for run in result["runs"].values():
+        run["cases"][2]["id"] = "app-c-100x"
+
+    with pytest.raises(BenchmarkFailure, match="different benchmark cases"):
+        benchmark_compare._horizon_summary_text(result)
+
+
+def test_main_selects_horizon_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output = tmp_path / "comparison.json"
+    monkeypatch.setattr(
+        benchmark_compare,
+        "run_comparison",
+        lambda *args, **kwargs: _horizon_result(),
+    )
+
+    assert (
+        main(
+            [
+                "manifest",
+                "--vm",
+                "vm4=vm4",
+                "--vm",
+                "vm5=vm5",
+                "--native",
+                "native=/native",
+                "--baseline",
+                "vm4",
+                "--horizon-report",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert "4.243x" in capsys.readouterr().out
 
 
 def test_main_writes_raw_json_and_prints_summary(

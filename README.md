@@ -48,5 +48,11 @@ cp .env.gcp.example .env.gcp
 make gcp-benchmark
 ```
 
+Optional VM4/VM5/native long run:
+
+```sh
+make gcp-benchmark-long
+```
+
 See [`benchmarks/GCP.md`](benchmarks/GCP.md) for the one-time project setup,
 fairness controls, results, and cleanup behavior.

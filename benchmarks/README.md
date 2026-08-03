@@ -110,6 +110,15 @@ workloads have different scales and performance ratios are multiplicative.
 Cases that were measured but not selected with `--application-case` remain in
 the detailed table and are listed as excluded from the aggregate.
 
+## Optional long-horizon comparison
+
+`long_cases.json` defines the case IDs and horizons.
+`make gcp-benchmark-long` measures only VM4, VM5, and the host-native
+reference. It repeats each application workload 10 and 100 times per
+invocation, paying setup once per sample. Separate long binaries leave the
+standard path unchanged. The command prints a native-normalized table by
+horizon and writes `comparison-long.json`.
+
 The complete comparison document, including every labeled result and
 `samples_ns` value, is written to `benchmarks/out/comparison.json`.
 Override the path or shared settings when needed:
