@@ -14,6 +14,12 @@ sys.path.insert(0, str(BENCHMARKS))
 
 import build
 import reference
+from reference import dijkstra as reference_dijkstra
+from reference import heatshrink as reference_heatshrink
+from reference import littlefs as reference_littlefs
+from reference import sha256 as reference_sha256
+from reference import sort_records as reference_sort_records
+from reference import x25519 as reference_x25519
 
 
 def test_checked_in_artifacts() -> None:
@@ -128,27 +134,29 @@ def test_workload_categories_are_complete_and_consistent() -> None:
 
 
 def test_authored_profiles_have_their_intended_shapes() -> None:
-    repeated = reference._firmware_payload(768, 1, "repeated-pages")
+    repeated = reference_sha256.firmware_payload(768, 1, "repeated-pages")
     assert repeated[:256] == repeated[256:512] == repeated[512:]
 
-    sparse_flash = reference._firmware_payload(1024, 2, "sparse-flash")
+    sparse_flash = reference_sha256.firmware_payload(1024, 2, "sparse-flash")
     assert sparse_flash.count(0xFF) >= 950
 
-    ascending = struct.unpack("<16I", reference._records(8, 3, "ascending"))
+    ascending = struct.unpack("<16I", reference_sort_records.records(8, 3, "ascending"))
     assert ascending[::2] == tuple(range(8))
-    duplicates = struct.unpack("<128I", reference._records(64, 4, "duplicate-heavy"))
+    duplicates = struct.unpack(
+        "<128I", reference_sort_records.records(64, 4, "duplicate-heavy")
+    )
     assert len(set(duplicates[::2])) <= 16
 
-    hub = struct.unpack("<64H", reference._graph(8, 0, 5, "hub"))
+    hub = struct.unpack("<64H", reference_dijkstra.graph(8, 0, 5, "hub"))
     assert all(hub[target] for target in range(1, 8))
     assert all(hub[source * 8] for source in range(1, 8))
 
-    mixed = struct.unpack("<80I", reference._littlefs_operations(20, 9, "mixed"))
+    mixed = struct.unpack("<80I", reference_littlefs.operations(20, 9, "mixed"))
     append = struct.unpack(
-        "<64I", reference._littlefs_operations(16, 10, "append-heavy")
+        "<64I", reference_littlefs.operations(16, 10, "append-heavy")
     )
     metadata = struct.unpack(
-        "<96I", reference._littlefs_operations(24, 11, "metadata-churn")
+        "<96I", reference_littlefs.operations(24, 11, "metadata-churn")
     )
     assert mixed[::4] == (0, 1, 2, 3, 4) * 4
     assert append[::4] == (0, 1, 1, 2) * 4
@@ -160,14 +168,14 @@ def test_x25519_python_model_matches_rfc_7748() -> None:
         "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552",
         "95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957",
     )
-    for pair, output in zip(reference.X25519_RFC7748_PAIRS, expected, strict=True):
-        assert reference._x25519(*pair).hex() == output
+    for pair, output in zip(reference_x25519.RFC7748_PAIRS, expected, strict=True):
+        assert reference_x25519.x25519(*pair).hex() == output
 
     left = bytes(range(32))
     right = bytes(reversed(range(32)))
     basepoint = bytes([9]) + bytes(31)
-    assert reference._x25519(left, reference._x25519(right, basepoint)) == (
-        reference._x25519(right, reference._x25519(left, basepoint))
+    assert reference_x25519.x25519(left, reference_x25519.x25519(right, basepoint)) == (
+        reference_x25519.x25519(right, reference_x25519.x25519(left, basepoint))
     )
 
 
@@ -375,6 +383,14 @@ def test_only_long_manifest_tracks_long_suite_config() -> None:
     assert path in build._project_input_paths(long=True)
 
 
+def test_every_reference_module_is_a_project_input() -> None:
+    root = build.ROOT / "reference"
+    expected = set(root.glob("*.py"))
+    workload_modules = {path.stem for path in expected} - {"__init__", "common"}
+    assert workload_modules == set(build.WORKLOADS)
+    assert expected <= set(build._project_input_paths())
+
+
 @pytest.mark.parametrize(
     "contents",
     [
@@ -416,8 +432,11 @@ def test_heatshrink_limit_is_checked_before_generation(
     def fail_if_called(records: int, seed: int) -> bytes:
         raise AssertionError(f"generated {records=} with {seed=}")
 
-    monkeypatch.setattr(reference, "_telemetry", fail_if_called)
-    records = reference.HEATSHRINK_MAX_PAYLOAD // reference.TELEMETRY_RECORD_SIZE + 1
+    monkeypatch.setattr(reference_heatshrink, "telemetry", fail_if_called)
+    records = (
+        reference_heatshrink.MAX_PAYLOAD // reference_heatshrink.TELEMETRY_RECORD_SIZE
+        + 1
+    )
 
     with pytest.raises(ValueError, match="16 KiB"):
         reference.input_for("heatshrink", {"records": records, "seed": 0})

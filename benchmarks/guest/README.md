@@ -77,7 +77,7 @@ The output is exactly 16 bytes: four little-endian `u32` fields.
 | 12–15 | auxiliary | secondary computation summary |
 
 The harness compares the guest output with the expected result independently computed
-or provided as pinned data by `../reference.py`.
+or provided as pinned data by `../reference/`.
 
 ## Adding a workload
 
@@ -103,8 +103,9 @@ Registration:
   `native::main` for the host-native build.
 - Mark C binary targets as requiring the `c-workloads` Cargo feature so Rust-only
   workloads remain buildable without the C toolchain.
-- Add its case to `../cases.json` and its expected-output logic to
-  `../reference.py`. The build discovers binaries from `workloads/src/bin/`, and
+- Add its case to `../cases.json` and its input/output model to the matching
+  module under `../reference/`. The build discovers binaries from
+  `workloads/src/bin/`, and
   the GCP image collects the resulting native executables automatically.
 - For third-party code or test vectors, update `THIRD_PARTY_NOTICES.md`, keep the
   applicable license under `licenses/`, and pin the exact source revision.

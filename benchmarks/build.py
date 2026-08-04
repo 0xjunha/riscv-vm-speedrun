@@ -215,10 +215,10 @@ def _project_input_paths(*, long: bool = False) -> tuple[Path, ...]:
         ROOT / "Dockerfile",
         ROOT / "build.py",
         ROOT / "cases.json",
-        ROOT / "reference.py",
     )
     if long:
         fixed += (ROOT / "long_cases.json",)
+    reference_sources = tuple((ROOT / "reference").rglob("*.py"))
     guest_configuration = (
         GUEST / ".cargo/config.toml",
         GUEST / "Cargo.lock",
@@ -246,6 +246,7 @@ def _project_input_paths(*, long: bool = False) -> tuple[Path, ...]:
         sorted(
             (
                 *fixed,
+                *reference_sources,
                 *guest_configuration,
                 GUEST / "THIRD_PARTY_NOTICES.md",
                 *guest_notices,

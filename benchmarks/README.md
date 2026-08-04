@@ -51,9 +51,10 @@ Application workloads and input profiles:
 - `cases.json` defines the public inputs, workload classification, deterministic
   generator profiles, and resource limits. Seeds are authored constants; no
   runtime randomness is used.
-- `reference.py` deterministically encodes case inputs and computes expected
-  outputs using independent Python implementations of the same functionality as
-  the Rust guest workloads, or previously verified expected values.
+- `reference/` contains one deterministic input and expected-output model per
+  workload, plus shared fixed-width helpers and the stable dispatch API. The
+  models independently implement the same functionality as the guest workloads,
+  or use previously verified expected values.
 - `guest/` contains the bare-metal Rust runtime and workload programs. The two
   C workload cores use small Rust wrappers to retain the common guest ABI.
 - `third_party/` contains the minimal pinned Rust and C sources used by workloads.
