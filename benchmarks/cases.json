@@ -1,5 +1,18 @@
 {
   "schema_version": 1,
+  "workload_categories": {
+    "arithmetic": "diagnostic",
+    "depthconv": "application",
+    "dijkstra": "application",
+    "heatshrink": "application",
+    "littlefs": "application",
+    "qrcode": "application",
+    "sha256": "application",
+    "sort_records": "application",
+    "streaming": "diagnostic",
+    "tiny": "diagnostic",
+    "x25519": "application"
+  },
   "cases": [
     {
       "id": "tiny",
@@ -48,6 +61,30 @@
       "output_limit": 16
     },
     {
+      "id": "sha256-pages",
+      "workload": "sha256",
+      "regime": "repeated firmware pages hashing",
+      "parameters": {
+        "length": 32768,
+        "profile": "repeated-pages",
+        "seed": 286331153
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "sha256-sparse",
+      "workload": "sha256",
+      "regime": "sparse erased-flash image hashing",
+      "parameters": {
+        "length": 32831,
+        "profile": "sparse-flash",
+        "seed": 572662306
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
       "id": "heatshrink",
       "workload": "heatshrink",
       "regime": "embedded telemetry compression",
@@ -59,12 +96,60 @@
       "output_limit": 16
     },
     {
+      "id": "heatshrink-steady",
+      "workload": "heatshrink",
+      "regime": "steady telemetry compression",
+      "parameters": {
+        "profile": "steady",
+        "records": 480,
+        "seed": 858993459
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "heatshrink-bursty",
+      "workload": "heatshrink",
+      "regime": "bursty multi-device telemetry compression",
+      "parameters": {
+        "profile": "bursty",
+        "records": 384,
+        "seed": 1145324612
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
       "id": "depthconv",
       "workload": "depthconv",
       "regime": "quantized depthwise convolution",
       "parameters": {
         "repetitions": 6,
         "seed": 324508639
+      },
+      "instruction_limit": 12000000,
+      "output_limit": 16
+    },
+    {
+      "id": "depthconv-sparse",
+      "workload": "depthconv",
+      "regime": "sparse quantized depthwise convolution",
+      "parameters": {
+        "profile": "sparse",
+        "repetitions": 6,
+        "seed": 1431655765
+      },
+      "instruction_limit": 12000000,
+      "output_limit": 16
+    },
+    {
+      "id": "depthconv-saturated",
+      "workload": "depthconv",
+      "regime": "saturation-heavy quantized depthwise convolution",
+      "parameters": {
+        "profile": "saturated",
+        "repetitions": 6,
+        "seed": 1717986918
       },
       "instruction_limit": 12000000,
       "output_limit": 16
@@ -83,6 +168,34 @@
       "output_limit": 16
     },
     {
+      "id": "dijkstra-clustered",
+      "workload": "dijkstra",
+      "regime": "clustered weighted graph shortest paths",
+      "parameters": {
+        "density": 55,
+        "nodes": 64,
+        "profile": "clustered",
+        "seed": 2004318071,
+        "sources": 24
+      },
+      "instruction_limit": 6000000,
+      "output_limit": 16
+    },
+    {
+      "id": "dijkstra-hub",
+      "workload": "dijkstra",
+      "regime": "hub-and-spoke weighted graph shortest paths",
+      "parameters": {
+        "density": 3,
+        "nodes": 64,
+        "profile": "hub",
+        "seed": 2290649224,
+        "sources": 24
+      },
+      "instruction_limit": 6000000,
+      "output_limit": 16
+    },
+    {
       "id": "sort_records",
       "workload": "sort_records",
       "regime": "bounded record sorting",
@@ -90,6 +203,32 @@
         "count": 2048,
         "passes": 4,
         "seed": 826366246
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "sort_records-ascending",
+      "workload": "sort_records",
+      "regime": "presorted bounded record sorting",
+      "parameters": {
+        "count": 2048,
+        "passes": 4,
+        "profile": "ascending",
+        "seed": 2576980377
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "sort_records-duplicates",
+      "workload": "sort_records",
+      "regime": "duplicate-heavy stable record sorting",
+      "parameters": {
+        "count": 2048,
+        "passes": 4,
+        "profile": "duplicate-heavy",
+        "seed": 2863311530
       },
       "instruction_limit": 10000000,
       "output_limit": 16
@@ -103,6 +242,106 @@
         "seed": 1432778632
       },
       "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "qrcode-compact",
+      "workload": "qrcode",
+      "regime": "compact provisioning QR with boosted error correction",
+      "parameters": {
+        "length": 32,
+        "seed": 3149642683
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "qrcode-capacity",
+      "workload": "qrcode",
+      "regime": "version-20 capacity-boundary provisioning QR",
+      "parameters": {
+        "length": 666,
+        "seed": 3435973836
+      },
+      "instruction_limit": 30000000,
+      "output_limit": 16
+    },
+    {
+      "id": "littlefs",
+      "workload": "littlefs",
+      "regime": "mixed in-memory flash filesystem trace",
+      "parameters": {
+        "operations": 64,
+        "profile": "mixed",
+        "repetitions": 1,
+        "seed": 2309737967
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "littlefs-append",
+      "workload": "littlefs",
+      "regime": "append-heavy in-memory flash filesystem trace",
+      "parameters": {
+        "operations": 72,
+        "profile": "append-heavy",
+        "repetitions": 1,
+        "seed": 3405691582
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "littlefs-metadata",
+      "workload": "littlefs",
+      "regime": "rename and remove filesystem metadata churn",
+      "parameters": {
+        "operations": 72,
+        "profile": "metadata-churn",
+        "repetitions": 1,
+        "seed": 3735928559
+      },
+      "instruction_limit": 10000000,
+      "output_limit": 16
+    },
+    {
+      "id": "x25519",
+      "workload": "x25519",
+      "regime": "RFC 7748 X25519 known-answer scalar multiplication",
+      "parameters": {
+        "pairs": 1,
+        "profile": "rfc7748",
+        "repetitions": 1,
+        "seed": 0
+      },
+      "instruction_limit": 6000000,
+      "output_limit": 16
+    },
+    {
+      "id": "x25519-generated",
+      "workload": "x25519",
+      "regime": "deterministic generated X25519 key agreement",
+      "parameters": {
+        "pairs": 1,
+        "profile": "generated",
+        "repetitions": 1,
+        "seed": 270544960
+      },
+      "instruction_limit": 6000000,
+      "output_limit": 16
+    },
+    {
+      "id": "x25519-carry",
+      "workload": "x25519",
+      "regime": "carry-heavy patterned X25519 scalar multiplication",
+      "parameters": {
+        "pairs": 1,
+        "profile": "carry-heavy",
+        "repetitions": 1,
+        "seed": 4042322160
+      },
+      "instruction_limit": 6000000,
       "output_limit": 16
     }
   ]
