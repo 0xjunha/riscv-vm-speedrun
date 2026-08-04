@@ -8,10 +8,24 @@ const CLANG_ENV: &str = "RVB_C_CLANG";
 const LLVM_AR_ENV: &str = "RVB_C_LLVM_AR";
 const C_WORKLOADS_FEATURE_ENV: &str = "CARGO_FEATURE_C_WORKLOADS";
 
+const LITTLEFS_DEFINES: &[&str] = &[
+    "LFS_NO_MALLOC",
+    "LFS_NO_ASSERT",
+    "LFS_NO_DEBUG",
+    "LFS_NO_WARN",
+    "LFS_NO_ERROR",
+];
+
+#[derive(Clone, Copy)]
+enum WarningPolicy {
+    Strict,
+    Upstream,
+}
+
 struct CSource {
     path: PathBuf,
-    strict: bool,
-    littlefs: bool,
+    warning_policy: WarningPolicy,
+    defines: &'static [&'static str],
 }
 
 fn main() {
@@ -50,28 +64,28 @@ fn compile_c_workloads(manifest: &Path) {
     let mut sources = vec![
         CSource {
             path: source_root.join("littlefs.c"),
-            strict: true,
-            littlefs: true,
+            warning_policy: WarningPolicy::Strict,
+            defines: LITTLEFS_DEFINES,
         },
         CSource {
             path: source_root.join("x25519.c"),
-            strict: true,
-            littlefs: false,
+            warning_policy: WarningPolicy::Strict,
+            defines: &[],
         },
         CSource {
             path: third_party.join("littlefs/lfs.c"),
-            strict: false,
-            littlefs: true,
+            warning_policy: WarningPolicy::Upstream,
+            defines: LITTLEFS_DEFINES,
         },
         CSource {
             path: third_party.join("littlefs/lfs_util.c"),
-            strict: false,
-            littlefs: true,
+            warning_policy: WarningPolicy::Upstream,
+            defines: LITTLEFS_DEFINES,
         },
         CSource {
             path: third_party.join("monocypher/monocypher.c"),
-            strict: false,
-            littlefs: false,
+            warning_policy: WarningPolicy::Upstream,
+            defines: &[],
         },
     ];
     if freestanding {
@@ -79,8 +93,8 @@ fn compile_c_workloads(manifest: &Path) {
             1,
             CSource {
                 path: source_root.join("c_compat.c"),
-                strict: true,
-                littlefs: false,
+                warning_policy: WarningPolicy::Strict,
+                defines: &[],
             },
         );
     }
@@ -138,17 +152,11 @@ fn compile_c_workloads(manifest: &Path) {
                 command.arg("-I").arg(include);
             }
         }
-        if source.strict {
+        if matches!(source.warning_policy, WarningPolicy::Strict) {
             command.args(["-Wall", "-Wextra", "-Wpedantic", "-Werror", "-Wdate-time"]);
         }
-        if source.littlefs {
-            command.args([
-                "-DLFS_NO_MALLOC",
-                "-DLFS_NO_ASSERT",
-                "-DLFS_NO_DEBUG",
-                "-DLFS_NO_WARN",
-                "-DLFS_NO_ERROR",
-            ]);
+        for define in source.defines {
+            command.arg(format!("-D{define}"));
         }
         run(&mut command, "C compilation");
         objects.push(object);
