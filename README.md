@@ -51,10 +51,10 @@ and replacing it with a fundamentally different one.
   <img src="assets/reference-vm-performance.svg" alt="Performance and coding-agent implementation effort across VM0 through VM5" width="720">
 </p>
 
-*Performance is the six-workload geometric mean after taking the median of five
-independent runs per workload. Agent-hours are reconstructed from Codex
-(`gpt-5.6-sol` Ultra) trajectories and represent total implementation time,
-not a controlled productivity measure.*
+*The historical chart uses the original six-workload geometric mean after
+taking the median of five independent runs per workload. Agent-hours are
+reconstructed from Codex (`gpt-5.6-sol` Ultra) trajectories and represent total
+implementation time, not a controlled productivity measure.*
 
 Benchmarks ran on GCP `c3-highcpu-4` with an Intel Xeon Platinum 8481C
 (Sapphire Rapids) and Ubuntu 24.04, using two warmups and seven timed repetitions.
@@ -63,7 +63,8 @@ VM4 and VM5 are compiler-based, platform-specific implementations that run only 
 
 ## Evaluation
 
-The public benchmark uses six no-std RISC-V application workloads:
+The public benchmark uses eight no-std RISC-V application workload families,
+with three deterministic input cases per workload:
 
 - [SHA-256](benchmarks/guest/workloads/src/bin/sha256.rs)
 - [Heatshrink compression](benchmarks/guest/workloads/src/bin/heatshrink.rs)
@@ -71,10 +72,13 @@ The public benchmark uses six no-std RISC-V application workloads:
 - [Dijkstra shortest paths](benchmarks/guest/workloads/src/bin/dijkstra.rs)
 - [Record sorting](benchmarks/guest/workloads/src/bin/sort_records.rs)
 - [QR-code generation](benchmarks/guest/workloads/src/bin/qrcode.rs)
+- [littlefs](benchmarks/guest/workloads/src/bin/littlefs.rs)
+- [X25519](benchmarks/guest/workloads/src/bin/x25519.rs)
 
-Each implementation is measured using per-workload median execution times.
-The summary reports geometric mean of performance of each implementation
-relative to VM0 and the x86-64 native workload implementations.
+Each implementation is measured using a median execution time for every case.
+The summary first takes the geometric mean across cases within each workload,
+then across workloads, and reports performance relative to VM0 and the x86-64
+native workload implementations.
 
 **VM startup and ELF loading are not timed**. For each case, a single VM process
 handles all timed `RUN` requests, allowing decoded or compiled code to be reused

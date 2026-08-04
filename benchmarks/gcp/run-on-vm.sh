@@ -34,6 +34,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 mkdir -p "$result_dir"
+cp /var/tmp/rv32im-benchmark-host-packages.txt "$result_dir/host-packages.txt"
 cd "$source_dir"
 sudo docker build \
     --build-arg "SOURCE_REVISION=$revision" \
@@ -46,6 +47,8 @@ sudo docker build \
     uname -a
     printf '\n'
     lscpu
+    printf '\nhost package contract:\n'
+    cat "$result_dir/host-packages.txt"
     printf '\n'
     sudo docker version
     printf '\nbenchmark image: '

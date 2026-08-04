@@ -28,19 +28,62 @@ set -a
 . "$env_file"
 set +a
 
+official_zone=asia-northeast3-a
+official_machine_type=c3-highcpu-4
+official_image_project=ubuntu-os-cloud
+official_image=ubuntu-2404-noble-amd64-v20260723
+official_cpu_platform='Intel Sapphire Rapids'
+official_cpu_model='Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz'
+readonly \
+    official_zone \
+    official_machine_type \
+    official_image_project \
+    official_image \
+    official_cpu_platform \
+    official_cpu_model
+
 : "${GCP_PROJECT:?set GCP_PROJECT in $env_file}"
-: "${GCP_ZONE:=asia-northeast3-a}"
+: "${GCP_BENCHMARK_PROFILE:=official}"
+: "${GCP_ZONE:=$official_zone}"
 : "${GCP_NETWORK:=default}"
 : "${GCP_SUBNET:=default}"
 : "${GCP_NETWORK_TAGS:=}"
-: "${GCP_MACHINE_TYPE:=c3-highcpu-4}"
-: "${GCP_IMAGE_PROJECT:=ubuntu-os-cloud}"
-: "${GCP_IMAGE_FAMILY:=ubuntu-2404-lts-amd64}"
+: "${GCP_MACHINE_TYPE:=$official_machine_type}"
+: "${GCP_IMAGE_PROJECT:=$official_image_project}"
+: "${GCP_IMAGE:=$official_image}"
 : "${GCP_INSTANCE_PREFIX:=rv32im-bench}"
 : "${GCP_USE_IAP:=0}"
 : "${BENCHMARK_WARMUPS:=2}"
 : "${BENCHMARK_REPETITIONS:=7}"
-: "${BENCHMARK_TIMEOUT_SECONDS:=10}"
+: "${BENCHMARK_TIMEOUT_SECONDS:=30}"
+
+if [ "${GCP_IMAGE_FAMILY+x}" = x ]; then
+    echo "GCP_IMAGE_FAMILY is no longer supported; set GCP_IMAGE to a concrete image name" >&2
+    exit 2
+fi
+
+require_official_value() {
+    if [ "$2" != "$3" ]; then
+        echo "official GCP benchmark requires $1=$3 (got $2)" >&2
+        exit 2
+    fi
+}
+
+case "$GCP_BENCHMARK_PROFILE" in
+    official)
+        require_official_value GCP_ZONE "$GCP_ZONE" "$official_zone"
+        require_official_value \
+            GCP_MACHINE_TYPE "$GCP_MACHINE_TYPE" "$official_machine_type"
+        require_official_value \
+            GCP_IMAGE_PROJECT "$GCP_IMAGE_PROJECT" "$official_image_project"
+        require_official_value GCP_IMAGE "$GCP_IMAGE" "$official_image"
+        ;;
+    authoring) ;;
+    *)
+        echo "GCP_BENCHMARK_PROFILE must be official or authoring" >&2
+        exit 2
+        ;;
+esac
 
 case "$GCP_PROJECT" in
     your-project-id)
@@ -141,14 +184,23 @@ mkdir -p "$result_dir"
 printf '%s\n' "$revision" >"$result_dir/source-revision.txt"
 git archive --format=tar.gz --output="$archive" HEAD
 
-image=$(gcloud compute images describe-from-family "$GCP_IMAGE_FAMILY" \
+gcloud compute images describe "$GCP_IMAGE" \
     --project="$GCP_IMAGE_PROJECT" \
-    --format='value(name)')
-if [ -z "$image" ]; then
-    echo "could not resolve GCP image family $GCP_IMAGE_FAMILY" >&2
-    exit 1
-fi
-printf '%s/%s\n' "$GCP_IMAGE_PROJECT" "$image" >"$result_dir/source-image.txt"
+    --format=json >"$result_dir/source-image.json"
+printf '%s/%s\n' "$GCP_IMAGE_PROJECT" "$GCP_IMAGE" >"$result_dir/source-image.txt"
+{
+    printf 'benchmark_profile=%s\n' "$GCP_BENCHMARK_PROFILE"
+    printf 'zone=%s\n' "$GCP_ZONE"
+    printf 'machine_type=%s\n' "$GCP_MACHINE_TYPE"
+    printf 'image=%s/%s\n' "$GCP_IMAGE_PROJECT" "$GCP_IMAGE"
+    printf 'threads_per_core=1\n'
+    printf 'maintenance_policy=TERMINATE\n'
+    printf 'automatic_restart=false\n'
+    if [ "$GCP_BENCHMARK_PROFILE" = official ]; then
+        printf 'expected_cpu_platform=%s\n' "$official_cpu_platform"
+        printf 'expected_cpu_model=%s\n' "$official_cpu_model"
+    fi
+} >"$result_dir/host-contract.txt"
 
 if gcloud compute instances describe "$instance" \
     --project="$GCP_PROJECT" \
@@ -164,8 +216,10 @@ gcloud compute instances create "$instance" \
     --zone="$GCP_ZONE" \
     --machine-type="$GCP_MACHINE_TYPE" \
     --provisioning-model=STANDARD \
+    --maintenance-policy=TERMINATE \
+    --no-restart-on-failure \
     --threads-per-core=1 \
-    --image="$image" \
+    --image="$GCP_IMAGE" \
     --image-project="$GCP_IMAGE_PROJECT" \
     --boot-disk-size=100GB \
     --boot-disk-type=hyperdisk-balanced \
@@ -188,6 +242,56 @@ gcloud compute instances describe "$instance" \
     --zone="$GCP_ZONE" \
     --format=json >"$result_dir/instance.json"
 
+if [ "$GCP_BENCHMARK_PROFILE" = official ]; then
+    python3 - \
+        "$result_dir/instance.json" \
+        "$official_zone" \
+        "$official_machine_type" \
+        "$official_cpu_platform" <<'PY'
+import json
+import sys
+
+
+def resource_name(value):
+    return str(value).rstrip("/").rsplit("/", 1)[-1]
+
+
+path, expected_zone, expected_machine, expected_platform = sys.argv[1:]
+with open(path, encoding="utf-8") as instance_file:
+    instance = json.load(instance_file)
+
+actual = {
+    "zone": resource_name(instance.get("zone", "")),
+    "machine type": resource_name(instance.get("machineType", "")),
+    "CPU platform": str(instance.get("cpuPlatform", "")),
+    "threads per core": str(
+        instance.get("advancedMachineFeatures", {}).get("threadsPerCore", "")
+    ),
+    "maintenance policy": str(
+        instance.get("scheduling", {}).get("onHostMaintenance", "")
+    ),
+    "automatic restart": instance.get("scheduling", {}).get("automaticRestart"),
+}
+expected = {
+    "zone": expected_zone,
+    "machine type": expected_machine,
+    "CPU platform": expected_platform,
+    "threads per core": "1",
+    "maintenance policy": "TERMINATE",
+    "automatic restart": False,
+}
+errors = [
+    f"{name}: expected {expected[name]!r}, got {value!r}"
+    for name, value in actual.items()
+    if value != expected[name]
+]
+if errors:
+    for error in errors:
+        print(f"official GCP instance contract mismatch: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+fi
+
 echo "Waiting for Docker"
 deadline=$(($(date +%s) + 600))
 while ! gcloud compute ssh "$instance" \
@@ -206,6 +310,43 @@ while ! gcloud compute ssh "$instance" \
     fi
     sleep 5
 done
+
+gcloud compute ssh "$instance" \
+    --project="$GCP_PROJECT" \
+    --zone="$GCP_ZONE" \
+    ${iap_flag:+"$iap_flag"} \
+    --command='LC_ALL=C lscpu --json' \
+    --quiet >"$result_dir/host-lscpu.json"
+
+python3 - \
+    "$result_dir/host-lscpu.json" \
+    "$GCP_BENCHMARK_PROFILE" \
+    "$official_cpu_model" <<'PY'
+import json
+import sys
+
+
+path, profile, expected_model = sys.argv[1:]
+with open(path, encoding="utf-8") as lscpu_file:
+    rows = json.load(lscpu_file).get("lscpu", [])
+facts = {
+    str(row.get("field", "")).rstrip(":"): str(row.get("data", ""))
+    for row in rows
+}
+
+errors = []
+threads_per_core = facts.get("Thread(s) per core", "")
+if threads_per_core != "1":
+    errors.append(f"threads per core: expected '1', got {threads_per_core!r}")
+if profile == "official":
+    cpu_model = facts.get("Model name", "")
+    if cpu_model != expected_model:
+        errors.append(f"CPU model: expected {expected_model!r}, got {cpu_model!r}")
+if errors:
+    for error in errors:
+        print(f"GCP guest CPU contract mismatch: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 gcloud compute scp "$archive" "$instance:$remote_archive" \
     --project="$GCP_PROJECT" \
