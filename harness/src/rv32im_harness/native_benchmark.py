@@ -16,10 +16,11 @@ from .benchmark import (
     DEFAULT_REPETITIONS,
     DEFAULT_TIMEOUT,
     DEFAULT_WARMUPS,
+    BenchmarkCase,
     BenchmarkFailure,
-    _load_manifest,
+    BenchmarkSuite,
     _run_count,
-    _select_cases,
+    load_benchmark_suite,
 )
 from .vm_client import VmError, VmTimeout, _diagnostic, _run_command
 
@@ -54,7 +55,7 @@ def _executable(directory: Path, workload: str) -> Path:
 
 def _measure_case(
     directory: Path,
-    case,
+    case: BenchmarkCase,
     warmups: int,
     repetitions: int,
     timeout: float,
@@ -125,6 +126,59 @@ def _measure_case(
     }
 
 
+def _native_configuration(
+    directory: str | os.PathLike[str],
+    warmups: int,
+    repetitions: int,
+    timeout: float,
+) -> tuple[Path, int, int, float]:
+    warmups = _run_count(warmups, "warmups", allow_zero=True)
+    repetitions = _run_count(repetitions, "repetitions", allow_zero=False)
+    timeout = _positive_timeout(timeout)
+    root = Path(directory).expanduser().resolve()
+    if not root.is_dir():
+        raise BenchmarkFailure(f"native executable directory is invalid: {root}")
+    return root, warmups, repetitions, timeout
+
+
+def _run_native_benchmark_suite(
+    root: Path,
+    suite: BenchmarkSuite,
+    warmups: int,
+    repetitions: int,
+    timeout: float,
+) -> dict[str, object]:
+
+    results = [
+        _measure_case(root, case, warmups, repetitions, timeout) for case in suite.cases
+    ]
+    return {
+        "schema_version": 1,
+        "manifest_sha256": suite.sha256,
+        "interface": "native",
+        "warmups": warmups,
+        "repetitions": repetitions,
+        "timeout_seconds": timeout,
+        "cases": results,
+    }
+
+
+def run_native_benchmark_suite(
+    directory: str | os.PathLike[str],
+    suite: BenchmarkSuite,
+    *,
+    warmups: int = DEFAULT_WARMUPS,
+    repetitions: int = DEFAULT_REPETITIONS,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, object]:
+    """Measure native executables for a loaded benchmark suite."""
+
+    root, warmups, repetitions, timeout = _native_configuration(
+        directory, warmups, repetitions, timeout
+    )
+    return _run_native_benchmark_suite(root, suite, warmups, repetitions, timeout)
+
+
 def run_native_benchmarks(
     directory: str | os.PathLike[str],
     manifest: str | os.PathLike[str] = DEFAULT_MANIFEST,
@@ -134,26 +188,16 @@ def run_native_benchmarks(
     timeout: float = DEFAULT_TIMEOUT,
     case_ids: Sequence[str] | None = None,
 ) -> dict[str, object]:
-    """Validate and measure native executables for the selected workloads."""
+    """Load and measure native executables for the selected workloads."""
 
-    warmups = _run_count(warmups, "warmups", allow_zero=True)
-    repetitions = _run_count(repetitions, "repetitions", allow_zero=False)
-    timeout = _positive_timeout(timeout)
-    root = Path(directory).expanduser().resolve()
-    if not root.is_dir():
-        raise BenchmarkFailure(f"native executable directory is invalid: {root}")
-
-    loaded = _load_manifest(Path(manifest))
-    cases = _select_cases(loaded.cases, case_ids)
-    results = [
-        _measure_case(root, case, warmups, repetitions, timeout) for case in cases
-    ]
-    return {
-        "schema_version": 1,
-        "manifest_sha256": loaded.sha256,
-        "interface": "native",
-        "warmups": warmups,
-        "repetitions": repetitions,
-        "timeout_seconds": timeout,
-        "cases": results,
-    }
+    root, warmups, repetitions, timeout = _native_configuration(
+        directory, warmups, repetitions, timeout
+    )
+    suite = load_benchmark_suite(manifest).select(case_ids)
+    return _run_native_benchmark_suite(
+        root,
+        suite,
+        warmups,
+        repetitions,
+        timeout,
+    )

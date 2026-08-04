@@ -16,7 +16,9 @@ from rv32im_harness.benchmark import (
     _read_artifact,
     _require_outcome,
     _select_cases,
+    load_benchmark_suite,
     main,
+    run_benchmark_suite,
     run_benchmarks,
 )
 from rv32im_harness.vm_interface import MAX_INPUT_SIZE, RunOutcome, RunResult, Trap
@@ -53,6 +55,7 @@ def _manifest(
         record: dict[str, object] = {
             "id": case_id,
             "workload": case_id,
+            "category": "diagnostic",
             "regime": "smoke",
             "expected_exit_code": 0,
             "instruction_limit": 100,
@@ -118,7 +121,7 @@ def test_run_benchmarks_measures_only_persistent_runs(
         "interface": "serve",
         "warmups": 1,
         "repetitions": 3,
-        "timeout_seconds": 10.0,
+        "timeout_seconds": 30.0,
         "cases": [
             {
                 "id": "tiny",
@@ -272,6 +275,33 @@ def test_each_selected_case_uses_a_fresh_server(
     ]
 
 
+def test_loaded_suite_selection_reuses_immutable_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _manifest(tmp_path, ("tiny", "streaming"))
+    suite = load_benchmark_suite(manifest)
+    selected = suite.select(("streaming",))
+    log = tmp_path / "requests"
+    monkeypatch.setenv("STUB_VM_LOG", str(log))
+
+    # Once loaded, a selection is independent of later on-disk changes.
+    (manifest.parent / "input/streaming.bin").write_bytes(b"changed")
+    result = run_benchmark_suite(
+        STUB_VM,
+        selected,
+        warmups=0,
+        repetitions=1,
+    )
+
+    assert suite.cases != selected.cases
+    assert [case.case_id for case in suite.cases] == ["tiny", "streaming"]
+    assert [case.category for case in suite.cases] == ["diagnostic", "diagnostic"]
+    assert [case.case_id for case in selected.cases] == ["streaming"]
+    assert [case["id"] for case in result["cases"]] == ["streaming"]
+    assert result["manifest_sha256"] == suite.sha256
+
+
 @pytest.mark.parametrize(
     ("case_ids", "message"),
     [
@@ -304,6 +334,32 @@ def test_manifest_verifies_artifact_hash_and_size(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(document))
     with pytest.raises(BenchmarkFailure, match="input size"):
         _load_manifest(manifest)
+
+
+def test_schema_v1_manifest_defaults_missing_category_to_diagnostic(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path)
+    document = json.loads(manifest.read_text())
+    del document["cases"][0]["category"]
+    manifest.write_text(json.dumps(document))
+
+    suite = load_benchmark_suite(manifest)
+
+    assert suite.cases[0].category == "diagnostic"
+
+
+@pytest.mark.parametrize("category", [None, "other", 1])
+def test_manifest_rejects_invalid_present_category(
+    tmp_path: Path, category: object
+) -> None:
+    manifest = _manifest(tmp_path)
+    document = json.loads(manifest.read_text())
+    document["cases"][0]["category"] = category
+    manifest.write_text(json.dumps(document))
+
+    with pytest.raises(BenchmarkFailure, match="category is invalid"):
+        load_benchmark_suite(manifest)
 
 
 def test_manifest_rejects_artifact_size_metadata_above_its_limit(

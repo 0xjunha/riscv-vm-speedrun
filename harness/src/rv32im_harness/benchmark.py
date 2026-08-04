@@ -27,7 +27,7 @@ from .vm_interface import (
 DEFAULT_MANIFEST = Path("benchmarks/artifacts/manifest.json")
 DEFAULT_WARMUPS = 2
 DEFAULT_REPETITIONS = 7
-DEFAULT_TIMEOUT = 10.0
+DEFAULT_TIMEOUT = 30.0
 
 
 class BenchmarkFailure(RuntimeError):
@@ -35,9 +35,12 @@ class BenchmarkFailure(RuntimeError):
 
 
 @dataclass(frozen=True)
-class _Case:
+class BenchmarkCase:
+    """One fully validated benchmark case loaded into immutable memory."""
+
     case_id: str
     workload: str
+    category: str
     elf: bytes
     input_data: bytes
     expected_output: bytes
@@ -47,9 +50,25 @@ class _Case:
 
 
 @dataclass(frozen=True)
-class _Manifest:
+class BenchmarkSuite:
+    """A validated manifest and its immutable in-memory artifact payloads."""
+
     sha256: str
-    cases: tuple[_Case, ...]
+    cases: tuple[BenchmarkCase, ...]
+
+    def select(self, case_ids: Sequence[str] | None = None) -> BenchmarkSuite:
+        """Return a case selection without rereading or rehashing artifacts."""
+
+        selected = _select_cases(self.cases, case_ids)
+        if selected is self.cases:
+            return self
+        return BenchmarkSuite(self.sha256, selected)
+
+
+# Compatibility aliases for existing internal callers. New code should use the
+# public immutable suite API above.
+_Case = BenchmarkCase
+_Manifest = BenchmarkSuite
 
 
 def _bounded_integer(
@@ -123,8 +142,12 @@ def _read_artifact(
     return data
 
 
-def _load_manifest(path: Path) -> _Manifest:
-    path = path.resolve()
+def load_benchmark_suite(
+    manifest: str | os.PathLike[str] = DEFAULT_MANIFEST,
+) -> BenchmarkSuite:
+    """Load, validate, and hash a benchmark suite and all referenced artifacts."""
+
+    path = Path(manifest).resolve()
     try:
         payload = path.read_bytes()
         document = json.loads(payload)
@@ -155,6 +178,16 @@ def _load_manifest(path: Path) -> _Manifest:
         ):
             raise BenchmarkFailure(f"manifest case is invalid: {case_id!r}")
         seen.add(case_id)
+        # ``category`` was added to schema v1 after the initial manifests had
+        # shipped. Treat an omitted value as diagnostic so a legacy manifest
+        # cannot enter an application aggregate, while still rejecting a
+        # malformed value when the field is present.
+        category = record.get("category", "diagnostic")
+        if not isinstance(category, str) or category not in {
+            "diagnostic",
+            "application",
+        }:
+            raise BenchmarkFailure(f"{case_id}: category is invalid")
 
         expected_exit_code = _bounded_integer(
             record, "expected_exit_code", 0xFFFF_FFFF, case_id
@@ -175,9 +208,10 @@ def _load_manifest(path: Path) -> _Manifest:
             output_limit,
         )
         cases.append(
-            _Case(
+            BenchmarkCase(
                 case_id,
                 workload,
+                category,
                 elf,
                 input_data,
                 expected_output,
@@ -189,13 +223,19 @@ def _load_manifest(path: Path) -> _Manifest:
 
     if not cases:
         raise BenchmarkFailure("manifest contains no cases")
-    return _Manifest(hashlib.sha256(payload).hexdigest(), tuple(cases))
+    return BenchmarkSuite(hashlib.sha256(payload).hexdigest(), tuple(cases))
+
+
+def _load_manifest(path: Path) -> BenchmarkSuite:
+    """Compatibility wrapper for the former private manifest loader."""
+
+    return load_benchmark_suite(path)
 
 
 def _select_cases(
-    cases: tuple[_Case, ...],
+    cases: tuple[BenchmarkCase, ...],
     case_ids: Sequence[str] | None,
-) -> tuple[_Case, ...]:
+) -> tuple[BenchmarkCase, ...]:
     if case_ids is None:
         return cases
     requested = tuple(case_ids)
@@ -213,7 +253,7 @@ def _select_cases(
 
 
 def _require_outcome(
-    case: _Case,
+    case: BenchmarkCase,
     phase: str,
     outcome: RunOutcome,
     retired_instructions: int | None = None,
@@ -243,7 +283,7 @@ def _require_outcome(
     return result.retired_instructions
 
 
-def _run_untimed(server: VmServer, case: _Case, phase: str) -> RunOutcome:
+def _run_untimed(server: VmServer, case: BenchmarkCase, phase: str) -> RunOutcome:
     try:
         return server.run(
             case.input_data,
@@ -256,7 +296,7 @@ def _run_untimed(server: VmServer, case: _Case, phase: str) -> RunOutcome:
 
 def _measure_case(
     server: VmServer,
-    case: _Case,
+    case: BenchmarkCase,
     warmups: int,
     repetitions: int,
 ) -> dict[str, object]:
@@ -313,23 +353,20 @@ def _run_count(value: int, name: str, *, allow_zero: bool) -> int:
     return value
 
 
-def run_benchmarks(
+def run_benchmark_suite(
     executable: str | os.PathLike[str],
-    manifest: str | os.PathLike[str] = DEFAULT_MANIFEST,
+    suite: BenchmarkSuite,
     *,
     warmups: int = DEFAULT_WARMUPS,
     repetitions: int = DEFAULT_REPETITIONS,
     timeout: float = DEFAULT_TIMEOUT,
-    case_ids: Sequence[str] | None = None,
 ) -> dict[str, object]:
-    """Validate and measure each selected case in a fresh VM server."""
+    """Measure a loaded suite without rereading its manifest or artifacts."""
 
     warmups = _run_count(warmups, "warmups", allow_zero=True)
     repetitions = _run_count(repetitions, "repetitions", allow_zero=False)
-    loaded = _load_manifest(Path(manifest))
-    cases = _select_cases(loaded.cases, case_ids)
     results = []
-    for case in cases:
+    for case in suite.cases:
         try:
             with VmServer(executable, timeout=timeout) as server:
                 result = _measure_case(server, case, warmups, repetitions)
@@ -340,13 +377,38 @@ def run_benchmarks(
         results.append(result)
     return {
         "schema_version": 1,
-        "manifest_sha256": loaded.sha256,
+        "manifest_sha256": suite.sha256,
         "interface": "serve",
         "warmups": warmups,
         "repetitions": repetitions,
         "timeout_seconds": float(timeout),
         "cases": results,
     }
+
+
+def run_benchmarks(
+    executable: str | os.PathLike[str],
+    manifest: str | os.PathLike[str] = DEFAULT_MANIFEST,
+    *,
+    warmups: int = DEFAULT_WARMUPS,
+    repetitions: int = DEFAULT_REPETITIONS,
+    timeout: float = DEFAULT_TIMEOUT,
+    case_ids: Sequence[str] | None = None,
+) -> dict[str, object]:
+    """Load and measure each selected case in a fresh VM server."""
+
+    # Preserve configuration-error precedence without loading an otherwise
+    # unused suite.
+    _run_count(warmups, "warmups", allow_zero=True)
+    _run_count(repetitions, "repetitions", allow_zero=False)
+    suite = load_benchmark_suite(manifest).select(case_ids)
+    return run_benchmark_suite(
+        executable,
+        suite,
+        warmups=warmups,
+        repetitions=repetitions,
+        timeout=timeout,
+    )
 
 
 def _json_text(result: dict[str, object]) -> str:

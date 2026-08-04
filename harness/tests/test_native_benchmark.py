@@ -6,8 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from rv32im_harness.benchmark import BenchmarkFailure
-from rv32im_harness.native_benchmark import run_native_benchmarks
+from rv32im_harness.benchmark import BenchmarkFailure, load_benchmark_suite
+from rv32im_harness.native_benchmark import (
+    run_native_benchmark_suite,
+    run_native_benchmarks,
+)
 
 
 def _artifact(
@@ -31,6 +34,7 @@ def _manifest(temporary: Path, expected: bytes = b"input") -> Path:
     record: dict[str, object] = {
         "id": "tiny",
         "workload": "tiny",
+        "category": "diagnostic",
         "expected_exit_code": 0,
         "instruction_limit": 100,
         "output_limit": 64,
@@ -104,6 +108,23 @@ def test_native_benchmark_rejects_incorrect_output(tmp_path: Path) -> None:
 
     with pytest.raises(BenchmarkFailure, match="native output differs"):
         run_native_benchmarks(directory, manifest, warmups=0, repetitions=1)
+
+
+def test_native_benchmark_suite_reuses_loaded_artifacts(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    suite = load_benchmark_suite(manifest)
+    directory = _native_executable(tmp_path)
+    (manifest.parent / "input/tiny.bin").write_bytes(b"changed")
+
+    result = run_native_benchmark_suite(
+        directory,
+        suite,
+        warmups=0,
+        repetitions=1,
+    )
+
+    assert result["manifest_sha256"] == suite.sha256
+    assert [case["id"] for case in result["cases"]] == ["tiny"]
 
 
 @pytest.mark.parametrize(

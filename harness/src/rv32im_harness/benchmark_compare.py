@@ -17,9 +17,10 @@ from .benchmark import (
     DEFAULT_TIMEOUT,
     DEFAULT_WARMUPS,
     BenchmarkFailure,
-    run_benchmarks,
+    load_benchmark_suite,
+    run_benchmark_suite,
 )
-from .native_benchmark import run_native_benchmarks
+from .native_benchmark import run_native_benchmark_suite
 
 _MATCHING_RUN_FIELDS = (
     "schema_version",
@@ -28,6 +29,7 @@ _MATCHING_RUN_FIELDS = (
     "repetitions",
     "timeout_seconds",
 )
+_CHUNK_RUN_FIELDS = (*_MATCHING_RUN_FIELDS, "interface")
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,15 @@ class _AggregateContext:
     native: str
     labels: tuple[str, ...]
     case_ids: tuple[str, ...]
+    workloads: Mapping[str, str]
     medians: Mapping[str, Mapping[str, int | float]]
+
+
+@dataclass(frozen=True)
+class _Participant:
+    label: str
+    interface: str
+    path: str
 
 
 def _valid_label(label: object) -> bool:
@@ -177,6 +187,40 @@ def _comparisons(
     return comparisons
 
 
+def _append_case_run(
+    runs: dict[str, dict[str, object]],
+    label: str,
+    result: dict[str, object],
+    case_id: str,
+    workload: str,
+    interface: str,
+) -> None:
+    if result.get("interface") != interface:
+        raise BenchmarkFailure(f"{case_id} run has an invalid interface")
+    cases = result.get("cases")
+    if not isinstance(cases, list) or len(cases) != 1:
+        raise BenchmarkFailure(f"{case_id} run must contain exactly one case")
+    measured = cases[0]
+    if not isinstance(measured, dict):
+        raise BenchmarkFailure(f"{case_id} run case is invalid")
+    if measured.get("id") != case_id:
+        raise BenchmarkFailure(f"{case_id} run returned a different case ID")
+    if measured.get("workload") != workload:
+        raise BenchmarkFailure(f"{case_id} run returned a different workload")
+
+    assembled = runs.get(label)
+    if assembled is None:
+        runs[label] = {**result, "cases": [measured]}
+        return
+    for field in _CHUNK_RUN_FIELDS:
+        if assembled.get(field) != result.get(field):
+            raise BenchmarkFailure(f"{case_id} run disagrees on {field}")
+    assembled_cases = assembled.get("cases")
+    if not isinstance(assembled_cases, list):
+        raise BenchmarkFailure(f"{case_id} assembled run cases are invalid")
+    assembled_cases.append(measured)
+
+
 def run_comparison(
     executables: Mapping[str, str | os.PathLike[str]],
     baseline: str,
@@ -204,36 +248,57 @@ def run_comparison(
         native_record = (label, path)
 
     selected_cases = None if case_ids is None else tuple(case_ids)
-    runs = {}
-    implementations = {}
-    for label, executable in records:
-        implementations[label] = {"interface": "serve", "path": executable}
-        try:
-            runs[label] = run_benchmarks(
-                executable,
-                manifest,
-                warmups=warmups,
-                repetitions=repetitions,
-                timeout=timeout,
-                case_ids=selected_cases,
-            )
-        except BenchmarkFailure as error:
-            raise BenchmarkFailure(f"{label}: {error}") from error
-
+    suite = load_benchmark_suite(manifest).select(selected_cases)
+    runs: dict[str, dict[str, object]] = {}
+    participants = [
+        _Participant(label, "serve", executable) for label, executable in records
+    ]
     if native_record is not None:
         label, directory = native_record
-        implementations[label] = {"interface": "native", "path": directory}
-        try:
-            runs[label] = run_native_benchmarks(
-                directory,
-                manifest,
-                warmups=warmups,
-                repetitions=repetitions,
-                timeout=timeout,
-                case_ids=selected_cases,
-            )
-        except BenchmarkFailure as error:
-            raise BenchmarkFailure(f"{label}: {error}") from error
+        participants.append(_Participant(label, "native", directory))
+    participant_records = tuple(participants)
+    implementations = {
+        participant.label: {
+            "interface": participant.interface,
+            "path": participant.path,
+        }
+        for participant in participant_records
+    }
+
+    for case_index, case in enumerate(suite.cases):
+        case_suite = suite.select((case.case_id,))
+        rotation = case_index % len(participant_records)
+        ordered_participants = (
+            participant_records[rotation:] + participant_records[:rotation]
+        )
+        for participant in ordered_participants:
+            try:
+                if participant.interface == "serve":
+                    result = run_benchmark_suite(
+                        participant.path,
+                        case_suite,
+                        warmups=warmups,
+                        repetitions=repetitions,
+                        timeout=timeout,
+                    )
+                else:
+                    result = run_native_benchmark_suite(
+                        participant.path,
+                        case_suite,
+                        warmups=warmups,
+                        repetitions=repetitions,
+                        timeout=timeout,
+                    )
+                _append_case_run(
+                    runs,
+                    participant.label,
+                    result,
+                    case.case_id,
+                    case.workload,
+                    participant.interface,
+                )
+            except BenchmarkFailure as error:
+                raise BenchmarkFailure(f"{participant.label}: {error}") from error
 
     baseline_result = runs[baseline]
     comparisons = []
@@ -245,6 +310,14 @@ def run_comparison(
         "schema_version": 1,
         "baseline": baseline,
         "implementations": implementations,
+        "schedule": {
+            "strategy": "case_interleaved_rotating_participants",
+            "case_order": [case.case_id for case in suite.cases],
+            "initial_participant_order": [
+                participant.label for participant in participant_records
+            ],
+            "rotation": "left_by_case_index",
+        },
         "runs": runs,
         "comparisons": comparisons,
     }
@@ -274,9 +347,9 @@ def _table_text(headers: tuple[str, ...], rows: Sequence[tuple[str, ...]]) -> st
     )
 
 
-def _run_case_medians(
+def _run_case_data(
     result: dict[str, object], implementation: str
-) -> tuple[tuple[str, ...], dict[str, int | float]]:
+) -> tuple[tuple[str, ...], dict[str, str], dict[str, int | float]]:
     runs = result.get("runs")
     if not isinstance(runs, Mapping):
         raise BenchmarkFailure("benchmark comparison runs are invalid")
@@ -286,18 +359,27 @@ def _run_case_medians(
         raise BenchmarkFailure(f"{implementation} benchmark cases are invalid")
 
     case_ids = []
+    workloads = {}
     medians = {}
     for index, case in enumerate(cases):
         case_id = case.get("id") if isinstance(case, Mapping) else None
-        if not isinstance(case_id, str) or not case_id or case_id in medians:
+        workload = case.get("workload") if isinstance(case, Mapping) else None
+        if (
+            not isinstance(case_id, str)
+            or not case_id
+            or case_id in medians
+            or not isinstance(workload, str)
+            or not workload
+        ):
             raise BenchmarkFailure(
                 f"{implementation} benchmark case {index} is invalid"
             )
         case_ids.append(case_id)
+        workloads[case_id] = workload
         medians[case_id] = _positive_median(
             case.get("median_ns"), f"{implementation} {case_id}"
         )
-    return tuple(case_ids), medians
+    return tuple(case_ids), workloads, medians
 
 
 def _geometric_mean(values: Sequence[float]) -> float:
@@ -325,19 +407,25 @@ def _aggregate_context(result: dict[str, object], report: str) -> _AggregateCont
         if not (isinstance(record, Mapping) and record.get("interface") == "native")
     ) + (native,)
 
-    case_ids, baseline_medians = _run_case_medians(result, baseline)
+    case_ids, workloads, baseline_medians = _run_case_data(result, baseline)
     medians_by_implementation = {baseline: baseline_medians}
     for implementation in labels:
         if implementation == baseline:
             continue
-        implementation_case_ids, medians = _run_case_medians(result, implementation)
+        implementation_case_ids, implementation_workloads, medians = _run_case_data(
+            result, implementation
+        )
         if implementation_case_ids != case_ids:
             raise BenchmarkFailure(
                 f"{implementation} run contains different benchmark cases"
             )
+        if implementation_workloads != workloads:
+            raise BenchmarkFailure(
+                f"{implementation} run contains different workload metadata"
+            )
         medians_by_implementation[implementation] = medians
     return _AggregateContext(
-        baseline, native, labels, case_ids, medians_by_implementation
+        baseline, native, labels, case_ids, workloads, medians_by_implementation
     )
 
 
@@ -363,24 +451,100 @@ def _aggregate_ratios(
     )
 
 
-def _application_summary_text(
-    result: dict[str, object], application_case_ids: Sequence[str]
-) -> str | None:
-    requested = tuple(application_case_ids)
-    if not requested:
-        return None
-    if any(not isinstance(case_id, str) or not case_id for case_id in requested):
-        raise BenchmarkFailure("application case IDs must be nonempty strings")
-    if len(set(requested)) != len(requested):
-        raise BenchmarkFailure("application case selection contains duplicate IDs")
+def _validated_application_selection(
+    values: Sequence[str], kind: str
+) -> tuple[str, ...]:
+    requested = tuple(values)
+    if any(not isinstance(value, str) or not value for value in requested):
+        raise BenchmarkFailure(f"application {kind}s must be nonempty strings")
+    duplicates = tuple(
+        dict.fromkeys(value for value in requested if requested.count(value) > 1)
+    )
+    if duplicates:
+        raise BenchmarkFailure(
+            f"application {kind} selection contains duplicates: {', '.join(duplicates)}"
+        )
+    return requested
 
-    baseline = str(result["baseline"])
-    _, baseline_medians = _run_case_medians(result, baseline)
-    selected = tuple(case_id for case_id in requested if case_id in baseline_medians)
-    if not selected:
+
+def _application_workload_cases(
+    aggregate: _AggregateContext,
+    application_case_ids: Sequence[str],
+    application_workloads: Sequence[str],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    requested_cases = _validated_application_selection(application_case_ids, "case ID")
+    requested_workloads = _validated_application_selection(
+        application_workloads, "workload"
+    )
+    if requested_cases and requested_workloads:
+        raise BenchmarkFailure(
+            "application aggregate cannot mix case and workload selections"
+        )
+    if not requested_cases and not requested_workloads:
+        return ()
+
+    if requested_workloads:
+        available_workloads = set(aggregate.workloads.values())
+        unknown = tuple(
+            workload
+            for workload in requested_workloads
+            if workload not in available_workloads
+        )
+        if unknown:
+            raise BenchmarkFailure(
+                f"unknown application workloads: {', '.join(unknown)}"
+            )
+        return tuple(
+            (
+                workload,
+                tuple(
+                    case_id
+                    for case_id in aggregate.case_ids
+                    if aggregate.workloads[case_id] == workload
+                ),
+            )
+            for workload in requested_workloads
+        )
+
+    available_cases = set(aggregate.case_ids)
+    unknown = tuple(
+        case_id for case_id in requested_cases if case_id not in available_cases
+    )
+    if unknown:
+        raise BenchmarkFailure(f"unknown application case IDs: {', '.join(unknown)}")
+    grouped: dict[str, list[str]] = {}
+    for case_id in requested_cases:
+        grouped.setdefault(aggregate.workloads[case_id], []).append(case_id)
+    return tuple((workload, tuple(case_ids)) for workload, case_ids in grouped.items())
+
+
+def _workload_balanced_ratios(
+    aggregate: _AggregateContext,
+    implementation: str,
+    workload_cases: Sequence[tuple[str, tuple[str, ...]]],
+) -> tuple[float, float]:
+    workload_ratios = [
+        _aggregate_ratios(aggregate, implementation, case_ids)
+        for _, case_ids in workload_cases
+    ]
+    return (
+        _geometric_mean([speedup for speedup, _ in workload_ratios]),
+        _geometric_mean([native_fraction for _, native_fraction in workload_ratios]),
+    )
+
+
+def _application_summary_text(
+    result: dict[str, object],
+    application_case_ids: Sequence[str] = (),
+    application_workloads: Sequence[str] = (),
+) -> str | None:
+    if not application_case_ids and not application_workloads:
         return None
 
     aggregate = _aggregate_context(result, "application aggregate")
+    workload_cases = _application_workload_cases(
+        aggregate, application_case_ids, application_workloads
+    )
     implementation_labels = (
         aggregate.baseline,
         *(
@@ -393,10 +557,8 @@ def _application_summary_text(
 
     rows = []
     for implementation in implementation_labels:
-        speedup, native_fraction = _aggregate_ratios(
-            aggregate,
-            implementation,
-            selected,
+        speedup, native_fraction = _workload_balanced_ratios(
+            aggregate, implementation, workload_cases
         )
         rows.append(
             (
@@ -413,13 +575,24 @@ def _application_summary_text(
         f"{aggregate.native} performance",
         f"time vs {aggregate.native}",
     )
+    selected = {
+        case_id
+        for _, workload_case_ids in workload_cases
+        for case_id in workload_case_ids
+    }
     excluded = tuple(
-        case_id for case_id in aggregate.case_ids if case_id not in set(selected)
+        case_id for case_id in aggregate.case_ids if case_id not in selected
     )
+    case_count = sum(len(case_ids) for _, case_ids in workload_cases)
+    workload_count = len(workload_cases)
     description = (
-        f"geometric mean across {len(selected)} application "
-        f"{'workload' if len(selected) == 1 else 'workloads'}"
+        f"geometric mean across {workload_count} application "
+        f"{'workload' if workload_count == 1 else 'workloads'}"
     )
+    if case_count != workload_count:
+        description += (
+            f", after geometric means within each workload ({case_count} cases total)"
+        )
     lines = ["application aggregate", description]
     if excluded:
         lines.append(f"excluded cases: {', '.join(excluded)}")
@@ -491,7 +664,9 @@ def _horizon_summary_text(result: dict[str, object]) -> str:
 
 
 def _summary_text(
-    result: dict[str, object], application_case_ids: Sequence[str] = ()
+    result: dict[str, object],
+    application_case_ids: Sequence[str] = (),
+    application_workloads: Sequence[str] = (),
 ) -> str:
     baseline = str(result["baseline"])
     comparisons = result["comparisons"]
@@ -514,7 +689,9 @@ def _summary_text(
         "speedup",
     )
     detailed = _table_text(headers, rows)
-    application = _application_summary_text(result, application_case_ids)
+    application = _application_summary_text(
+        result, application_case_ids, application_workloads
+    )
     if application is None:
         return detailed
     return f"{detailed}\n\n{application}"
@@ -581,6 +758,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--application-workload",
+        dest="application_workloads",
+        action="append",
+        default=[],
+        help=(
+            "include every measured case for this workload in the workload-balanced "
+            "native-normalized application aggregate (repeatable)"
+        ),
+    )
+    parser.add_argument(
         "--horizon-report",
         action="store_true",
         help="group the aggregate by -Nx case suffix",
@@ -594,8 +781,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
 
     try:
-        if arguments.horizon_report and arguments.application_case_ids:
-            raise BenchmarkFailure("--horizon-report conflicts with --application-case")
+        if arguments.application_case_ids and arguments.application_workloads:
+            raise BenchmarkFailure(
+                "--application-case conflicts with --application-workload"
+            )
+        if arguments.horizon_report and (
+            arguments.application_case_ids or arguments.application_workloads
+        ):
+            raise BenchmarkFailure(
+                "--horizon-report conflicts with application aggregate selectors"
+            )
+        _validated_application_selection(arguments.application_case_ids, "case ID")
+        _validated_application_selection(arguments.application_workloads, "workload")
         result = run_comparison(
             _vm_mapping(arguments.vms),
             arguments.baseline,
@@ -609,7 +806,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary = (
             _horizon_summary_text(result)
             if arguments.horizon_report
-            else _summary_text(result, arguments.application_case_ids)
+            else _summary_text(
+                result,
+                arguments.application_case_ids,
+                arguments.application_workloads,
+            )
         )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(_json_text(result), encoding="utf-8")
