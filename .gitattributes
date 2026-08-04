@@ -24,3 +24,8 @@ benchmarks/artifacts/expected/** -text -diff
 scripts/*.sh text eol=lf
 third_party/riscv/manifests/** text eol=lf
 third_party/riscv/THIRD_PARTY_NOTICES.md text eol=lf
+
+# Preserve vendored littlefs whitespace.
+benchmarks/guest/licenses/littlefs-BSD-3-Clause.txt whitespace=-trailing-space
+benchmarks/third_party/littlefs/lfs.c whitespace=-trailing-space,-blank-at-eof
+benchmarks/third_party/littlefs/lfs.h whitespace=-trailing-space

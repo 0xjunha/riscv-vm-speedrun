@@ -1,8 +1,8 @@
 # RV32IM guest workspace
 
-This Cargo workspace builds the public workloads as bare-metal RV32IM guest
-programs and as x86-64 host-native reference executables. Both targets call the same
-workload functions.
+This Cargo workspace builds the public Rust and C workloads as
+bare-metal RV32IM guest programs and as x86-64 host-native reference
+executables. Both targets call the same workload implementations.
 
 The RV32IM programs run without an OS. The `rv32im-guest` crate, `link.x`, and
 the Rust build script provide their startup, output, and exit support.
@@ -32,16 +32,34 @@ exits with code 101.
 - `workloads/` contains the benchmark binaries and shared input/output logic.
   RV32IM builds wrap the workload logic in the guest runtime;
   native builds read input from standard input and report in-process timing samples.
+  `workloads/c/` supplies the fixed-width FFI, freestanding C-library shims,
+  and project-owned adapters around the pinned upstream C cores.
   Vendored third-party dependencies live in `../third_party/`.
 - `link.x` defines the VM-compatible ELF layout: entry point, page-aligned
   executable/read-only/read-write segments, global pointer, and the image
   boundary before VM input memory.
-- `workloads/build.rs` is a Cargo build script. For RISC-V builds, it passes
-  `link.x` to the linker and asks Cargo to rebuild when the script changes. It
-  does not run in the VM or generate benchmark inputs.
+- `workloads/build.rs` is a Cargo build script. It compiles the C sources targeting
+  RV32IM or x86-64 Linux using Clang tools, when the `c-workloads` feature is enabled.
+  Since bare-metal RV32IM has no system C library, `c_compat.c` supplies small implementation
+  of required functions such as `memcpy`, `memset`, and `memcmp`.
+  These shims are used only for the bare-metal RV32IM build.
+  Native executables use the host C library.
 - `.cargo/config.toml` selects `riscv32im-unknown-none-elf` and supplies the
   bare-metal linker flags.
 - `rust-toolchain.toml` pins Rust and installs the RV32IM target.
+
+## Build flow
+
+For an upstream-C workload, the canonical RV32IM build follows this path:
+
+```text
+build.py -> Cargo -> build.rs compiles adapter + upstream C into a static archive
+         -> Rust wrapper + guest runtime + C archive link into an RV32IM ELF
+         -> build.py copies the ELF into artifacts/elf/
+```
+
+Each workload has one ELF. All cases for that workload reuse it with separate
+input and expected-output files under `artifacts/`.
 
 ## Workload data contract
 
@@ -63,14 +81,16 @@ or provided as pinned data by `../reference.py`.
 
 ## Adding a workload
 
-A workload is a function with the `Workload` signature:
-`fn(&[u8]) -> [u8; 16]`. Keep it in its `workloads/src/bin/` file and use the
-shared decoding and output helpers from `rv32im-workloads`.
+A Rust workload is a function with the `Workload` signature:
+`fn(&[u8]) -> [u8; 16]`. A C workload implements the fixed-width adapter ABI
+from `workloads/c/include/rvb_c_workloads.h` and uses a small Rust binary
+wrapper with `run_c`. In both cases, keep the binary wrapper in
+`workloads/src/bin/` and use the shared output contract.
 
 Requirements:
 
-- Produce deterministic output without time, randomness, external I/O, or
-  mutable global state.
+- Produce deterministic output without time, randomness, or external I/O.
+  Reset any upstream mutable globals completely on every call.
 - Run the same algorithm on both targets. Prefer fixed-width integers and
   explicit wrapping arithmetic; avoid pointer-width-dependent behavior.
 - Make `result` and `auxiliary` depend on the measured work, and assign a unique,
@@ -79,11 +99,16 @@ Requirements:
 
 Registration:
 
-- Wrap it with `guest_main` plus `guest_entry!` for RV32IM, and pass it to
+- Wrap it with `guest_main` and `guest_entry!` for RV32IM, and pass it to
   `native::main` for the host-native build.
+- Mark C binary targets as requiring the `c-workloads` Cargo feature so Rust-only
+  workloads remain buildable without the C toolchain.
 - Add its case to `../cases.json` and its expected-output logic to
   `../reference.py`. The build discovers binaries from `workloads/src/bin/`, and
   the GCP image collects the resulting native executables automatically.
 - For third-party code or test vectors, update `THIRD_PARTY_NOTICES.md`, keep the
   applicable license under `licenses/`, and pin the exact source revision.
+- Keep C code freestanding: no allocator, operating-system API, host-width ABI
+  field, or unpinned build-time download. Canonical Clang/LLVM versions and
+  source hashes are part of the benchmark manifest.
 - Run `make benchmark-build` to regenerate and verify the checked-in artifacts.

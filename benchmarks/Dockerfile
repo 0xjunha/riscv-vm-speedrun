@@ -6,6 +6,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     SOURCE_DATE_EPOCH=0 \
     CARGO_NET_OFFLINE=true \
+    RVB_C_CLANG=/usr/bin/clang-14 \
+    RVB_C_LLVM_AR=/usr/bin/llvm-ar-14 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONHASHSEED=0
 
@@ -16,7 +18,10 @@ RUN sed -i \
     && printf '%s\n' 'Acquire::Check-Valid-Until "false";' \
         > /etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
-    && apt-get install -y --no-install-recommends python3 \
+    && apt-get install -y --no-install-recommends \
+        clang-14 \
+        llvm-14 \
+        python3 \
     && rm -rf /var/lib/apt/lists/* \
     && rustup component add clippy rustfmt \
     && rustup target add riscv32im-unknown-none-elf

@@ -10,6 +10,25 @@ const OUTPUT_MAGIC: u32 = 0x3142_5652; // bytes: RVB1
 /// Native or guest implementation of one public workload.
 pub type Workload = fn(&[u8]) -> [u8; 16];
 
+/// ABI shared by the freestanding and host-native C workload adapters.
+pub type CWorkload = unsafe extern "C" fn(*const u8, u32, *mut u32) -> u32;
+
+/// Call an upstream-C workload while preserving the common output contract.
+pub fn run_c(input: &[u8], family: u32, workload: CWorkload) -> [u8; 16] {
+    let Ok(input_len) = u32::try_from(input.len()) else {
+        return encode_output(family, 0, u32::MAX);
+    };
+    let mut output = [0u32; 2];
+    // SAFETY: `input` and `output` remain valid for the duration of the call,
+    // and every registered adapter follows the `CWorkload` ABI.
+    let status = unsafe { workload(input.as_ptr(), input_len, output.as_mut_ptr()) };
+    if status == 0 {
+        encode_output(family, output[0], output[1])
+    } else {
+        encode_output(family, 0, status)
+    }
+}
+
 /// Run a workload, repeating when the `long` feature is enabled.
 #[inline]
 pub fn run(workload: Workload, input: &[u8]) -> [u8; 16] {

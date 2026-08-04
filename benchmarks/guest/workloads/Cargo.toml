@@ -5,7 +5,18 @@ edition = "2021"
 publish = false
 
 [features]
+c-workloads = []
 long = []
+
+[[bin]]
+name = "littlefs"
+path = "src/bin/littlefs.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "x25519"
+path = "src/bin/x25519.rs"
+required-features = ["c-workloads"]
 
 [dependencies]
 heatshrink-lib = { path = "../../third_party/heatshrink" }

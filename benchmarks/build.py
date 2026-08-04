@@ -24,6 +24,12 @@ ARTIFACTS = ROOT / "artifacts"
 LONG_ARTIFACTS = ROOT / "long_artifacts"
 TARGET = "riscv32im-unknown-none-elf"
 NATIVE_TARGET = "x86_64-unknown-linux-gnu"
+C_CLANG = "/usr/bin/clang-14"
+C_LLVM_AR = "/usr/bin/llvm-ar-14"
+C_TOOLCHAIN_ENV = {
+    "RVB_C_CLANG": C_CLANG,
+    "RVB_C_LLVM_AR": C_LLVM_AR,
+}
 WORKLOADS = tuple(
     path.stem for path in sorted((GUEST / "workloads/src/bin").glob("*.rs"))
 )
@@ -35,6 +41,8 @@ BUILDER_METADATA = {
     "rustc": "1.96.1 (31fca3adb 2026-06-26)",
     "cargo": "1.96.1 (356927216 2026-06-26)",
     "llvm": "22.1.2",
+    "clang": "Debian clang version 14.0.6",
+    "llvm_ar": "Debian LLVM version 14.0.6",
 }
 BASE_IMAGE_PATTERN = re.compile(
     r"FROM (rust:1\.96\.1-slim-bookworm@sha256:[0-9a-f]{64})\Z"
@@ -48,6 +56,7 @@ CASE_KEYS = {
     "output_limit",
 }
 CASE_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
+CASE_CATEGORIES = frozenset(("diagnostic", "application"))
 
 
 class BuildError(RuntimeError):
@@ -58,6 +67,7 @@ class BuildError(RuntimeError):
 class Case:
     id: str
     workload: str
+    category: str
     regime: str
     parameters: dict[str, object]
     instruction_limit: int
@@ -97,10 +107,25 @@ def _positive_integer(value: object, name: str, maximum: int) -> int:
 
 def load_cases(path: Path = ROOT / "cases.json") -> tuple[Case, ...]:
     value = _read_json(path)
-    if not isinstance(value, dict) or set(value) != {"schema_version", "cases"}:
-        raise BuildError("cases.json must contain schema_version and cases")
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "workload_categories",
+        "cases",
+    }:
+        raise BuildError(
+            "cases.json must contain schema_version, workload_categories, and cases"
+        )
     if value["schema_version"] != 1 or not isinstance(value["cases"], list):
         raise BuildError("unsupported cases.json schema")
+    workload_categories = value["workload_categories"]
+    if (
+        not isinstance(workload_categories, dict)
+        or set(workload_categories) != set(WORKLOADS)
+        or any(
+            category not in CASE_CATEGORIES for category in workload_categories.values()
+        )
+    ):
+        raise BuildError("workload_categories must classify every workload")
 
     cases = []
     seen = set()
@@ -124,6 +149,7 @@ def load_cases(path: Path = ROOT / "cases.json") -> tuple[Case, ...]:
         case = Case(
             case_id,
             workload,
+            workload_categories[workload],
             regime,
             parameters,
             _positive_integer(
@@ -208,6 +234,7 @@ def _project_input_paths(*, long: bool = False) -> tuple[Path, ...]:
         for source_root in (GUEST / "runtime/src", GUEST / "workloads/src")
         for path in source_root.rglob("*.rs")
     )
+    guest_c_sources = _authored_c_input_paths(GUEST / "workloads/c")
     third_party_inputs = _third_party_input_paths(ROOT / "third_party")
     guest_notices = tuple(
         path
@@ -223,6 +250,7 @@ def _project_input_paths(*, long: bool = False) -> tuple[Path, ...]:
                 GUEST / "THIRD_PARTY_NOTICES.md",
                 *guest_notices,
                 *guest_sources,
+                *guest_c_sources,
                 *third_party_inputs,
             )
         )
@@ -230,9 +258,42 @@ def _project_input_paths(*, long: bool = False) -> tuple[Path, ...]:
 
 
 def _third_party_input_paths(root: Path) -> tuple[Path, ...]:
-    """Return authored Rust crate inputs, excluding standalone Cargo state."""
+    """Return vendored source and provenance, excluding generated Cargo state."""
 
-    return tuple(sorted((*root.glob("*/Cargo.toml"), *root.glob("*/src/**/*.rs"))))
+    return tuple(
+        sorted(
+            path
+            for path in root.rglob("*")
+            if path.is_file()
+            and "target" not in path.relative_to(root).parts
+            and path.name != "Cargo.lock"
+            and (
+                path.name == "Cargo.toml"
+                or path.suffix.lower() in {".c", ".h", ".md", ".rs", ".txt"}
+                or _is_provenance_file(path)
+            )
+        )
+    )
+
+
+def _authored_c_input_paths(root: Path) -> tuple[Path, ...]:
+    if not root.is_dir():
+        return ()
+    return tuple(
+        sorted(
+            path
+            for path in root.rglob("*")
+            if path.is_file()
+            and (path.suffix.lower() in {".c", ".h"} or _is_provenance_file(path))
+        )
+    )
+
+
+def _is_provenance_file(path: Path) -> bool:
+    name = path.name.lower()
+    return name.startswith(
+        ("copying", "license", "notice", "provenance", "readme", "upstream")
+    )
 
 
 def _project_inputs(*, long: bool = False) -> dict[str, str]:
@@ -290,6 +351,7 @@ def make_manifest(root: Path, cases: tuple[Case, ...]) -> dict[str, object]:
         record = {
             "id": case.id,
             "workload": case.workload,
+            "category": case.category,
             "regime": case.regime,
             "expected_exit_code": 0,
             "instruction_limit": case.instruction_limit,
@@ -342,6 +404,7 @@ def make_long_manifest(root: Path, cases: tuple[Case, ...]) -> dict[str, object]
         record = {
             "id": f"{case.id}-{horizon}x",
             "workload": case.workload,
+            "category": case.category,
             "regime": f"{case.regime}; {horizon}x horizon",
             "expected_exit_code": 0,
             "instruction_limit": min(
@@ -384,6 +447,23 @@ def _validate_toolchain() -> None:
     if cargo != "cargo 1.96.1 (356927216 2026-06-26)":
         raise BuildError("cargo does not match the pinned builder")
 
+    tools = (
+        (C_CLANG, "Debian clang version 14.0.6", "clang"),
+        (C_LLVM_AR, "Debian LLVM version 14.0.6", "llvm-ar"),
+    )
+    for executable, expected, name in tools:
+        try:
+            output = subprocess.run(
+                [executable, "--version"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.splitlines()
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise BuildError(f"cannot inspect {name}: {error}") from error
+        if not output or output[0] != expected:
+            raise BuildError(f"{name} does not match the pinned builder")
+
 
 def _cargo(
     arguments: list[str],
@@ -397,6 +477,7 @@ def _cargo(
             "CARGO_NET_OFFLINE": "true",
             "CARGO_TARGET_DIR": os.fspath(target_dir),
             "SOURCE_DATE_EPOCH": "0",
+            **C_TOOLCHAIN_ENV,
         }
     )
     try:
@@ -452,6 +533,7 @@ def _check_guest_sources(target_dir: Path) -> None:
             "rv32im-workloads",
             "--lib",
             "--bins",
+            "--all-features",
             "--release",
             "--target",
             NATIVE_TARGET,
@@ -481,9 +563,15 @@ def _check_guest_sources(target_dir: Path) -> None:
 
 
 def _compile(target_dir: Path, *, long: bool = False) -> dict[str, Path]:
-    arguments = ["build", "--frozen", "--release", "--bins"]
-    if long:
-        arguments.extend(("--features", "long"))
+    features = "c-workloads,long" if long else "c-workloads"
+    arguments = [
+        "build",
+        "--frozen",
+        "--release",
+        "--bins",
+        "--features",
+        features,
+    ]
     _cargo(arguments, target_dir, "long build" if long else "build")
     release = target_dir / TARGET / "release"
     return {workload: release / workload for workload in WORKLOADS}
@@ -876,7 +964,10 @@ def reproduce() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("build", "check", "lint", "reproduce"))
+    parser.add_argument(
+        "command",
+        choices=("build", "check", "lint", "reproduce"),
+    )
     arguments = parser.parse_args(argv)
     try:
         {
