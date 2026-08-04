@@ -49,9 +49,14 @@ fn compile_c_workloads(manifest: &Path) {
         };
     let mut sources = vec![
         CSource {
-            path: source_root.join("workloads.c"),
+            path: source_root.join("littlefs.c"),
             strict: true,
             littlefs: true,
+        },
+        CSource {
+            path: source_root.join("x25519.c"),
+            strict: true,
+            littlefs: false,
         },
         CSource {
             path: third_party.join("littlefs/lfs.c"),
