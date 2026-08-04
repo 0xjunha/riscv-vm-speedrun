@@ -85,5 +85,5 @@ def header(data: bytes, workload: str) -> int:
     return struct.unpack_from("<I", data)[0]
 
 
-def record(family: int, result: int, auxiliary: int) -> bytes:
-    return struct.pack("<IIII", OUTPUT_MAGIC, family, u32(result), u32(auxiliary))
+def record(result: int, auxiliary: int) -> bytes:
+    return struct.pack("<III", OUTPUT_MAGIC, u32(result), u32(auxiliary))

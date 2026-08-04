@@ -123,4 +123,4 @@ def output_for(data: bytes) -> bytes:
         raise ValueError("heatshrink input length is invalid")
     encoded = encode(payload)
     auxiliary = zlib.crc32(payload) ^ rotl(len(encoded), 16)
-    return record(9, zlib.crc32(encoded), auxiliary)
+    return record(zlib.crc32(encoded), auxiliary)

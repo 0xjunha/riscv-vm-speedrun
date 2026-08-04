@@ -77,4 +77,4 @@ def output_for(data: bytes) -> bytes:
         for node, distance in enumerate(distances):
             total = u32(total + distance)
             folded ^= rotl(distance, node + source)
-    return record(13, total, folded)
+    return record(total, folded)

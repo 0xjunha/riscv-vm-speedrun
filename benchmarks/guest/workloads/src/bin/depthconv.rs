@@ -97,9 +97,9 @@ fn convolve(
     }
 }
 
-fn depthconv(input: &[u8]) -> [u8; 16] {
+fn depthconv(input: &[u8]) -> [u8; 12] {
     if input.len() != INPUT_SIZE {
-        return encode_output(11, 0, 0);
+        return encode_output(0, 0);
     }
     let repetitions = Words::new(input).get(0).clamp(1, 32);
     let activations = &input[ACTIVATION_OFFSET..WEIGHT_OFFSET];
@@ -126,7 +126,7 @@ fn depthconv(input: &[u8]) -> [u8; 16] {
         );
         aggregate ^= crc32(&output).rotate_left(pass & 31);
     }
-    encode_output(11, aggregate, crc32(&output))
+    encode_output(aggregate, crc32(&output))
 }
 
 #[cfg(target_os = "none")]

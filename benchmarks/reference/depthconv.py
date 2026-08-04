@@ -127,4 +127,4 @@ def output_for(data: bytes) -> bytes:
     aggregate = 0
     for pass_index in range(repetitions):
         aggregate ^= rotl(checksum, pass_index)
-    return record(11, aggregate, checksum)
+    return record(aggregate, checksum)

@@ -7,12 +7,12 @@
 use rv32im_guest::guest_entry;
 use rv32im_workloads::{encode_output, Words};
 
-fn tiny(input: &[u8]) -> [u8; 16] {
+fn tiny(input: &[u8]) -> [u8; 12] {
     let words = Words::new(input);
     let a = words.get(0);
     let b = words.get(1);
     let result = a.rotate_left(5) ^ b.rotate_right(3) ^ 0x7469_6e79;
-    encode_output(1, result, input.len() as u32)
+    encode_output(result, input.len() as u32)
 }
 
 #[cfg(target_os = "none")]

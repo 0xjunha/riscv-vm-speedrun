@@ -55,4 +55,4 @@ def output_for(data: bytes) -> bytes:
             folded = u32(folded * 0x0100_0193) ^ value
         aggregate ^= rotl(folded, pass_index)
         final_fold = folded
-    return record(15, aggregate, final_fold)
+    return record(aggregate, final_fold)

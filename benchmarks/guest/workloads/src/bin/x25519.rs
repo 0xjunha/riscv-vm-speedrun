@@ -10,8 +10,8 @@ unsafe extern "C" {
     fn rvb_x25519(input: *const u8, input_len: u32, output: *mut u32) -> u32;
 }
 
-fn x25519(input: &[u8]) -> [u8; 16] {
-    run_c(input, 25, rvb_x25519)
+fn x25519(input: &[u8]) -> [u8; 12] {
+    run_c(input, rvb_x25519)
 }
 
 #[cfg(target_os = "none")]

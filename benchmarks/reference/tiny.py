@@ -17,4 +17,4 @@ def output_for(data: bytes) -> bytes:
     if len(values) != 2:
         raise ValueError("tiny input must contain two words")
     result = rotl(values[0], 5) ^ rotr(values[1], 3) ^ 0x7469_6E79
-    return record(1, result, len(data))
+    return record(result, len(data))

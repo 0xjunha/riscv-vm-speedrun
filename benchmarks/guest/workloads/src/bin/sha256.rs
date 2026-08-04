@@ -150,13 +150,13 @@ fn hash(input: &[u8]) -> [u32; 8] {
     state
 }
 
-fn sha256(input: &[u8]) -> [u8; 16] {
+fn sha256(input: &[u8]) -> [u8; 12] {
     let length = Words::new(input).get(0) as usize;
     let Some(payload) = input.get(4..4usize.saturating_add(length)) else {
-        return encode_output(7, 0, 0);
+        return encode_output(0, 0);
     };
     let digest = hash(payload);
-    encode_output(7, digest[0], digest[7])
+    encode_output(digest[0], digest[7])
 }
 
 #[cfg(target_os = "none")]

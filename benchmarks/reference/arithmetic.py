@@ -27,4 +27,4 @@ def output_for(data: bytes) -> bytes:
         y = rotr(y, 11) ^ x
         x = u32(rotl(x, 5) + y)
         step = u32(step + 0x6D2B_79F5)
-    return record(3, x, y ^ step)
+    return record(x, y ^ step)

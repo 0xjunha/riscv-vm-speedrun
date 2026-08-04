@@ -37,4 +37,4 @@ def output_for(data: bytes) -> bytes:
             xor ^= rotl(value, index + pass_index)
             weighted = u32(weighted + (value ^ stride))
             stride = u32(stride + 0x9E37_79B9)
-    return record(5, total ^ xor, weighted)
+    return record(total ^ xor, weighted)

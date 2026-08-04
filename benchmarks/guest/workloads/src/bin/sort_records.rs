@@ -59,12 +59,12 @@ fn merge_sort(
     }
 }
 
-fn sort_records(input: &[u8]) -> [u8; 16] {
+fn sort_records(input: &[u8]) -> [u8; 12] {
     let words = Words::new(input);
     let count = words.get(0) as usize;
     let passes = words.get(1).clamp(1, 16);
     if !(2..=MAX_RECORDS).contains(&count) || words.len() != 2 + count * 2 {
-        return encode_output(15, 0, 0);
+        return encode_output(0, 0);
     }
 
     let mut records = [Record::default(); MAX_RECORDS];
@@ -89,7 +89,7 @@ fn sort_records(input: &[u8]) -> [u8; 16] {
         aggregate ^= fold.rotate_left(pass & 31);
         final_fold = fold;
     }
-    encode_output(15, aggregate, final_fold)
+    encode_output(aggregate, final_fold)
 }
 
 #[cfg(target_os = "none")]

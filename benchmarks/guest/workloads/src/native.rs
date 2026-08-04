@@ -22,7 +22,7 @@ fn count(value: Option<String>, name: &str, allow_zero: bool) -> Result<usize, S
     Ok(count)
 }
 
-fn execute(workload: Workload, input: &[u8]) -> [u8; 16] {
+fn execute(workload: Workload, input: &[u8]) -> [u8; 12] {
     black_box(black_box(workload)(black_box(input)))
 }
 

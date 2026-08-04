@@ -14,13 +14,13 @@ const MAX_SIZE: usize = MAX_VERSION as usize * 4 + 17;
 const BUFFER_SIZE: usize = (MAX_SIZE * MAX_SIZE).div_ceil(8) + 1;
 const MODULE_BYTES: usize = (MAX_SIZE * MAX_SIZE).div_ceil(8);
 
-fn qrcode(input: &[u8]) -> [u8; 16] {
+fn qrcode(input: &[u8]) -> [u8; 12] {
     let length = Words::new(input).get(0) as usize;
     if length > BUFFER_SIZE {
-        return encode_output(17, 0, 0);
+        return encode_output(0, 0);
     }
     let Some(payload) = input.get(4..4usize.saturating_add(length)) else {
-        return encode_output(17, 0, 0);
+        return encode_output(0, 0);
     };
 
     let mut temporary = [0u8; BUFFER_SIZE];
@@ -36,7 +36,7 @@ fn qrcode(input: &[u8]) -> [u8; 16] {
         None,
         true,
     ) else {
-        return encode_output(17, 0, 0);
+        return encode_output(0, 0);
     };
 
     let size = code.size() as usize;
@@ -53,7 +53,7 @@ fn qrcode(input: &[u8]) -> [u8; 16] {
     }
     let used = (size * size).div_ceil(8);
     let metadata = (u32::from(code.version().value()) << 24) | size as u32;
-    encode_output(17, dark, crc32(&modules[..used]) ^ metadata)
+    encode_output(dark, crc32(&modules[..used]) ^ metadata)
 }
 
 #[cfg(target_os = "none")]

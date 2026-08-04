@@ -7,7 +7,7 @@
 use rv32im_guest::guest_entry;
 use rv32im_workloads::{bounded, encode_output, Words};
 
-fn streaming(input: &[u8]) -> [u8; 16] {
+fn streaming(input: &[u8]) -> [u8; 12] {
     let words = Words::new(input);
     let passes = bounded(words.get(0), 8, 32);
     let available = words.len().saturating_sub(2);
@@ -27,7 +27,7 @@ fn streaming(input: &[u8]) -> [u8; 16] {
         }
     }
 
-    encode_output(5, sum ^ xor, weighted)
+    encode_output(sum ^ xor, weighted)
 }
 
 #[cfg(target_os = "none")]

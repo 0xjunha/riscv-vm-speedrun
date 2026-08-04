@@ -53,4 +53,4 @@ def output_for(data: bytes) -> bytes:
     vector = VECTORS.get(hashlib.sha256(data).hexdigest())
     if vector is None:
         raise ValueError("qrcode input does not match its known-answer vector")
-    return record(17, vector["dark_modules"], vector["auxiliary"])
+    return record(vector["dark_modules"], vector["auxiliary"])

@@ -14,7 +14,7 @@ fn edge(input: &[u8], nodes: usize, from: usize, to: usize) -> u32 {
     u32::from(u16::from_le_bytes([input[offset], input[offset + 1]]))
 }
 
-fn dijkstra(input: &[u8]) -> [u8; 16] {
+fn dijkstra(input: &[u8]) -> [u8; 12] {
     let words = Words::new(input);
     let nodes = words.get(0) as usize;
     let sources = words.get(1) as usize;
@@ -23,14 +23,14 @@ fn dijkstra(input: &[u8]) -> [u8; 16] {
         .and_then(|value| value.checked_mul(2))
     {
         Some(value) => value,
-        None => return encode_output(13, 0, 0),
+        None => return encode_output(0, 0),
     };
     if !(2..=MAX_NODES).contains(&nodes)
         || sources == 0
         || sources > nodes
         || input.len() != 8 + matrix_bytes
     {
-        return encode_output(13, 0, 0);
+        return encode_output(0, 0);
     }
 
     let mut distances = [u32::MAX; MAX_NODES];
@@ -73,7 +73,7 @@ fn dijkstra(input: &[u8]) -> [u8; 16] {
             fold ^= distance.rotate_left(((node + source) & 31) as u32);
         }
     }
-    encode_output(13, total, fold)
+    encode_output(total, fold)
 }
 
 #[cfg(target_os = "none")]

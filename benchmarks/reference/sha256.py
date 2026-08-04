@@ -46,7 +46,6 @@ def output_for(data: bytes) -> bytes:
         raise ValueError("sha256 input length is invalid")
     digest = hashlib.sha256(payload).digest()
     return record(
-        7,
         int.from_bytes(digest[:4], "big"),
         int.from_bytes(digest[-4:], "big"),
     )

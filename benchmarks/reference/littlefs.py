@@ -135,4 +135,4 @@ def output_for(data: bytes) -> bytes:
     aggregate = 0x4C46_5332
     for pass_index in range(repetitions):
         aggregate = fold(aggregate, final_summary, pass_index)
-    return record(23, aggregate, final_summary)
+    return record(aggregate, final_summary)

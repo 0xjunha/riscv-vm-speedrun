@@ -67,14 +67,13 @@ The input is a variable-length byte slice whose meaning is workload-specific.
 Headers use little-endian fixed-width integers; workloads may then consume
 words, structured records, or raw payload bytes.
 
-The output is exactly 16 bytes: four little-endian `u32` fields.
+The output is exactly 12 bytes: three little-endian `u32` fields.
 
 | Bytes | Field | Meaning |
 | --- | --- | --- |
 | 0–3 | magic | `RVB1` |
-| 4–7 | family | workload identifier |
-| 8–11 | result | primary computation summary |
-| 12–15 | auxiliary | secondary computation summary |
+| 4–7 | result | primary computation summary |
+| 8–11 | auxiliary | secondary computation summary |
 
 The harness compares the guest output with the expected result independently computed
 or provided as pinned data by `../reference/`.
@@ -82,7 +81,7 @@ or provided as pinned data by `../reference/`.
 ## Adding a workload
 
 A Rust workload is a function with the `Workload` signature:
-`fn(&[u8]) -> [u8; 16]`. A C workload implements the fixed-width adapter ABI
+`fn(&[u8]) -> [u8; 12]`. A C workload implements the fixed-width adapter ABI
 from `workloads/c/include/rvb_c_workloads.h` and uses a small Rust binary
 wrapper with `run_c`. In both cases, keep the binary wrapper in
 `workloads/src/bin/` and use the shared output contract.
@@ -93,8 +92,7 @@ Requirements:
   Reset any upstream mutable globals completely on every call.
 - Run the same algorithm on both targets. Prefer fixed-width integers and
   explicit wrapping arithmetic; avoid pointer-width-dependent behavior.
-- Make `result` and `auxiliary` depend on the measured work, and assign a unique,
-  stable `family` value.
+- Make `result` and `auxiliary` depend on the measured work.
 - Keep OS, EEI, and timing operations outside the workload function.
 
 Registration:

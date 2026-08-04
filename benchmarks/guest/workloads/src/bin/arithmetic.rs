@@ -7,7 +7,7 @@
 use rv32im_guest::guest_entry;
 use rv32im_workloads::{bounded, encode_output, Words};
 
-fn arithmetic(input: &[u8]) -> [u8; 16] {
+fn arithmetic(input: &[u8]) -> [u8; 12] {
     let words = Words::new(input);
     let iterations = bounded(words.get(0), 24_000, 120_000);
     let mut x = words.get(1) ^ 0x243f_6a88;
@@ -23,7 +23,7 @@ fn arithmetic(input: &[u8]) -> [u8; 16] {
         step = step.wrapping_add(0x6d2b_79f5);
     }
 
-    encode_output(3, x, y ^ step)
+    encode_output(x, y ^ step)
 }
 
 #[cfg(target_os = "none")]

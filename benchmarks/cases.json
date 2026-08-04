@@ -23,7 +23,7 @@
         "b": 2309737967
       },
       "instruction_limit": 100000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "arithmetic",
@@ -35,7 +35,7 @@
         "y": 2024672538
       },
       "instruction_limit": 5000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "streaming",
@@ -47,7 +47,7 @@
         "seed": 305419896
       },
       "instruction_limit": 2000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "sha256",
@@ -58,7 +58,7 @@
         "seed": 270544960
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "sha256-pages",
@@ -70,7 +70,7 @@
         "seed": 286331153
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "sha256-sparse",
@@ -82,7 +82,7 @@
         "seed": 572662306
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "heatshrink",
@@ -93,7 +93,7 @@
         "seed": 195948557
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "heatshrink-steady",
@@ -105,7 +105,7 @@
         "seed": 858993459
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "heatshrink-bursty",
@@ -117,7 +117,7 @@
         "seed": 1145324612
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "depthconv",
@@ -128,7 +128,7 @@
         "seed": 324508639
       },
       "instruction_limit": 12000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "depthconv-sparse",
@@ -140,7 +140,7 @@
         "seed": 1431655765
       },
       "instruction_limit": 12000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "depthconv-saturated",
@@ -152,7 +152,7 @@
         "seed": 1717986918
       },
       "instruction_limit": 12000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "dijkstra",
@@ -165,7 +165,7 @@
         "sources": 24
       },
       "instruction_limit": 6000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "dijkstra-clustered",
@@ -179,7 +179,7 @@
         "sources": 24
       },
       "instruction_limit": 6000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "dijkstra-hub",
@@ -193,7 +193,7 @@
         "sources": 24
       },
       "instruction_limit": 6000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "sort_records",
@@ -205,7 +205,7 @@
         "seed": 826366246
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "sort_records-ascending",
@@ -218,7 +218,7 @@
         "seed": 2576980377
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "sort_records-duplicates",
@@ -231,7 +231,7 @@
         "seed": 2863311530
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "qrcode",
@@ -242,7 +242,7 @@
         "seed": 1432778632
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "qrcode-compact",
@@ -253,7 +253,7 @@
         "seed": 3149642683
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "qrcode-capacity",
@@ -264,7 +264,7 @@
         "seed": 3435973836
       },
       "instruction_limit": 30000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "littlefs",
@@ -277,7 +277,7 @@
         "seed": 2309737967
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "littlefs-append",
@@ -290,7 +290,7 @@
         "seed": 3405691582
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "littlefs-metadata",
@@ -303,7 +303,7 @@
         "seed": 3735928559
       },
       "instruction_limit": 10000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "x25519",
@@ -316,7 +316,7 @@
         "seed": 0
       },
       "instruction_limit": 6000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "x25519-generated",
@@ -329,7 +329,7 @@
         "seed": 270544960
       },
       "instruction_limit": 6000000,
-      "output_limit": 16
+      "output_limit": 12
     },
     {
       "id": "x25519-carry",
@@ -342,7 +342,7 @@
         "seed": 4042322160
       },
       "instruction_limit": 6000000,
-      "output_limit": 16
+      "output_limit": 12
     }
   ]
 }
