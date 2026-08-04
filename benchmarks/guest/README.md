@@ -75,6 +75,10 @@ The output is exactly 12 bytes: three little-endian `u32` fields.
 | 4–7 | result | primary computation summary |
 | 8–11 | auxiliary | secondary computation summary |
 
+The central [workload contract table](../README.md#workload-contracts) defines
+each workload's valid input layout and the exact meaning of `result` and
+`auxiliary`.
+
 The harness compares the guest output with the expected result independently computed
 or provided as pinned data by `../reference/`.
 

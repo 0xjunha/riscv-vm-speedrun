@@ -46,6 +46,28 @@ Application workloads and input profiles:
   - **Generated:** deterministic generated private keys and peer public key
   - **Carry-heavy:** patterned key material that stresses field carries
 
+## Workload contracts
+
+All multibyte input fields are little-endian. Every workload emits the common
+12-byte [`RVB1 | result | auxiliary`](guest/README.md#workload-data-contract)
+record. This table defines the valid input layout and the workload-specific
+meaning of its two output fields; the reference models enforce the same
+contracts when generating checked-in artifacts.
+
+| Workload | Valid input layout | `result` | `auxiliary` |
+| --- | --- | --- | --- |
+| `tiny` | Two `u32` values: `a`, `b` | Fixed rotate/XOR mix of `a` and `b` | Input length in bytes |
+| `arithmetic` | Three `u32` values: iteration count, initial `x`, initial `y`; the count defaults to 24,000 when zero and is capped at 120,000 | Final `x` state | Final `y` XOR final step state |
+| `streaming` | Pass count and word count as `u32`, followed by that many `u32` values; passes and count use the documented workload bounds | Wrapping sum XOR position-rotated XOR of scanned values | Stride-mixed wrapping sum |
+| `sha256` | Payload length as `u32`, followed by exactly that many bytes | First 32-bit SHA-256 digest word | Last 32-bit SHA-256 digest word |
+| `heatshrink` | Payload length as `u32`, followed by exactly that many bytes, up to 16 KiB | CRC-32 of the compressed bytes | CRC-32 of the decoded payload XOR the rotated compressed length |
+| `depthconv` | Repetition count as `u32`, then fixed 16x16x8 `i8` activations, 3x3x8 `i8` weights, and eight `i32` biases, multipliers, and shifts | Rotation-XOR aggregate of the output CRC-32 across repetitions | CRC-32 of the final output tensor |
+| `dijkstra` | Node and source counts as `u32`, followed by a `nodes` x `nodes` matrix of `u16` edge weights; zero means no edge | Wrapping sum of all distances across sources | Position-rotated XOR fold of those distances |
+| `sort_records` | Record and pass counts as `u32`, followed by that many `(key: u32, value: u32)` pairs | Rotation-XOR aggregate of the sorted-record fold across passes | Sorted-record fold from the final pass |
+| `qrcode` | Payload length as `u32`, followed by exactly that many bytes | Number of dark modules | CRC-32 of the packed module bitmap XOR version/size metadata |
+| `littlefs` | Repetition and operation counts as `u32`, followed by that many four-`u32` operation records: kind, file, and two operation-specific arguments | Fold of each repeated trace summary | Final event-trace fold XOR filesystem-state CRC-32 |
+| `x25519` | Repetition and pair counts as `u32`, followed by that many 64-byte pairs: 32-byte scalar and 32-byte u-coordinate | Fold of the shared-secret CRC-32 across repetitions | CRC-32 of all shared secrets from the final repetition |
+
 ## Components
 
 - `cases.json` defines the public inputs, workload classification, deterministic
