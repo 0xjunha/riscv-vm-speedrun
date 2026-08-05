@@ -45,6 +45,9 @@ HARNESS_SOURCE := harness/src
 HARNESS_TESTS := harness/tests
 BENCHMARK_IMAGE := rv32im-benchmark-builder:local
 BENCHMARK_MANIFEST := benchmarks/artifacts/manifest.json
+BENCHMARK_LONG_MANIFEST := benchmarks/long_artifacts/manifest.json
+BENCHMARK_LONG_SMOKE_CASES := sha256-10x heatshrink-10x depthconv-10x \
+	dijkstra-10x sort_records-10x qrcode-10x
 BENCHMARK_COMPARE_OUTPUT ?= benchmarks/out/comparison.json
 GCP_ENV_FILE ?= .env.gcp
 CONFORMANCE_IMAGE := rv32im-conformance-builder:local
@@ -275,6 +278,10 @@ benchmark-check:
 benchmark-correctness: vm2-build benchmark-check
 	uv run --locked --package $(HARNESS_PACKAGE) \
 		rv32im-benchmark $(VM_DIR_vm2)/out/rv32vm $(BENCHMARK_MANIFEST) \
+		--warmups 0 --repetitions 1 --output /dev/null
+	uv run --locked --package $(HARNESS_PACKAGE) \
+		rv32im-benchmark $(VM_DIR_vm2)/out/rv32vm $(BENCHMARK_LONG_MANIFEST) \
+		$(foreach case,$(BENCHMARK_LONG_SMOKE_CASES),--case $(case)) \
 		--warmups 0 --repetitions 1 --output /dev/null
 
 benchmark-test:

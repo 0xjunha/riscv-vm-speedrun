@@ -12,8 +12,8 @@ implementation systematically runs first or last. The raw comparison JSON
 records this schedule. VM0 remains the comparison baseline regardless of
 measurement order.
 After the detailed per-case comparison, the report prints a second table
-covering every implementation. It selects every case whose workload is authored
-as `application` in the built manifest. For workloads with
+covering every implementation. It selects every case whose workload appears in
+the manifest's top-level `application_workloads` list. For workloads with
 multiple cases, it first takes the geometric mean across that workload's cases,
 then takes the geometric mean across workload results so that every workload has
 equal weight. The table reports speedup over VM0, host-native performance fraction,

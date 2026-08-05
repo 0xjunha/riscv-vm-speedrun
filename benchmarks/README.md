@@ -138,7 +138,8 @@ make benchmark-compare
 
 `benchmark-guest-lint`, `benchmark-build`, and `benchmark-reproducible` use the
 Docker builder. Builds and reproducibility checks also enforce rustfmt and
-Clippy. `benchmark-check` needs only Python.
+Clippy. `benchmark-check` needs only Python. `benchmark-correctness` also runs
+each configured 10x long-horizon case through VM2 as an integration smoke test.
 
 `make benchmark-compare` rebuilds every VM in `RUNTIME_VM_LIST` and selects
 `BASELINE_VM` as the baseline. On x86-64 Linux this includes VM4 and VM5; other

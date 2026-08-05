@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,16 +14,31 @@ ENTRYPOINT = ROOT / "benchmarks/gcp/run-benchmark.sh"
 
 
 def _entrypoint_arguments(tmp_path: Path, user_arguments: tuple[str, ...]) -> list[str]:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"application_workloads": ["sha256", "qrcode"]}),
+        encoding="utf-8",
+    )
+    entrypoint = tmp_path / "run-benchmark.sh"
+    entrypoint.write_text(
+        ENTRYPOINT.read_text(encoding="utf-8").replace(
+            "manifest=/opt/rv32im/benchmarks/manifest.json",
+            f"manifest={shlex.quote(str(manifest))}",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    entrypoint.chmod(0o755)
+
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     log = tmp_path / "python-arguments.txt"
     python = fake_bin / "python3"
     python.write_text(
-        """#!/bin/sh
+        f"""#!/bin/sh
 set -eu
-if [ "${1:-}" = - ]; then
-    printf '%s\n' sha256 qrcode
-    exit 0
+if [ "${{1:-}}" = - ]; then
+    exec {shlex.quote(sys.executable)} "$@"
 fi
 printf '%s\n' "$@" >"$ENTRYPOINT_LOG"
 """,
@@ -34,7 +52,7 @@ printf '%s\n' "$@" >"$ENTRYPOINT_LOG"
     }
 
     completed = subprocess.run(
-        [str(ENTRYPOINT), *user_arguments],
+        [str(entrypoint), *user_arguments],
         cwd=ROOT,
         env=environment,
         check=False,
