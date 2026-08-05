@@ -67,6 +67,7 @@ class BenchmarkSuite:
 
     sha256: str
     cases: tuple[BenchmarkCase, ...]
+    application_workloads: tuple[str, ...]
 
     def select(self, case_ids: Sequence[str] | None = None) -> BenchmarkSuite:
         """Return a case selection without rereading or rehashing artifacts."""
@@ -74,7 +75,11 @@ class BenchmarkSuite:
         selected = _select_cases(self.cases, case_ids)
         if selected is self.cases:
             return self
-        return BenchmarkSuite(self.sha256, selected)
+        workloads = {case.workload for case in selected}
+        application_workloads = tuple(
+            workload for workload in self.application_workloads if workload in workloads
+        )
+        return BenchmarkSuite(self.sha256, selected, application_workloads)
 
 
 def _bounded_integer(
@@ -229,7 +234,11 @@ def load_benchmark_suite(
         raise BenchmarkFailure(
             "manifest application_workloads contains an unknown workload"
         )
-    return BenchmarkSuite(hashlib.sha256(payload).hexdigest(), tuple(cases))
+    return BenchmarkSuite(
+        hashlib.sha256(payload).hexdigest(),
+        tuple(cases),
+        tuple(application_workloads),
+    )
 
 
 def _select_cases(

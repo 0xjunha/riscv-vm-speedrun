@@ -44,6 +44,7 @@ def _manifest(
     case_ids: tuple[str, ...] = ("tiny",),
     *,
     expected_output: bytes | None = None,
+    application_workloads: tuple[str, ...] = (),
 ) -> Path:
     root = temporary / "benchmarks/artifacts"
     root.mkdir(parents=True)
@@ -66,7 +67,7 @@ def _manifest(
         json.dumps(
             {
                 "schema_version": 1,
-                "application_workloads": [],
+                "application_workloads": list(application_workloads),
                 "builder": {"platform": "test"},
                 "project_inputs": {},
                 "cases": records,
@@ -75,6 +76,22 @@ def _manifest(
         )
     )
     return path
+
+
+def test_manifest_retains_application_workloads_in_selected_suite(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(
+        tmp_path,
+        ("tiny", "sha256"),
+        application_workloads=("sha256",),
+    )
+
+    suite = load_benchmark_suite(manifest)
+
+    assert suite.application_workloads == ("sha256",)
+    assert suite.select(("tiny",)).application_workloads == ()
+    assert suite.select(("sha256",)).application_workloads == ("sha256",)
 
 
 def _outcome(

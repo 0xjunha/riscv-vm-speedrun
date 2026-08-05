@@ -157,11 +157,11 @@ A value > 1 means the implementation's measured median was lower than the
 baseline's. This is diagnostic context, not a score or acceptance threshold;
 scheduling and hardware variation can affect it.
 
-When a native reference and one or more `--application-workload` arguments are
-provided, the report ends with a native-normalized, workload-balanced aggregate.
-It first takes the geometric mean of case ratios within each workload, then the
-geometric mean across workloads. Consequently, every selected workload has
-equal weight even when it has more public cases:
+For a complete standard run with a native reference, the report ends with a
+native-normalized, workload-balanced aggregate defined by the manifest's
+`application_workloads` list. It first takes the geometric mean of case ratios
+within each workload, then the geometric mean across workloads. Consequently,
+every listed workload has equal weight even when it has more public cases:
 
 ```text
 speedup vs baseline = geomean(baseline median / implementation median)
@@ -171,8 +171,8 @@ time vs native = geomean(implementation median / native median)
 
 Raw nanosecond medians and speedups are not averaged arithmetically because the
 workloads have different scales and performance ratios are multiplicative.
-Cases belonging to workloads not selected with `--application-workload` remain
-in the detailed table and are listed as excluded from the aggregate.
+Cases outside the manifest's `application_workloads` list remain in the detailed
+table and are listed as excluded from the aggregate.
 
 ## Optional long-horizon comparison
 
@@ -205,6 +205,5 @@ uv run --locked --package rv32im-harness rv32im-benchmark-compare \
 
 Pass `--native LABEL=DIRECTORY` when the directory contains an executable named
 for every selected workload. The GCP workflow builds and includes these
-automatically. Repeat `--application-workload NAME` to select workloads included
-in its equal-weight aggregate. `--application-case ID` remains available for a
-targeted subset, but cannot be combined with workload selection.
+automatically. Focused `--case ID` runs show detailed results without the overall
+application aggregate.

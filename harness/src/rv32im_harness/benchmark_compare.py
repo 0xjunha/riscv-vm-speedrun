@@ -17,6 +17,7 @@ from .benchmark import (
     DEFAULT_TIMEOUT,
     DEFAULT_WARMUPS,
     BenchmarkFailure,
+    BenchmarkSuite,
     load_benchmark_suite,
     run_benchmark_suite,
 )
@@ -224,7 +225,7 @@ def _append_case_run(
 def run_comparison(
     executables: Mapping[str, str | os.PathLike[str]],
     baseline: str,
-    manifest: str | os.PathLike[str] = DEFAULT_MANIFEST,
+    manifest: str | os.PathLike[str] | BenchmarkSuite = DEFAULT_MANIFEST,
     *,
     warmups: int = DEFAULT_WARMUPS,
     repetitions: int = DEFAULT_REPETITIONS,
@@ -232,7 +233,7 @@ def run_comparison(
     case_ids: Sequence[str] | None = None,
     native: tuple[str, str | os.PathLike[str]] | None = None,
 ) -> dict[str, object]:
-    """Run VMs and an optional native reference with shared settings."""
+    """Run VMs and an optional native reference from a manifest or loaded suite."""
 
     records = _validated_executables(executables, baseline)
     native_record = None
@@ -248,7 +249,12 @@ def run_comparison(
         native_record = (label, path)
 
     selected_cases = None if case_ids is None else tuple(case_ids)
-    suite = load_benchmark_suite(manifest).select(selected_cases)
+    loaded = (
+        manifest
+        if isinstance(manifest, BenchmarkSuite)
+        else load_benchmark_suite(manifest)
+    )
+    suite = loaded.select(selected_cases)
     runs: dict[str, dict[str, object]] = {}
     participants = [
         _Participant(label, "serve", executable) for label, executable in records
@@ -451,71 +457,29 @@ def _aggregate_ratios(
     )
 
 
-def _validated_application_selection(
-    values: Sequence[str], kind: str
-) -> tuple[str, ...]:
-    requested = tuple(values)
-    if any(not isinstance(value, str) or not value for value in requested):
-        raise BenchmarkFailure(f"application {kind}s must be nonempty strings")
-    duplicates = tuple(
-        dict.fromkeys(value for value in requested if requested.count(value) > 1)
-    )
-    if duplicates:
-        raise BenchmarkFailure(
-            f"application {kind} selection contains duplicates: {', '.join(duplicates)}"
-        )
-    return requested
-
-
 def _application_workload_cases(
     aggregate: _AggregateContext,
-    application_case_ids: Sequence[str],
     application_workloads: Sequence[str],
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    requested_cases = _validated_application_selection(application_case_ids, "case ID")
-    requested_workloads = _validated_application_selection(
-        application_workloads, "workload"
-    )
-    if requested_cases and requested_workloads:
-        raise BenchmarkFailure(
-            "application aggregate cannot mix case and workload selections"
-        )
-    if not requested_cases and not requested_workloads:
-        return ()
-
-    if requested_workloads:
-        available_workloads = set(aggregate.workloads.values())
-        unknown = tuple(
-            workload
-            for workload in requested_workloads
-            if workload not in available_workloads
-        )
-        if unknown:
-            raise BenchmarkFailure(
-                f"unknown application workloads: {', '.join(unknown)}"
-            )
-        return tuple(
-            (
-                workload,
-                tuple(
-                    case_id
-                    for case_id in aggregate.case_ids
-                    if aggregate.workloads[case_id] == workload
-                ),
-            )
-            for workload in requested_workloads
-        )
-
-    available_cases = set(aggregate.case_ids)
+    available_workloads = set(aggregate.workloads.values())
     unknown = tuple(
-        case_id for case_id in requested_cases if case_id not in available_cases
+        workload
+        for workload in application_workloads
+        if workload not in available_workloads
     )
     if unknown:
-        raise BenchmarkFailure(f"unknown application case IDs: {', '.join(unknown)}")
-    grouped: dict[str, list[str]] = {}
-    for case_id in requested_cases:
-        grouped.setdefault(aggregate.workloads[case_id], []).append(case_id)
-    return tuple((workload, tuple(case_ids)) for workload, case_ids in grouped.items())
+        raise BenchmarkFailure(f"unknown application workloads: {', '.join(unknown)}")
+    return tuple(
+        (
+            workload,
+            tuple(
+                case_id
+                for case_id in aggregate.case_ids
+                if aggregate.workloads[case_id] == workload
+            ),
+        )
+        for workload in application_workloads
+    )
 
 
 def _workload_balanced_ratios(
@@ -535,16 +499,13 @@ def _workload_balanced_ratios(
 
 def _application_summary_text(
     result: dict[str, object],
-    application_case_ids: Sequence[str] = (),
     application_workloads: Sequence[str] = (),
 ) -> str | None:
-    if not application_case_ids and not application_workloads:
+    if not application_workloads:
         return None
 
     aggregate = _aggregate_context(result, "application aggregate")
-    workload_cases = _application_workload_cases(
-        aggregate, application_case_ids, application_workloads
-    )
+    workload_cases = _application_workload_cases(aggregate, application_workloads)
     implementation_labels = (
         aggregate.baseline,
         *(
@@ -665,7 +626,6 @@ def _horizon_summary_text(result: dict[str, object]) -> str:
 
 def _summary_text(
     result: dict[str, object],
-    application_case_ids: Sequence[str] = (),
     application_workloads: Sequence[str] = (),
 ) -> str:
     baseline = str(result["baseline"])
@@ -689,9 +649,7 @@ def _summary_text(
         "speedup",
     )
     detailed = _table_text(headers, rows)
-    application = _application_summary_text(
-        result, application_case_ids, application_workloads
-    )
+    application = _application_summary_text(result, application_workloads)
     if application is None:
         return detailed
     return f"{detailed}\n\n{application}"
@@ -748,26 +706,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run only this case (repeatable)",
     )
     parser.add_argument(
-        "--application-case",
-        dest="application_case_ids",
-        action="append",
-        default=[],
-        help=(
-            "include this case in the native-normalized application aggregate "
-            "(repeatable)"
-        ),
-    )
-    parser.add_argument(
-        "--application-workload",
-        dest="application_workloads",
-        action="append",
-        default=[],
-        help=(
-            "include every measured case for this workload in the workload-balanced "
-            "native-normalized application aggregate (repeatable)"
-        ),
-    )
-    parser.add_argument(
         "--horizon-report",
         action="store_true",
         help="group the aggregate by -Nx case suffix",
@@ -781,36 +719,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
 
     try:
-        if arguments.application_case_ids and arguments.application_workloads:
-            raise BenchmarkFailure(
-                "--application-case conflicts with --application-workload"
-            )
-        if arguments.horizon_report and (
-            arguments.application_case_ids or arguments.application_workloads
-        ):
-            raise BenchmarkFailure(
-                "--horizon-report conflicts with application aggregate selectors"
-            )
-        _validated_application_selection(arguments.application_case_ids, "case ID")
-        _validated_application_selection(arguments.application_workloads, "workload")
+        suite = load_benchmark_suite(arguments.manifest)
         result = run_comparison(
             _vm_mapping(arguments.vms),
             arguments.baseline,
-            arguments.manifest,
+            suite,
             warmups=arguments.warmups,
             repetitions=arguments.repetitions,
             timeout=arguments.timeout,
             case_ids=arguments.case_ids,
             native=arguments.native,
         )
+        application_workloads = (
+            suite.application_workloads
+            if (
+                not arguments.horizon_report
+                and arguments.native is not None
+                and not arguments.case_ids
+            )
+            else ()
+        )
         summary = (
             _horizon_summary_text(result)
             if arguments.horizon_report
-            else _summary_text(
-                result,
-                arguments.application_case_ids,
-                arguments.application_workloads,
-            )
+            else _summary_text(result, application_workloads)
         )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(_json_text(result), encoding="utf-8")

@@ -1,33 +1,16 @@
 from __future__ import annotations
 
-import json
 import os
-import shlex
 import subprocess
-import sys
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT = ROOT / "benchmarks/gcp/run-benchmark.sh"
 
 
 def _entrypoint_arguments(tmp_path: Path, user_arguments: tuple[str, ...]) -> list[str]:
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        json.dumps({"application_workloads": ["sha256", "qrcode"]}),
-        encoding="utf-8",
-    )
     entrypoint = tmp_path / "run-benchmark.sh"
-    entrypoint.write_text(
-        ENTRYPOINT.read_text(encoding="utf-8").replace(
-            "manifest=/opt/rv32im/benchmarks/manifest.json",
-            f"manifest={shlex.quote(str(manifest))}",
-            1,
-        ),
-        encoding="utf-8",
-    )
+    entrypoint.write_text(ENTRYPOINT.read_text(encoding="utf-8"), encoding="utf-8")
     entrypoint.chmod(0o755)
 
     fake_bin = tmp_path / "bin"
@@ -35,11 +18,8 @@ def _entrypoint_arguments(tmp_path: Path, user_arguments: tuple[str, ...]) -> li
     log = tmp_path / "python-arguments.txt"
     python = fake_bin / "python3"
     python.write_text(
-        f"""#!/bin/sh
+        """#!/bin/sh
 set -eu
-if [ "${{1:-}}" = - ]; then
-    exec {shlex.quote(sys.executable)} "$@"
-fi
 printf '%s\n' "$@" >"$ENTRYPOINT_LOG"
 """,
         encoding="utf-8",
@@ -64,53 +44,22 @@ printf '%s\n' "$@" >"$ENTRYPOINT_LOG"
     return log.read_text(encoding="utf-8").splitlines()
 
 
-def _option_values(arguments: list[str], option: str) -> list[str]:
-    values = []
-    index = 0
-    while index < len(arguments):
-        argument = arguments[index]
-        if argument == option:
-            values.append(arguments[index + 1])
-            index += 2
-        elif argument.startswith(f"{option}="):
-            values.append(argument.split("=", 1)[1])
-            index += 1
-        else:
-            index += 1
-    return values
-
-
-def test_entrypoint_adds_manifest_application_workloads_by_default(
-    tmp_path: Path,
-) -> None:
+def test_entrypoint_delegates_aggregate_policy_to_comparator(tmp_path: Path) -> None:
     arguments = _entrypoint_arguments(tmp_path, ("--warmups", "0"))
 
-    assert _option_values(arguments, "--application-workload") == [
-        "sha256",
-        "qrcode",
+    assert arguments[:3] == [
+        "-m",
+        "rv32im_harness.benchmark_compare",
+        "/opt/rv32im/benchmarks/manifest.json",
     ]
-    assert arguments[-2:] == ["--application-workload", "qrcode"]
+    assert arguments[-2:] == ["--warmups", "0"]
 
 
-@pytest.mark.parametrize(
-    "selector",
-    [
-        ("--case", "tiny"),
-        ("--case=tiny",),
-        ("--application-case", "sha256"),
-        ("--application-case=sha256",),
-        ("--application-workload", "littlefs"),
-        ("--application-workload=littlefs",),
-    ],
-)
-def test_entrypoint_preserves_explicit_selection_without_auto_injection(
-    tmp_path: Path, selector: tuple[str, ...]
-) -> None:
-    arguments = _entrypoint_arguments(tmp_path, selector)
+def test_entrypoint_forwards_case_selection(tmp_path: Path) -> None:
+    selection = ("--case", "tiny")
+    arguments = _entrypoint_arguments(tmp_path, selection)
 
-    expected_workloads = ["littlefs"] if "application-workload" in selector[0] else []
-    assert _option_values(arguments, "--application-workload") == expected_workloads
-    assert arguments[-len(selector) :] == list(selector)
+    assert arguments[-len(selection) :] == list(selection)
 
 
 def test_entrypoint_is_posix_shell_syntax() -> None:

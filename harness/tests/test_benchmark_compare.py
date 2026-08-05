@@ -70,7 +70,10 @@ def _multi_case_result(
     }
 
 
-def _loaded_suite(cases: tuple[tuple[str, str], ...]) -> BenchmarkSuite:
+def _loaded_suite(
+    cases: tuple[tuple[str, str], ...],
+    application_workloads: tuple[str, ...] = (),
+) -> BenchmarkSuite:
     return BenchmarkSuite(
         "a" * 64,
         tuple(
@@ -84,6 +87,7 @@ def _loaded_suite(cases: tuple[tuple[str, str], ...]) -> BenchmarkSuite:
             )
             for case_id, workload in cases
         ),
+        application_workloads,
     )
 
 
@@ -275,18 +279,14 @@ def test_run_comparison_interleaves_cases_and_rotates_vm_order(
             interface="native",
         )
 
-    monkeypatch.setattr(
-        benchmark_compare,
-        "load_benchmark_suite",
-        lambda *args: _loaded_suite(manifest_cases),
-    )
+    suite = _loaded_suite(manifest_cases)
     monkeypatch.setattr(benchmark_compare, "run_benchmark_suite", fake_run)
     monkeypatch.setattr(benchmark_compare, "run_native_benchmark_suite", fake_native)
 
     result = run_comparison(
         {"base": "vm0", "fast": "vm1", "other": "vm2"},
         "base",
-        "manifest",
+        suite,
         repetitions=1,
         native=("native", "/native"),
     )
@@ -480,7 +480,7 @@ def test_application_summary_uses_native_normalized_geometric_means() -> None:
     }
 
 
-def test_application_summary_rejects_unknown_application_cases() -> None:
+def test_application_summary_rejects_unknown_workloads() -> None:
     result = {
         "schema_version": 1,
         "baseline": "base",
@@ -495,7 +495,7 @@ def test_application_summary_rejects_unknown_application_cases() -> None:
         "comparisons": [],
     }
 
-    with pytest.raises(BenchmarkFailure, match="unknown application case IDs: sha256"):
+    with pytest.raises(BenchmarkFailure, match="unknown application workloads: sha256"):
         benchmark_compare._application_summary_text(result, ("sha256",))
 
 
@@ -547,9 +547,7 @@ def test_application_summary_selects_workloads_and_weights_each_equally() -> Non
         "comparisons": [],
     }
 
-    summary = benchmark_compare._application_summary_text(
-        result, application_workloads=("decode", "crypto")
-    )
+    summary = benchmark_compare._application_summary_text(result, ("decode", "crypto"))
 
     assert summary is not None
     assert "geometric mean across 2 application workloads" in summary
@@ -559,45 +557,6 @@ def test_application_summary_selects_workloads_and_weights_each_equally() -> Non
         line.split() for line in summary.splitlines() if line.startswith("fast ")
     )
     assert fast_row == ["fast", "2.000x", "25.0000%", "4.000x"]
-
-    legacy_summary = benchmark_compare._application_summary_text(
-        result, ("decode-low", "decode-high", "crypto-vector")
-    )
-    assert legacy_summary is not None
-    legacy_fast_row = next(
-        line.split() for line in legacy_summary.splitlines() if line.startswith("fast ")
-    )
-    assert legacy_fast_row == fast_row
-
-
-@pytest.mark.parametrize(
-    ("case_ids", "workloads", "message"),
-    [
-        (("a", "a"), (), "application case ID selection contains duplicates: a"),
-        ((), ("work", "work"), "application workload selection contains duplicates"),
-        (("a",), ("work",), "cannot mix case and workload selections"),
-        ((), ("missing",), "unknown application workloads: missing"),
-    ],
-)
-def test_application_summary_rejects_invalid_selections(
-    case_ids: tuple[str, ...], workloads: tuple[str, ...], message: str
-) -> None:
-    result = {
-        "schema_version": 1,
-        "baseline": "base",
-        "implementations": {
-            "base": {"interface": "serve", "path": "vm0"},
-            "native": {"interface": "native", "path": "/native"},
-        },
-        "runs": {
-            "base": _multi_case_result({"a": 100}),
-            "native": _multi_case_result({"a": 50}, interface="native"),
-        },
-        "comparisons": [],
-    }
-
-    with pytest.raises(BenchmarkFailure, match=message):
-        benchmark_compare._application_summary_text(result, case_ids, workloads)
 
 
 def test_application_summary_rejects_mismatched_workload_metadata() -> None:
@@ -618,9 +577,7 @@ def test_application_summary_rejects_mismatched_workload_metadata() -> None:
     }
 
     with pytest.raises(BenchmarkFailure, match="different workload metadata"):
-        benchmark_compare._application_summary_text(
-            result, application_workloads=("a",)
-        )
+        benchmark_compare._application_summary_text(result, ("a",))
 
 
 def test_horizon_summary_groups_cases_and_compares_with_native() -> None:
@@ -649,6 +606,8 @@ def test_main_selects_horizon_report(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     output = tmp_path / "comparison.json"
+    suite = _loaded_suite((("app-a-10x", "app-a"),))
+    monkeypatch.setattr(benchmark_compare, "load_benchmark_suite", lambda *args: suite)
     monkeypatch.setattr(
         benchmark_compare,
         "run_comparison",
@@ -677,13 +636,14 @@ def test_main_selects_horizon_report(
     assert "4.243x" in capsys.readouterr().out
 
 
-def test_main_selects_all_cases_for_application_workload(
+def test_main_uses_manifest_application_workloads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     output = tmp_path / "comparison.json"
     workloads = {"decode-low": "decode", "decode-high": "decode"}
+    suite = _loaded_suite(tuple(workloads.items()), ("decode",))
     result = {
         "schema_version": 1,
         "baseline": "base",
@@ -716,6 +676,7 @@ def test_main_selects_all_cases_for_application_workload(
     monkeypatch.setattr(
         benchmark_compare, "run_comparison", lambda *args, **kwargs: result
     )
+    monkeypatch.setattr(benchmark_compare, "load_benchmark_suite", lambda *args: suite)
 
     assert (
         main(
@@ -729,8 +690,6 @@ def test_main_selects_all_cases_for_application_workload(
                 "native=/native",
                 "--baseline",
                 "base",
-                "--application-workload",
-                "decode",
                 "--output",
                 str(output),
             ]
@@ -742,47 +701,13 @@ def test_main_selects_all_cases_for_application_workload(
     assert "geometric means within each workload (2 cases total)" in stdout
 
 
-def test_main_rejects_mixed_application_selectors_before_running(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def unexpected_run(*args: object, **kwargs: object) -> dict[str, object]:
-        pytest.fail("run_comparison should not be called")
-
-    monkeypatch.setattr(benchmark_compare, "run_comparison", unexpected_run)
-
-    assert (
-        main(
-            [
-                "manifest",
-                "--vm",
-                "base=vm0",
-                "--vm",
-                "other=vm1",
-                "--baseline",
-                "base",
-                "--application-case",
-                "decode-low",
-                "--application-workload",
-                "decode",
-                "--output",
-                str(tmp_path / "comparison.json"),
-            ]
-        )
-        == 1
-    )
-    assert "--application-case conflicts with --application-workload" in (
-        capsys.readouterr().err
-    )
-
-
 def test_main_writes_raw_json_and_prints_summary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     output = tmp_path / "nested/comparison.json"
+    suite = _loaded_suite((("tiny", "tiny"),))
     result = {
         "schema_version": 1,
         "baseline": "base",
@@ -813,6 +738,7 @@ def test_main_writes_raw_json_and_prints_summary(
         return result
 
     monkeypatch.setattr(benchmark_compare, "run_comparison", fake_comparison)
+    monkeypatch.setattr(benchmark_compare, "load_benchmark_suite", lambda *args: suite)
 
     assert (
         main(
@@ -845,10 +771,11 @@ def test_main_writes_raw_json_and_prints_summary(
     assert "implementation median (ns)" in stdout
     assert "fast" in stdout
     assert "3.000x" in stdout
+    assert "application aggregate" not in stdout
     assert str(output) in stdout
     assert calls == [
         (
-            ({"base": "vm0", "fast": "vm1"}, "base", "manifest"),
+            ({"base": "vm0", "fast": "vm1"}, "base", suite),
             {
                 "warmups": 0,
                 "repetitions": 3,
