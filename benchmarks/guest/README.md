@@ -32,8 +32,9 @@ exits with code 101.
 - `workloads/` contains the benchmark binaries and shared input/output logic.
   RV32IM builds wrap the workload logic in the guest runtime;
   native builds read input from standard input and report in-process timing samples.
-  `workloads/c/` supplies the fixed-width FFI, freestanding C-library shims,
-  and project-owned adapters around the pinned upstream C cores.
+  `workloads/c/` supplies the fixed-width FFI and freestanding C-library shims.
+  `workloads/c/adapters/` contains project-owned adapters around the pinned
+  upstream C cores.
   Vendored third-party dependencies live in `../third_party/`.
 - `link.x` defines the VM-compatible ELF layout: entry point, page-aligned
   executable/read-only/read-write segments, global pointer, and the image

@@ -63,12 +63,12 @@ fn compile_c_workloads(manifest: &Path) {
         };
     let mut sources = vec![
         CSource {
-            path: source_root.join("littlefs.c"),
+            path: source_root.join("adapters/littlefs.c"),
             warning_policy: WarningPolicy::Strict,
             defines: LITTLEFS_DEFINES,
         },
         CSource {
-            path: source_root.join("x25519.c"),
+            path: source_root.join("adapters/x25519.c"),
             warning_policy: WarningPolicy::Strict,
             defines: &[],
         },
