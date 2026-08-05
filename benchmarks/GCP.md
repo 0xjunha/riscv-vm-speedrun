@@ -1,51 +1,40 @@
 # VM Performance Benchmarks on GCP
 
-`make gcp-benchmark` runs VM0 through VM5 and the x86-64 host-native workload reference
-on one disposable Google Compute Engine host. It builds one image from a clean repository
-revision and runs every implementation in the same Linux/amd64 container with one pinned
-CPU, no network, and a 4 GiB memory limit. They share harness settings, but VM samples
-time `RUN` round trips while native samples time only the workload function.
+`make gcp-benchmark` runs VM0 through VM5 and the x86-64 native reference on one
+disposable Google Compute Engine host. Every implementation uses the same
+Linux/amd64 container, harness settings, validated CPU model, one hardware
+thread per core, no network, and a 4 GiB memory limit. VM samples measure `RUN`
+round trips; native samples measure only the workload function.
 
-Cases execute in manifest order. Within each case, the complete participant
-order (VM0 through VM5 and native) rotates left by the case index, so no
-implementation systematically runs first or last. The raw comparison JSON
-records this schedule. VM0 remains the comparison baseline regardless of
-measurement order.
-After the detailed per-case comparison, the report prints a second table
-covering every implementation. It selects every case whose workload appears in
-the manifest's top-level `application_workloads` list. For workloads with
-multiple cases, it first takes the geometric mean across that workload's cases,
-then takes the geometric mean across workload results so that every workload has
-equal weight. The table reports speedup over VM0, host-native performance fraction,
-and time relative to native. The `tiny`, `arithmetic`, and `streaming` diagnostics
-remain visible in the detailed table but do not affect this aggregate.
+## Measurement and reports
 
-The default `official` profile pins `c3-highcpu-4` in `asia-northeast3-a` and
-the concrete Ubuntu image named in `.env.gcp.example`. Google maps C3 to the
-Intel Xeon Platinum 8481C (Sapphire Rapids). Before uploading the source, the
-runner verifies the returned Compute Engine CPU platform, machine type, zone,
-one-thread-per-core setting, exact guest-visible CPU model, terminate-on-host-
-maintenance policy, and disabled automatic restart. A mismatch fails the run
-rather than producing benchmark results. The default per-operation deadline is
-30 seconds so the slow VM0 reference can complete the capacity-boundary QR case.
+- Cases run in manifest order. For each case, the VM0-through-VM5-and-native
+  order rotates so no implementation always runs first or last. The raw JSON
+  records the schedule; VM0 remains the comparison baseline.
+- The detailed table includes every case. The aggregate includes workloads from
+  the manifest's `application_workloads` list. It takes a geometric mean within
+  each workload, then across workloads so each workload has equal weight.
+  Diagnostic workloads remain detailed-only.
 
-Host provisioning is pinned too. The startup script uses Canonical's Ubuntu
-archive snapshot `20260723T000000Z` through an isolated APT source and package-index
-directory, and installs exact `docker.io`, `containerd`, and `runc` versions.
-Background APT timers are disabled before installation, and startup reaches its
-ready marker only after the installed versions and Docker service are verified.
-The snapshot and resolved versions are retained as `host-packages.txt` with every
-run. When the host image is updated, review and advance the snapshot and package
-versions together, including the security pocket. See Canonical's
-[Ubuntu snapshot service documentation](https://documentation.ubuntu.com/server/how-to/software/snapshot-service/).
+## Host reproducibility
 
-The host uses one hardware thread per core. Its maintenance policy is
-`TERMINATE`, with automatic restart disabled, so a host event fails the run
-instead of live-migrating measurements. It is deleted after results are copied
-and after failures; a four-hour maximum lifetime also deletes it if local cleanup
-is interrupted. Separate instances can use different physical hosts, so this
-pins the advertised CPU model, not a particular physical socket. The full
-instance, image, and guest `lscpu` metadata is retained with the results.
+The default `official` profile requires the pinned zone, machine, Ubuntu image,
+CPU platform, and CPU model. It also verifies one thread per core,
+terminate-on-maintenance, and disabled automatic restart. Any mismatch aborts
+the run.
+
+The startup script:
+
+- installs exact Docker, containerd, and runc versions from a pinned Ubuntu
+  snapshot;
+- disables background APT updates and verifies the installed packages and
+  Docker service; and
+- saves the resolved package versions with the results.
+
+Update the image, Ubuntu snapshot, and package versions together. The host is
+deleted after success or failure; a four-hour maximum lifetime handles
+interrupted cleanup. Results retain the source revision plus image, instance,
+guest CPU, package, and container metadata.
 
 ## Prerequisites
 
@@ -59,22 +48,13 @@ Create the ignored local configuration:
 cp .env.gcp.example .env.gcp
 ```
 
-Set `GCP_PROJECT` and adjust the network and subnet as needed. Set
-`GCP_USE_IAP=1` for IAP or `GCP_NETWORK_TAGS` when the SSH firewall rule
-requires instance tags. Official runs reject changes to the zone, machine type,
-image project, or concrete image name.
+Set `GCP_PROJECT`, network, and subnet. Set `GCP_USE_IAP=1` for IAP, or set
+`GCP_NETWORK_TAGS` when required by the SSH firewall rule.
 
-For exploratory runs on another zone, machine, or concrete Ubuntu image, set
-`GCP_BENCHMARK_PROFILE=authoring`. Such results record the selected and observed
-host metadata but are not official benchmark results. Rolling image families are
-not accepted in either profile; changing the pinned image should be an explicit,
-reviewed repository change.
-
-The `--min-cpu-platform` setting is intentionally not used as an exact-model
-pin: it specifies a minimum CPU generation. The C3 machine series selects the
-advertised CPU SKU, while the post-creation assertions enforce the benchmark
-contract. See Google's [CPU platform table](https://cloud.google.com/compute/docs/cpu-platforms)
-and [minimum CPU platform documentation](https://cloud.google.com/compute/docs/instances/specify-min-cpu-platform).
+Official runs reject changes to the pinned zone, machine, and image. The
+`authoring` profile allows other zones, machines, and concrete Ubuntu Noble
+images, but its results are not official. The runner verifies the exact CPU
+after creation because `--min-cpu-platform` specifies only a minimum generation.
 
 ## Run
 
@@ -84,10 +64,7 @@ Commit the code to measure and use a clean worktree:
 make gcp-benchmark
 ```
 
-Results are stored below `benchmarks/out/gcp/` with the raw comparison JSON,
-source revision, concrete OS image and its description, instance description,
-guest `lscpu` data, requested host contract, pinned host-package record, and
-host/container facts.
+Results are stored below `benchmarks/out/gcp/`.
 
 ## Long-horizon run
 
