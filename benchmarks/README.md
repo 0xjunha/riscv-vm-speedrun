@@ -49,24 +49,23 @@ Application workloads and input profiles:
 ## Workload contracts
 
 All multibyte fields are little-endian. Every workload emits one 8-byte `u64`
-[`result`](guest/README.md#workload-data-contract). When a workload commits two
-32-bit observations, the first occupies the low half and the second the high
-half. The reference models enforce the same contracts when generating the
-manifest.
+[`result`](guest/README.md#workload-data-contract). Its low and high halves hold
+the two 32-bit observations described below. The reference models enforce the
+same contracts when generating the manifest.
 
-| Workload | Valid input layout | `result` |
-| --- | --- | --- |
-| `tiny` | Two `u32` values: `a`, `b` | Low: fixed rotate/XOR mix of `a` and `b`; high: input length in bytes |
-| `arithmetic` | Three `u32` values: iteration count, initial `x`, initial `y`; the count defaults to 24,000 when zero and is capped at 120,000 | Low: final `x`; high: final `y` XOR final step state |
-| `streaming` | Pass count as `u32`, followed by 1–1,024 `u32` values | Low: wrapping sum XOR position-rotated XOR; high: stride-mixed wrapping sum |
-| `sha256` | Raw payload of at most 512 KiB | Low and high: first and last 32-bit SHA-256 digest words |
-| `heatshrink` | Raw payload of at most 16 KiB | Low: compressed CRC-32; high: decoded-payload CRC-32 XOR rotated compressed length |
-| `depthconv` | Repetition count as `u32`, then fixed 16x16x8 `i8` activations, 3x3x8 `i8` weights, and eight `i32` biases, multipliers, and shifts | Low: rotation-XOR aggregate of output CRC-32 values; high: final output CRC-32 |
-| `dijkstra` | Node and source counts as `u32`, followed by a `nodes` x `nodes` matrix of `u16` edge weights; zero means no edge | Low: wrapping sum of distances; high: position-rotated XOR fold of distances |
-| `sort_records` | Pass count as `u32`, followed by 2–2,048 `(key: u32, value: u32)` pairs | Low: rotation-XOR aggregate across passes; high: final sorted-record fold |
-| `qrcode` | Raw payload of at most 666 bytes | Low: dark-module count; high: module-bitmap CRC-32 XOR version/size metadata |
-| `littlefs` | 1–96 four-`u32` operation records: kind, file, and two operation-specific arguments | Low: event-trace fold; high: final filesystem-state CRC-32 |
-| `x25519` | 1–32 64-byte pairs: 32-byte scalar and 32-byte u-coordinate | Low: CRC-32 of all shared secrets; high: independent wordwise fold of those secrets |
+| Workload | Valid input layout | `result` low 32 bits | `result` high 32 bits |
+| --- | --- | --- | --- |
+| `tiny` | Two `u32` values: `a`, `b` | Fixed rotate/XOR mix of `a` and `b` | Input length in bytes |
+| `arithmetic` | Three `u32` values: iteration count, initial `x`, initial `y`; the count defaults to 24,000 when zero and is capped at 120,000 | Final `x` | Final `y` XOR final step state |
+| `streaming` | Pass count as `u32`, followed by 1–1,024 `u32` values | Wrapping sum XOR position-rotated XOR | Stride-mixed wrapping sum |
+| `sha256` | Raw payload of at most 512 KiB | First 32-bit SHA-256 digest word | Last 32-bit SHA-256 digest word |
+| `heatshrink` | Raw payload of at most 16 KiB | Compressed CRC-32 | Decoded-payload CRC-32 XOR rotated compressed length |
+| `depthconv` | Repetition count as `u32`, then fixed 16x16x8 `i8` activations, 3x3x8 `i8` weights, and eight `i32` biases, multipliers, and shifts | Rotation-XOR aggregate of output CRC-32 values | Final output CRC-32 |
+| `dijkstra` | Node and source counts as `u32`, followed by a `nodes` x `nodes` matrix of `u16` edge weights; zero means no edge | Wrapping sum of distances | Position-rotated XOR fold of distances |
+| `sort_records` | Pass count as `u32`, followed by 2–2,048 `(key: u32, value: u32)` pairs | Rotation-XOR aggregate across passes | Final sorted-record fold |
+| `qrcode` | Raw payload of at most 666 bytes | Dark-module count | Module-bitmap CRC-32 XOR version/size metadata |
+| `littlefs` | 1–96 four-`u32` operation records: kind, file, and two operation-specific arguments | Event-trace fold | Final filesystem-state CRC-32 |
+| `x25519` | 1–32 64-byte pairs: 32-byte scalar and 32-byte u-coordinate | CRC-32 of all shared secrets | Independent wordwise fold of those secrets |
 
 ## Components
 
