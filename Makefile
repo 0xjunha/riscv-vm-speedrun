@@ -288,11 +288,11 @@ benchmark-test:
 	PYTHONDONTWRITEBYTECODE=1 uv run --locked pytest benchmarks/tests
 
 benchmark-format:
-	uv run --locked ruff format benchmarks/*.py benchmarks/tests
+	uv run --locked ruff format benchmarks/*.py benchmarks/gcp/*.py benchmarks/tests
 
 benchmark-lint:
-	uv run --locked ruff format --check benchmarks/*.py benchmarks/tests
-	uv run --locked ruff check benchmarks/*.py benchmarks/tests
+	uv run --locked ruff format --check benchmarks/*.py benchmarks/gcp/*.py benchmarks/tests
+	uv run --locked ruff check benchmarks/*.py benchmarks/gcp/*.py benchmarks/tests
 
 benchmark-guest-lint: benchmark-image
 	docker run --rm --platform linux/amd64 \

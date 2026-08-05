@@ -243,53 +243,11 @@ gcloud compute instances describe "$instance" \
     --format=json >"$result_dir/instance.json"
 
 if [ "$GCP_BENCHMARK_PROFILE" = official ]; then
-    python3 - \
+    python3 benchmarks/gcp/validate_host.py instance \
         "$result_dir/instance.json" \
         "$official_zone" \
         "$official_machine_type" \
-        "$official_cpu_platform" <<'PY'
-import json
-import sys
-
-
-def resource_name(value):
-    return str(value).rstrip("/").rsplit("/", 1)[-1]
-
-
-path, expected_zone, expected_machine, expected_platform = sys.argv[1:]
-with open(path, encoding="utf-8") as instance_file:
-    instance = json.load(instance_file)
-
-actual = {
-    "zone": resource_name(instance.get("zone", "")),
-    "machine type": resource_name(instance.get("machineType", "")),
-    "CPU platform": str(instance.get("cpuPlatform", "")),
-    "threads per core": str(
-        instance.get("advancedMachineFeatures", {}).get("threadsPerCore", "")
-    ),
-    "maintenance policy": str(
-        instance.get("scheduling", {}).get("onHostMaintenance", "")
-    ),
-    "automatic restart": instance.get("scheduling", {}).get("automaticRestart"),
-}
-expected = {
-    "zone": expected_zone,
-    "machine type": expected_machine,
-    "CPU platform": expected_platform,
-    "threads per core": "1",
-    "maintenance policy": "TERMINATE",
-    "automatic restart": False,
-}
-errors = [
-    f"{name}: expected {expected[name]!r}, got {value!r}"
-    for name, value in actual.items()
-    if value != expected[name]
-]
-if errors:
-    for error in errors:
-        print(f"official GCP instance contract mismatch: {error}", file=sys.stderr)
-    raise SystemExit(1)
-PY
+        "$official_cpu_platform"
 fi
 
 echo "Waiting for Docker"
@@ -318,35 +276,10 @@ gcloud compute ssh "$instance" \
     --command='LC_ALL=C lscpu --json' \
     --quiet >"$result_dir/host-lscpu.json"
 
-python3 - \
+python3 benchmarks/gcp/validate_host.py cpu \
     "$result_dir/host-lscpu.json" \
     "$GCP_BENCHMARK_PROFILE" \
-    "$official_cpu_model" <<'PY'
-import json
-import sys
-
-
-path, profile, expected_model = sys.argv[1:]
-with open(path, encoding="utf-8") as lscpu_file:
-    rows = json.load(lscpu_file).get("lscpu", [])
-facts = {
-    str(row.get("field", "")).rstrip(":"): str(row.get("data", ""))
-    for row in rows
-}
-
-errors = []
-threads_per_core = facts.get("Thread(s) per core", "")
-if threads_per_core != "1":
-    errors.append(f"threads per core: expected '1', got {threads_per_core!r}")
-if profile == "official":
-    cpu_model = facts.get("Model name", "")
-    if cpu_model != expected_model:
-        errors.append(f"CPU model: expected {expected_model!r}, got {cpu_model!r}")
-if errors:
-    for error in errors:
-        print(f"GCP guest CPU contract mismatch: {error}", file=sys.stderr)
-    raise SystemExit(1)
-PY
+    "$official_cpu_model"
 
 gcloud compute scp "$archive" "$instance:$remote_archive" \
     --project="$GCP_PROJECT" \
