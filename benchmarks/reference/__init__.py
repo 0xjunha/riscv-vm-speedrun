@@ -6,16 +6,23 @@ from collections.abc import Mapping
 from types import ModuleType
 
 from . import (
+    aes,
     arithmetic,
     depthconv,
     dijkstra,
     heatshrink,
     littlefs,
+    mont64,
+    picojpeg,
     qrcode,
+    sglib,
     sha256,
+    slre,
     sort_records,
+    statemate,
     streaming,
     tiny,
+    ud,
     x25519,
 )
 
@@ -31,6 +38,13 @@ _WORKLOADS = {
     "qrcode": qrcode,
     "littlefs": littlefs,
     "x25519": x25519,
+    "aes": aes,
+    "mont64": mont64,
+    "picojpeg": picojpeg,
+    "sglib": sglib,
+    "slre": slre,
+    "statemate": statemate,
+    "ud": ud,
 }
 
 

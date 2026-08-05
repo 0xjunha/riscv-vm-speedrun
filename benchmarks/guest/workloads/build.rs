@@ -15,6 +15,12 @@ const LITTLEFS_DEFINES: &[&str] = &[
     "LFS_NO_WARN",
     "LFS_NO_ERROR",
 ];
+const STATEMATE_DEFINES: &[&str] = &[
+    "benchmark=embench_statemate_benchmark",
+    "warm_caches=embench_statemate_warm_caches",
+    "initialise_benchmark=embench_statemate_initialise_benchmark",
+    "verify_benchmark=embench_statemate_verify_benchmark",
+];
 
 #[derive(Clone, Copy)]
 enum WarningPolicy {
@@ -73,6 +79,42 @@ fn compile_c_workloads(manifest: &Path) {
             defines: &[],
         },
         CSource {
+            path: source_root.join("adapters/aes.c"),
+            warning_policy: WarningPolicy::Strict,
+            defines: &[],
+        },
+        CSource {
+            path: source_root.join("adapters/mont64.c"),
+            warning_policy: WarningPolicy::Strict,
+            defines: &[],
+        },
+        CSource {
+            path: source_root.join("adapters/picojpeg.c"),
+            warning_policy: WarningPolicy::Strict,
+            defines: &[],
+        },
+        CSource {
+            path: source_root.join("adapters/sglib.c"),
+            // The upstream macro expansion triggers unused-local warnings.
+            warning_policy: WarningPolicy::Upstream,
+            defines: &[],
+        },
+        CSource {
+            path: source_root.join("adapters/slre.c"),
+            warning_policy: WarningPolicy::Strict,
+            defines: &[],
+        },
+        CSource {
+            path: source_root.join("adapters/statemate.c"),
+            warning_policy: WarningPolicy::Strict,
+            defines: &[],
+        },
+        CSource {
+            path: source_root.join("adapters/ud.c"),
+            warning_policy: WarningPolicy::Strict,
+            defines: &[],
+        },
+        CSource {
             path: third_party.join("littlefs/lfs.c"),
             warning_policy: WarningPolicy::Upstream,
             defines: LITTLEFS_DEFINES,
@@ -84,6 +126,36 @@ fn compile_c_workloads(manifest: &Path) {
         },
         CSource {
             path: third_party.join("monocypher/monocypher.c"),
+            warning_policy: WarningPolicy::Upstream,
+            defines: &[],
+        },
+        CSource {
+            path: third_party.join("embench/aha-mont64/mont64.c"),
+            warning_policy: WarningPolicy::Upstream,
+            defines: &[],
+        },
+        CSource {
+            path: third_party.join("embench/nettle-aes/nettle-aes.c"),
+            warning_policy: WarningPolicy::Upstream,
+            defines: &[],
+        },
+        CSource {
+            path: third_party.join("embench/picojpeg/libpicojpeg.c"),
+            warning_policy: WarningPolicy::Upstream,
+            defines: &[],
+        },
+        CSource {
+            path: third_party.join("embench/slre/libslre.c"),
+            warning_policy: WarningPolicy::Upstream,
+            defines: &[],
+        },
+        CSource {
+            path: third_party.join("embench/statemate/libstatemate.c"),
+            warning_policy: WarningPolicy::Upstream,
+            defines: STATEMATE_DEFINES,
+        },
+        CSource {
+            path: third_party.join("embench/ud/libud.c"),
             warning_policy: WarningPolicy::Upstream,
             defines: &[],
         },
@@ -102,6 +174,9 @@ fn compile_c_workloads(manifest: &Path) {
         source_root.join("include"),
         third_party.join("littlefs"),
         third_party.join("monocypher"),
+        third_party.join("embench/picojpeg"),
+        third_party.join("embench/sglib-combined"),
+        third_party.join("embench/slre"),
     ];
 
     println!("cargo:rerun-if-env-changed={CLANG_ENV}");
@@ -109,6 +184,9 @@ fn compile_c_workloads(manifest: &Path) {
     emit_authored_inputs(&source_root);
     for root in include_directories.iter().skip(1) {
         emit_authored_inputs(root);
+    }
+    for source in &sources {
+        println!("cargo:rerun-if-changed={}", source.path.display());
     }
 
     let clang = env::var_os(CLANG_ENV).unwrap_or_else(|| OsStr::new("clang-14").into());

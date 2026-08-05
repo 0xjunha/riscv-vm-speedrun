@@ -34,15 +34,17 @@ exits with code 101.
   native builds read input from standard input and report in-process timing samples.
   `workloads/c/` supplies the fixed-width FFI and freestanding C-library shims.
   `workloads/c/adapters/` contains project-owned adapters around the pinned
-  upstream C cores.
+  upstream C cores. Embench's sources also expect its small `support.h` and a
+  few standard C declarations; the local headers provide only what those
+  freestanding builds use.
   Vendored third-party dependencies live in `../third_party/`.
 - `link.x` defines the VM-compatible ELF layout: entry point, page-aligned
   executable/read-only/read-write segments, global pointer, and the image
   boundary before VM input memory.
 - `workloads/build.rs` is a Cargo build script. It compiles the C sources targeting
   RV32IM or x86-64 Linux using Clang tools, when the `c-workloads` feature is enabled.
-  Since bare-metal RV32IM has no system C library, `c_compat.c` supplies small implementation
-  of required functions such as `memcpy`, `memset`, and `memcmp`.
+  Since bare-metal RV32IM has no system C library, `c_compat.c` supplies small
+  implementations of required functions such as `memcpy`, `memset`, and `memcmp`.
   These shims are used only for the bare-metal RV32IM build.
   Native executables use the host C library.
 - `.cargo/config.toml` selects `riscv32im-unknown-none-elf` and supplies the

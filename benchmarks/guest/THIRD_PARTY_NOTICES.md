@@ -58,3 +58,19 @@
 - Changes: none to the vendored files
 - Data: project-generated private scalars and peer public keys
 - Oracle: independent RFC 7748 Montgomery-ladder model
+
+## Embench 1.0 workloads
+
+- Components: `aha-mont64`, `nettle-aes`, `picojpeg`, `sglib-combined`,
+  `slre`, `statemate`, and `ud`
+- Source: [`embench/embench-iot`](https://github.com/embench/embench-iot/tree/0466a18e4f6b47e19598d7c6ba72916d54b68f65/src) tag `embench-1.0`, commit `0466a18e4f6b47e19598d7c6ba72916d54b68f65`
+- Relationship: byte-for-byte vendored upstream C sources with project-owned
+  input/output adapters
+- License: [GPL-3.0-or-later](licenses/Embench-GPL-3.0-or-later.txt)
+- Changes: none to the vendored files; adapters replace Embench's timing harness
+  and supply deterministic benchmark inputs
+- Data: project-generated records and images; JPEG fixtures were encoded with
+  libjpeg-turbo `cjpeg` and are embedded in the matching reference module
+- Oracle: independent Python models for AES, Montgomery arithmetic, SGLIB
+  operations, and integer LU decomposition; pinned outputs from the common
+  native C implementation for PicoJPEG, SLRE, and Statemate

@@ -14,6 +14,7 @@ sys.path.insert(0, str(BENCHMARKS))
 
 import build
 import reference
+from reference import aes as reference_aes
 from reference import dijkstra as reference_dijkstra
 from reference import heatshrink as reference_heatshrink
 from reference import littlefs as reference_littlefs
@@ -30,6 +31,9 @@ def test_checked_in_artifacts() -> None:
 
 def test_reference_records_are_stable() -> None:
     expected_outputs = {
+        "aes": "0c975cae0905be88",
+        "aes-counter": "72313a5ce8be2c89",
+        "aes-zero-heavy": "b63eee91ee7320c5",
         "arithmetic": "b45a03028dac6b0e",
         "depthconv": "3e48b268c2e8ec02",
         "depthconv-saturated": "8ef0d57fb07d2188",
@@ -43,22 +47,43 @@ def test_reference_records_are_stable() -> None:
         "littlefs": "4a8dcf44fe1adb9b",
         "littlefs-append": "e0f2f3e40f2c3167",
         "littlefs-metadata": "9dcb262100000000",
+        "mont64": "0179c7a6cc0b8bc6",
+        "mont64-carry": "d62305621894aa4a",
+        "mont64-sparse": "8ca65f23ed3d6a7c",
+        "picojpeg-420": "d811167584c1e632",
+        "picojpeg-444": "8ce033fd5cf73611",
+        "picojpeg-grayscale": "5815a6df270bafec",
         "qrcode": "a80400007d9fde3e",
         "qrcode-capacity": "94120000a1fca83a",
         "qrcode-compact": "bc0100005a25ccd4",
         "sha256": "2b7fa3a8f050c784",
         "sha256-pages": "1d2e78d57e301280",
         "sha256-sparse": "0ce81159f6c0cedc",
+        "sglib": "7aadf261cad2afb1",
+        "sglib-clustered": "bb93921c56022cf2",
+        "sglib-ordered": "38b0cdf11670aed5",
+        "slre": "091b485aa32fed10",
+        "slre-branches": "fa6ea19dbaba1a17",
+        "slre-classes": "1288ea523f270173",
         "sort_records": "1f22b550eb0131eb",
         "sort_records-ascending": "8432ded320cac130",
         "sort_records-duplicates": "d5e64af35327ca28",
         "streaming": "1eb9132b00d8beff",
+        "statemate": "c6f43c67582ea738",
+        "statemate-mixed": "c6f43c678c66ef53",
+        "statemate-obstruction": "c6f43c67167040d6",
         "tiny": "24bb34a108000000",
+        "ud": "f2f3624e3db4943d",
+        "ud-banded": "395a2559ed6f7ea0",
+        "ud-positive": "5561791df2293fce",
         "x25519": "62467e39743a7d91",
         "x25519-carry": "b645178bed0bf368",
         "x25519-generated": "37fa59b9e5835650",
     }
     expected_inputs = {
+        "aes": "3bab5e2691f8f5bc19afbe84c02c1ea23dea22ffb99a71f6d1f0539d983f3306",
+        "aes-counter": "9c782eef84d4a91e20621f5c372a9e7d28ac81c530d29839767083e8624727d1",
+        "aes-zero-heavy": "8be647910c538aa5a12af62d7ebb5af09b12f14f18944b42481b1ad6f9ec775e",
         "arithmetic": "a34582326b5b9036c0560479357ddfaf3314d354cf320433cc4fd582d6704ee0",
         "depthconv": "155ebfc398f1f13b0bff85e742349ea8ac12681dc24386f59563a2ec98d60988",
         "depthconv-saturated": "a2c3eb00b3ad57ff1ddaf534331c62ca09df0da67811a6e1e4d1a2269f499bf0",
@@ -72,17 +97,35 @@ def test_reference_records_are_stable() -> None:
         "littlefs": "f368194ee37796e7d04b0d9bb53317c56ed418f71f4232490cedd7d9974b4662",
         "littlefs-append": "5e9964658d0e2e7f08c9ffa723de27d613e50102f14e17c268a5df42142afbf2",
         "littlefs-metadata": "ded3e217a6775c071726378deeb1467e1a1f35a5beaa0831771b64ed38496278",
+        "mont64": "f6cc0c89ae15e4b4bad989d50a7a093dbe2f760aaf397aa9ebda1ee803be1be3",
+        "mont64-carry": "696ed20b377c4a76446e82ea9d00f347b94a9ffcb49d1037bd1a9fe94fd4dfab",
+        "mont64-sparse": "eaf95fda8cfe492e7dead1db3fbc1520feaaa8e36901a6b4228f951264629d68",
+        "picojpeg-420": "9ce2cdfed2bbbb57f2ad72e39a8f8503bdef0099ec660b1321f85dc14638600d",
+        "picojpeg-444": "2156cd419882aef35459c99feb3d76da9ba0b2c3b58076183aaf07a86f768e8e",
+        "picojpeg-grayscale": "658a1bc1ba62f066d4c79dbaa791ab166edf6fc81b3b5367f5220531534f3f29",
         "qrcode": "f0a14d349af37ba22c7c2485ceb7d5462deda8d66f4cb041ddb57b3049c82151",
         "qrcode-capacity": "84570f120cce49bca08f3b93bf7ebdc7114e1819813f143d86dd1b30dbab9b42",
         "qrcode-compact": "fb7fe91cb99d4dd5ae7eaa1ca33ec3b5e32ed24fc221c1e67f803e57ec0db309",
         "sha256": "a8a37f2bd7db770d691baa29f084690d7ebc24cd8aede98796a1dbb184c750f0",
         "sha256-pages": "d5782e1d4d8b3aaccb9897f0ac072e50c3a3f80ced5134e4d5aafb7c8012307e",
         "sha256-sparse": "5911e80c2a5efdf6c01d920b1ead7079f901aabbcb0c39ed121e836ddccec0f6",
+        "sglib": "974769b1696724890bded277ef81d7c00981713a8a1a2f96b7808751c0b086ce",
+        "sglib-clustered": "edc5380bcd19a7eb69fd447d762506356cceea5dee3dff9b01512e1bb3cf42c1",
+        "sglib-ordered": "082e8523cedb83caa0cfdcff3555a954c98225be56d5546a9305f53b0dce16cf",
+        "slre": "ac861289540285bc48cea0cbd0481f70411a743372adab299bce6eeb92e7b723",
+        "slre-branches": "ccc367e00eb69146af3a3b47727134c768ec0a71e82d99527ad785e67a0fa1a9",
+        "slre-classes": "d807bfe0e6795bf0118e2b6844080b32457cc04192d485df3b3a2fbbeefa2dcc",
         "sort_records": "9d548fdfd0f5671b276e69a22dc26cba081380007ea6ad2a1d518074d9ad53c8",
         "sort_records-ascending": "3b4740b09dd546ec08de4142cb3f9b20d722382a7af636ddc64976a241b8c59b",
         "sort_records-duplicates": "f79217deeed5ec37b0d2f1d6c5276e38fdefdee99059ca53c53a8dfdc8f7998a",
         "streaming": "d87ee0867bab9a16d0c06edf2fc9e02f6fa54057b3e405bd0a3dc0f6baa6023c",
+        "statemate": "0cdede353c8f61f91b21492a528236428436b93ebe1c214244c71bb739fb4f80",
+        "statemate-mixed": "2928b4476fad7f765ae005f89f765ac9f799f63860ed204efbc3cb2a9517bf9c",
+        "statemate-obstruction": "d0ebabeee0b1293a27974b080cfe8ed279822ada282df6d51ca340d761ae1fe8",
         "tiny": "fdd232547ceee35add35783ca7d518d2a49abccd0b60b028c8a9c629eba6201f",
+        "ud": "736e84cb4a5481cc2166c752da4fa2b21410e285c8de63f302b1237fc8acd02e",
+        "ud-banded": "67b9a26f7a67637b73c94b728a008ebd90e3ef9053666bbc2710bb3981da915d",
+        "ud-positive": "278981e543067c53258bd1f52973d95a4cdcac1dc3795fec0ac832a93633e84b",
         "x25519": "fcc43432e6e38d6dba6d416ea9fcbb78647afcd79bd3c7e0357a9853357fdd9c",
         "x25519-carry": "d8f8d06ea49097bacd9d941a8e584f269aa15b6d2ec2d8b644c6a86346115e56",
         "x25519-generated": "b7ea57b2246d9740e41fa337222dd67ca99f444c6d6de753271618f0cf0f9ebf",
@@ -98,22 +141,36 @@ def test_reference_records_are_stable() -> None:
         )
 
 
+def test_aes256_reference_known_answer() -> None:
+    key = bytes.fromhex(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    )
+    plaintext = bytes.fromhex("00112233445566778899aabbccddeeff")
+    assert reference_aes._encrypt_block(key, plaintext).hex() == (
+        "8ea2b7ca516745bfeafc49904b496089"
+    )
+
+
 def test_application_case_profiles_are_diversified() -> None:
     cases = build.load_cases()
     counts = {
         workload: sum(case.workload == workload for case in cases)
-        for workload in (
-            "sha256",
-            "heatshrink",
-            "depthconv",
-            "dijkstra",
-            "sort_records",
-            "littlefs",
-            "x25519",
-            "qrcode",
-        )
+        for workload in build.load_application_workloads()
     }
     assert counts == dict.fromkeys(counts, 3)
+
+
+def test_structured_profiles_match_their_names() -> None:
+    ordered_data = reference.input_for(
+        "sglib", {"count": 384, "profile": "ordered", "seed": 2_576_980_377}
+    )
+    ordered = [value[0] for value in struct.iter_unpack("<i", ordered_data)]
+    assert ordered == sorted(ordered)
+
+    positive_data = reference.input_for(
+        "ud", {"profile": "positive", "seed": 3_435_973_836, "systems": 1}
+    )
+    assert all(value[0] >= 0 for value in struct.iter_unpack("<i", positive_data))
 
 
 def test_application_workloads_are_complete_and_consistent() -> None:
@@ -285,7 +342,17 @@ def test_c_workloads_are_feature_gated() -> None:
     manifest = (build.GUEST / "workloads/Cargo.toml").read_text(encoding="utf-8")
 
     assert "c-workloads = []" in manifest
-    for workload in ("littlefs", "x25519"):
+    for workload in (
+        "littlefs",
+        "x25519",
+        "aes",
+        "mont64",
+        "picojpeg",
+        "sglib",
+        "slre",
+        "statemate",
+        "ud",
+    ):
         target = f'name = "{workload}"'
         start = manifest.index(target)
         end = manifest.find("[[bin]]", start + len(target))

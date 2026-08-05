@@ -65,6 +65,14 @@ char *strchr(const char *string, int character) {
     return NULL;
 }
 
+size_t strlen(const char *string) {
+    size_t length = 0;
+    while (string[length] != '\0') {
+        ++length;
+    }
+    return length;
+}
+
 size_t strspn(const char *string, const char *accept) {
     size_t length = 0;
     while (string[length] != '\0') {

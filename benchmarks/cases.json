@@ -1,13 +1,20 @@
 {
   "schema_version": 1,
   "application_workloads": [
+    "aes",
     "depthconv",
     "dijkstra",
     "heatshrink",
     "littlefs",
+    "mont64",
+    "picojpeg",
     "qrcode",
+    "sglib",
     "sha256",
+    "slre",
     "sort_records",
+    "statemate",
+    "ud",
     "x25519"
   ],
   "cases": [
@@ -280,6 +287,210 @@
         "seed": 4042322160
       },
       "instruction_limit": 6000000
+    },
+    {
+      "id": "aes",
+      "workload": "aes",
+      "parameters": {
+        "profile": "random",
+        "records": 64,
+        "seed": 305419896
+      },
+      "instruction_limit": 5000000
+    },
+    {
+      "id": "aes-zero-heavy",
+      "workload": "aes",
+      "parameters": {
+        "profile": "zero-heavy",
+        "records": 64,
+        "seed": 1431655765
+      },
+      "instruction_limit": 5000000
+    },
+    {
+      "id": "aes-counter",
+      "workload": "aes",
+      "parameters": {
+        "profile": "counter",
+        "records": 64,
+        "seed": 2863311530
+      },
+      "instruction_limit": 5000000
+    },
+    {
+      "id": "mont64",
+      "workload": "mont64",
+      "parameters": {
+        "profile": "mixed",
+        "records": 256,
+        "seed": 610839776
+      },
+      "instruction_limit": 15000000
+    },
+    {
+      "id": "mont64-carry",
+      "workload": "mont64",
+      "parameters": {
+        "profile": "carry-heavy",
+        "records": 256,
+        "seed": 4042322160
+      },
+      "instruction_limit": 15000000
+    },
+    {
+      "id": "mont64-sparse",
+      "workload": "mont64",
+      "parameters": {
+        "profile": "sparse",
+        "records": 256,
+        "seed": 252645135
+      },
+      "instruction_limit": 15000000
+    },
+    {
+      "id": "picojpeg-grayscale",
+      "workload": "picojpeg",
+      "parameters": {
+        "profile": "grayscale"
+      },
+      "instruction_limit": 10000000
+    },
+    {
+      "id": "picojpeg-444",
+      "workload": "picojpeg",
+      "parameters": {
+        "profile": "color-444"
+      },
+      "instruction_limit": 10000000
+    },
+    {
+      "id": "picojpeg-420",
+      "workload": "picojpeg",
+      "parameters": {
+        "profile": "color-420"
+      },
+      "instruction_limit": 10000000
+    },
+    {
+      "id": "sglib",
+      "workload": "sglib",
+      "parameters": {
+        "count": 384,
+        "profile": "random",
+        "seed": 826366246
+      },
+      "instruction_limit": 5000000
+    },
+    {
+      "id": "sglib-clustered",
+      "workload": "sglib",
+      "parameters": {
+        "count": 384,
+        "profile": "clustered",
+        "seed": 2004318071
+      },
+      "instruction_limit": 5000000
+    },
+    {
+      "id": "sglib-ordered",
+      "workload": "sglib",
+      "parameters": {
+        "count": 384,
+        "profile": "ordered",
+        "seed": 2576980377
+      },
+      "instruction_limit": 5000000
+    },
+    {
+      "id": "slre",
+      "workload": "slre",
+      "parameters": {
+        "profile": "embench",
+        "rounds": 24,
+        "seed": 270544960
+      },
+      "instruction_limit": 10000000
+    },
+    {
+      "id": "slre-classes",
+      "workload": "slre",
+      "parameters": {
+        "profile": "classes",
+        "rounds": 24,
+        "seed": 572662306
+      },
+      "instruction_limit": 10000000
+    },
+    {
+      "id": "slre-branches",
+      "workload": "slre",
+      "parameters": {
+        "profile": "branches",
+        "rounds": 24,
+        "seed": 858993459
+      },
+      "instruction_limit": 10000000
+    },
+    {
+      "id": "statemate",
+      "workload": "statemate",
+      "parameters": {
+        "events": 1024,
+        "profile": "switches",
+        "seed": 324508639
+      },
+      "instruction_limit": 30000000
+    },
+    {
+      "id": "statemate-obstruction",
+      "workload": "statemate",
+      "parameters": {
+        "events": 1024,
+        "profile": "obstruction",
+        "seed": 3405691582
+      },
+      "instruction_limit": 30000000
+    },
+    {
+      "id": "statemate-mixed",
+      "workload": "statemate",
+      "parameters": {
+        "events": 1024,
+        "profile": "mixed",
+        "seed": 3735928559
+      },
+      "instruction_limit": 30000000
+    },
+    {
+      "id": "ud",
+      "workload": "ud",
+      "parameters": {
+        "profile": "dense",
+        "seed": 195948557,
+        "systems": 8
+      },
+      "instruction_limit": 10000000
+    },
+    {
+      "id": "ud-banded",
+      "workload": "ud",
+      "parameters": {
+        "profile": "banded",
+        "seed": 1145324612,
+        "systems": 8
+      },
+      "instruction_limit": 10000000
+    },
+    {
+      "id": "ud-positive",
+      "workload": "ud",
+      "parameters": {
+        "profile": "positive",
+        "seed": 3435973836,
+        "systems": 8
+      },
+      "instruction_limit": 10000000
     }
   ]
 }
