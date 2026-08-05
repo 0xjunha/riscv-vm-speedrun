@@ -24,13 +24,6 @@ mod test_support;
 
 use rv32vm_rust_common::{GuestTrap, machine::DecodedInstruction};
 
-#[cfg(not(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    target_pointer_width = "64"
-)))]
-use rv32vm_rust_common::memory::NativeMemoryView;
-
 pub(crate) const SIDE_EXIT_FLAG: u32 = 1 << 31;
 
 /// A decoded guest instruction or its precise fetch trap.
@@ -78,12 +71,19 @@ impl NativeOutcome {
     target_os = "linux",
     target_pointer_width = "64"
 ))]
-pub use native::{NativeBlock, NativeEntry, NativeProgram};
+pub use native::{NativeEntry, NativeProgram};
 
 /// Returns whether the block compiler can execute this instruction natively.
 pub fn supports(instruction: DecodedInstruction) -> bool {
     lowering::Lowering::decode(instruction).is_some()
 }
+
+#[cfg(not(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    target_pointer_width = "64"
+)))]
+use rv32vm_rust_common::memory::DirectMemory;
 
 #[cfg(not(all(
     target_arch = "x86_64",
@@ -145,73 +145,14 @@ impl NativeEntry<'_> {
         unreachable!()
     }
 
-    pub fn execute(
-        &self,
-        _registers: &mut [u32; 32],
-        _memory: NativeMemoryView<'_>,
-    ) -> NativeOutcome {
+    pub fn execute(&self, _registers: &mut [u32; 32], _memory: DirectMemory<'_>) -> NativeOutcome {
         unreachable!()
     }
 
     pub fn execute_with_limit(
         &self,
         _registers: &mut [u32; 32],
-        _memory: NativeMemoryView<'_>,
-        _remaining: u64,
-    ) -> Option<NativeOutcome> {
-        unreachable!()
-    }
-}
-
-#[cfg(not(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    target_pointer_width = "64"
-)))]
-pub struct NativeBlock;
-
-#[cfg(not(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    target_pointer_width = "64"
-)))]
-impl NativeBlock {
-    pub fn publish(_block: CompiledBlock, _code_budget: usize) -> Option<Self> {
-        None
-    }
-
-    pub const fn mapped_len(&self) -> usize {
-        0
-    }
-
-    pub const fn instruction_count(&self) -> usize {
-        unreachable!()
-    }
-
-    pub const fn minimum_instruction_count(&self) -> usize {
-        unreachable!()
-    }
-
-    pub const fn loop_unroll_factor(&self) -> usize {
-        unreachable!()
-    }
-
-    pub const fn kind(&self) -> NativeEntryKind {
-        unreachable!()
-    }
-
-    pub fn execute(
-        &self,
-        _registers: &mut [u32; 32],
-        _memory: NativeMemoryView<'_>,
-    ) -> NativeOutcome {
-        unreachable!()
-    }
-
-    pub fn execute_with_limit(
-        &self,
-        _registers: &mut [u32; 32],
-        _memory: NativeMemoryView<'_>,
+        _memory: DirectMemory<'_>,
         _remaining: u64,
     ) -> Option<NativeOutcome> {
         unreachable!()

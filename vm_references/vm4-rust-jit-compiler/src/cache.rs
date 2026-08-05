@@ -1919,13 +1919,13 @@ mod tests {
         assert_eq!(cache.native_block_count(), 2);
 
         let first_entry = cache.native_entry(first).unwrap();
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         let first_outcome = first_entry.execute(&mut machine.registers, memory);
         assert_eq!(first_outcome.retired(), 2);
         assert_eq!(machine.registers[5], 11);
 
         let second_entry = cache.native_entry(second).unwrap();
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         let second_outcome = second_entry.execute(&mut machine.registers, memory);
         assert_eq!(second_outcome.retired(), 2);
         assert_eq!(machine.registers[6], 22);
@@ -2135,14 +2135,14 @@ mod tests {
         assert!(
             region
                 .entry
-                .execute_with_limit(&mut registers, machine.memory.native_view(), 15)
+                .execute_with_limit(&mut registers, machine.memory.direct_memory(), 15)
                 .is_none()
         );
         assert_eq!(registers[5], 0);
 
         let outcome = region
             .entry
-            .execute_with_limit(&mut registers, machine.memory.native_view(), 16)
+            .execute_with_limit(&mut registers, machine.memory.direct_memory(), 16)
             .unwrap();
         assert!(!outcome.needs_interpreter());
         assert_eq!(outcome.retired(), 16);
@@ -2153,7 +2153,7 @@ mod tests {
         guarded[10] = 1;
         let outcome = region
             .entry
-            .execute_with_limit(&mut guarded, machine.memory.native_view(), 16)
+            .execute_with_limit(&mut guarded, machine.memory.direct_memory(), 16)
             .unwrap();
         assert!(!outcome.needs_interpreter());
         assert_eq!(outcome.retired(), 10);
@@ -2419,7 +2419,7 @@ mod tests {
             );
         }
 
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         let budget = 4 * code.len() as u64;
         let outcome = region
             .entry
@@ -2503,7 +2503,7 @@ mod tests {
         }
 
         let mut registers = [0_u32; 32];
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         let outcome = region
             .entry
             .execute_with_limit(&mut registers, memory, 16)

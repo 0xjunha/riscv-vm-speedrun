@@ -2,7 +2,7 @@
 
 use std::mem;
 
-use rv32vm_rust_common::memory::NativeMemoryView;
+use rv32vm_rust_common::memory::DirectMemory;
 
 use crate::{
     CompiledBlock, NativeEntryKind, NativeOutcome, SIDE_EXIT_FLAG,
@@ -129,11 +129,7 @@ impl NativeEntry<'_> {
     }
 
     /// Executes the native block against the supplied current-run memory view.
-    pub fn execute(
-        &self,
-        registers: &mut [u32; 32],
-        memory: NativeMemoryView<'_>,
-    ) -> NativeOutcome {
+    pub fn execute(&self, registers: &mut [u32; 32], memory: DirectMemory<'_>) -> NativeOutcome {
         assert_eq!(
             self.kind(),
             NativeEntryKind::Bounded,
@@ -151,7 +147,7 @@ impl NativeEntry<'_> {
     pub fn execute_with_limit(
         &self,
         registers: &mut [u32; 32],
-        memory: NativeMemoryView<'_>,
+        memory: DirectMemory<'_>,
         remaining: u64,
     ) -> Option<NativeOutcome> {
         let iteration_budget = match self.kind() {
@@ -171,7 +167,7 @@ impl NativeEntry<'_> {
     fn execute_raw(
         &self,
         registers: &mut [u32; 32],
-        memory: NativeMemoryView<'_>,
+        memory: DirectMemory<'_>,
         iteration_budget: u32,
     ) -> NativeOutcome {
         debug_assert!(self.metadata.offset < self.program.memory.len());
@@ -186,8 +182,8 @@ impl NativeEntry<'_> {
         NativeOutcome::from_raw(unsafe {
             entry(
                 registers.as_mut_ptr(),
-                memory.permissions(),
-                memory.data(),
+                memory.permissions_ptr(),
+                memory.address_space_ptr(),
                 iteration_budget,
             )
         })
@@ -207,63 +203,57 @@ fn loop_iteration_budget(minimum_instruction_count: usize, remaining: u64) -> Op
 }
 
 /// Owns one executable native block and its guest-instruction count.
-pub struct NativeBlock {
+#[cfg(test)]
+struct NativeBlock {
     program: NativeProgram,
 }
 
+#[cfg(test)]
 impl NativeBlock {
-    pub fn publish(block: CompiledBlock, code_budget: usize) -> Option<Self> {
+    fn publish(block: CompiledBlock, code_budget: usize) -> Option<Self> {
         let program = NativeProgram::publish(vec![block], code_budget)?;
         Some(Self { program })
     }
 
-    pub const fn mapped_len(&self) -> usize {
-        self.program.mapped_len()
-    }
-
-    pub fn instruction_count(&self) -> usize {
+    fn instruction_count(&self) -> usize {
         self.program
             .entry(0)
             .expect("single-block program has one entry")
             .instruction_count()
     }
 
-    pub fn minimum_instruction_count(&self) -> usize {
+    fn minimum_instruction_count(&self) -> usize {
         self.program
             .entry(0)
             .expect("single-block program has one entry")
             .minimum_instruction_count()
     }
 
-    pub fn loop_unroll_factor(&self) -> usize {
+    fn loop_unroll_factor(&self) -> usize {
         self.program
             .entry(0)
             .expect("single-block program has one entry")
             .loop_unroll_factor()
     }
 
-    pub fn kind(&self) -> NativeEntryKind {
+    fn kind(&self) -> NativeEntryKind {
         self.program
             .entry(0)
             .expect("single-block program has one entry")
             .kind()
     }
 
-    pub fn execute(
-        &self,
-        registers: &mut [u32; 32],
-        memory: NativeMemoryView<'_>,
-    ) -> NativeOutcome {
+    fn execute(&self, registers: &mut [u32; 32], memory: DirectMemory<'_>) -> NativeOutcome {
         self.program
             .entry(0)
             .expect("single-block program has one entry")
             .execute(registers, memory)
     }
 
-    pub fn execute_with_limit(
+    fn execute_with_limit(
         &self,
         registers: &mut [u32; 32],
-        memory: NativeMemoryView<'_>,
+        memory: DirectMemory<'_>,
         remaining: u64,
     ) -> Option<NativeOutcome> {
         self.program
@@ -507,7 +497,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
     }
 
     fn execute_native(native: &NativeBlock, machine: &mut Machine) -> NativeOutcome {
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         native.execute(&mut machine.registers, memory)
     }
 
@@ -529,7 +519,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
         machine: &mut Machine,
         remaining: u64,
     ) -> Option<NativeOutcome> {
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         native.execute_with_limit(&mut machine.registers, memory, remaining)
     }
 
@@ -547,7 +537,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
         // SAFETY: The offset was recorded at the start of this finalized loop
         // entry and the executable mapping remains owned by `native`.
         let address = unsafe { entry.program.memory.address().add(entry.metadata.offset) };
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         let mut observed = [0_u64; 3];
         // SAFETY: The assembly trampoline follows both the System V ABI and
         // the private generated-entry ABI. It synchronously borrows all
@@ -556,8 +546,8 @@ rv32vm_test_call_loop_with_callee_sentinels:
             rv32vm_test_call_loop_with_callee_sentinels(
                 address,
                 machine.registers.as_mut_ptr(),
-                memory.permissions(),
-                memory.data(),
+                memory.permissions_ptr(),
+                memory.address_space_ptr(),
                 iterations,
                 observed.as_mut_ptr(),
             )
@@ -581,7 +571,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
             let instruction = expected.fetch_decode(expected.pc);
             assert!(expected.execute_one(instruction).is_none());
         }
-        let memory = actual.memory.native_view();
+        let memory = actual.memory.direct_memory();
         let outcome = native.execute(&mut actual.registers, memory);
         actual.pc = outcome.next_pc();
 
@@ -2444,7 +2434,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
         let mut machine = machine_with_code(&[NOP], IMAGE_START);
         machine.registers[8] = 100;
 
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         assert!(
             program
                 .entry(0)
@@ -2453,7 +2443,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
                 .is_none()
         );
         assert_eq!(machine.registers[5], 0);
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         assert_eq!(
             program
                 .entry(0)
@@ -2463,7 +2453,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
                 .next_pc(),
             IMAGE_START + 8
         );
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         assert!(
             program
                 .entry(1)
@@ -2471,7 +2461,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
                 .execute_with_limit(&mut machine.registers, memory, 4)
                 .is_none()
         );
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         assert_eq!(
             program
                 .entry(1)
@@ -2481,7 +2471,7 @@ rv32vm_test_call_loop_with_callee_sentinels:
                 .retired(),
             8
         );
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         assert_eq!(
             program
                 .entry(3)

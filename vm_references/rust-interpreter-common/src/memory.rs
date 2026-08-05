@@ -112,19 +112,7 @@ impl DirectMemory<'_> {
     pub const fn address_space_ptr(&self) -> *mut u8 {
         self.address_space
     }
-
-    /// Compatibility accessors used by the shared VM4 native block compiler.
-    pub const fn permissions(&self) -> *const u8 {
-        self.permissions
-    }
-
-    pub const fn data(&self) -> *mut u8 {
-        self.address_space
-    }
 }
-
-/// VM4 and VM5 intentionally share the same run-local memory view.
-pub type NativeMemoryView<'a> = DirectMemory<'a>;
 
 impl Memory {
     pub fn new(image: &Image, input: &[u8]) -> Self {
@@ -211,11 +199,6 @@ impl Memory {
             address_space,
             _memory: PhantomData,
         }
-    }
-
-    /// Returns the same stable direct view used by the VM4 native runner.
-    pub fn native_view(&mut self) -> NativeMemoryView<'_> {
-        self.direct_memory()
     }
 
     #[cfg(test)]
@@ -606,17 +589,17 @@ mod tests {
     }
 
     #[test]
-    fn native_and_direct_views_publish_the_same_allocations() {
+    fn repeated_direct_views_publish_the_same_allocations() {
         let resident = (IMAGE_START >> PAGE_SHIFT) as usize;
         let mut memory = Memory::new(&image_with_resident_page(resident, PERM_READ), &[]);
 
-        let (native_permissions, native_data) = {
-            let native = memory.native_view();
-            (native.permissions(), native.data())
+        let (first_permissions, first_data) = {
+            let direct = memory.direct_memory();
+            (direct.permissions_ptr(), direct.address_space_ptr())
         };
         let direct = memory.direct_memory();
 
-        assert_eq!(direct.permissions_ptr(), native_permissions);
-        assert_eq!(direct.address_space_ptr(), native_data);
+        assert_eq!(direct.permissions_ptr(), first_permissions);
+        assert_eq!(direct.address_space_ptr(), first_data);
     }
 }

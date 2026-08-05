@@ -324,7 +324,7 @@ impl JitInterpreter {
         #[cfg(feature = "profile")] profile: &mut ProfileCounters,
     ) -> CachedExecution {
         let remaining = instruction_limit - machine.retired;
-        let memory = machine.memory.native_view();
+        let memory = machine.memory.direct_memory();
         let outcome = native
             .execute_with_limit(&mut machine.registers, memory, remaining)
             .expect("dispatch checks the native entry's minimum budget");
