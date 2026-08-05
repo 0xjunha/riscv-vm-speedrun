@@ -10,10 +10,9 @@ from .common import (
     MASK32,
     fold,
     generated_bytes,
-    header,
     lcg,
     profiled_parameters,
-    record,
+    result,
     rotl,
 )
 
@@ -51,30 +50,23 @@ def operations(count: int, seed: int, profile: str) -> bytes:
 
 
 def input_for(values: Mapping[str, object]) -> bytes:
-    (repetitions, operation_count, seed), profile = profiled_parameters(
+    (operation_count, seed), profile = profiled_parameters(
         values,
-        ("repetitions", "operations", "seed"),
+        ("operations", "seed"),
         ("mixed", "append-heavy", "metadata-churn"),
     )
-    if not 1 <= repetitions <= 16 or not 1 <= operation_count <= 96:
-        raise ValueError("littlefs repetitions or operations is outside its limit")
-    return struct.pack("<2I", repetitions, operation_count) + operations(
-        operation_count, seed, profile
-    )
+    if not 1 <= operation_count <= 96:
+        raise ValueError("littlefs operations is outside its limit")
+    return operations(operation_count, seed, profile)
 
 
 def output_for(data: bytes) -> bytes:
-    header(data, "littlefs")
-    if len(data) < 24 or len(data) % 4:
+    if len(data) < 16 or len(data) % 16:
         raise ValueError("littlefs input has an invalid size")
-    repetitions, operation_count = struct.unpack_from("<2I", data)
-    if (
-        not 1 <= repetitions <= 16
-        or not 1 <= operation_count <= 96
-        or len(data) != 8 + operation_count * 16
-    ):
-        raise ValueError("littlefs input header is invalid")
-    words = struct.unpack_from(f"<{operation_count * 4}I", data, 8)
+    operation_count = len(data) // 16
+    if operation_count > 96:
+        raise ValueError("littlefs input contains too many operations")
+    words = struct.unpack(f"<{operation_count * 4}I", data)
     trace_operations = tuple(
         words[index : index + 4] for index in range(0, len(words), 4)
     )
@@ -131,8 +123,4 @@ def output_for(data: bytes) -> bytes:
             state.append(file_id)
             state.extend(struct.pack("<I", len(content)))
             state.extend(content)
-    final_summary = trace ^ zlib.crc32(state)
-    aggregate = 0x4C46_5332
-    for pass_index in range(repetitions):
-        aggregate = fold(aggregate, final_summary, pass_index)
-    return record(aggregate, final_summary)
+    return result(trace, zlib.crc32(state))

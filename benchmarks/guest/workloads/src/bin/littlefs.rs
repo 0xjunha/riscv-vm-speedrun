@@ -10,7 +10,7 @@ unsafe extern "C" {
     fn rvb_littlefs(input: *const u8, input_len: u32, output: *mut u32) -> u32;
 }
 
-fn littlefs(input: &[u8]) -> [u8; 12] {
+fn littlefs(input: &[u8]) -> [u8; 8] {
     run_c(input, rvb_littlefs)
 }
 

@@ -12,7 +12,6 @@ import pytest
 from rv32im_harness import benchmark
 from rv32im_harness.benchmark import (
     BenchmarkFailure,
-    _load_manifest,
     _read_artifact,
     _require_outcome,
     _select_cases,
@@ -38,7 +37,6 @@ def _artifact(
     path.write_bytes(data)
     record[key] = name
     record[f"{key}_sha256"] = hashlib.sha256(data).hexdigest()
-    record[f"{key}_size"] = len(data)
 
 
 def _manifest(
@@ -51,31 +49,24 @@ def _manifest(
     root.mkdir(parents=True)
     records = []
     for case_id in case_ids:
-        input_data = case_id.encode()
+        input_data = case_id.encode().ljust(8, b"\0")[:8]
         record: dict[str, object] = {
             "id": case_id,
             "workload": case_id,
-            "category": "diagnostic",
-            "regime": "smoke",
-            "expected_exit_code": 0,
+            "expected_output_hex": (
+                input_data if expected_output is None else expected_output
+            ).hex(),
             "instruction_limit": 100,
-            "output_limit": 64,
         }
         _artifact(root, record, "elf", f"elf/{case_id}.elf", b"ELF-" + input_data)
         _artifact(root, record, "input", f"input/{case_id}.bin", input_data)
-        _artifact(
-            root,
-            record,
-            "expected_output",
-            f"expected/{case_id}.bin",
-            input_data if expected_output is None else expected_output,
-        )
         records.append(record)
     path = root / "manifest.json"
     path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
+                "application_workloads": [],
                 "builder": {"platform": "test"},
                 "project_inputs": {},
                 "cases": records,
@@ -152,7 +143,7 @@ def test_correctness_failure_precedes_timing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manifest = _manifest(tmp_path, expected_output=b"wrong")
+    manifest = _manifest(tmp_path, expected_output=b"wrong!!!")
 
     def unexpected_clock() -> int:
         raise AssertionError("clock called before correctness passed")
@@ -166,8 +157,8 @@ def test_correctness_failure_precedes_timing(
 @pytest.mark.parametrize(
     ("outcome", "message"),
     [
-        (_outcome(b"tiny", status="trap", exit_code=None), "expected exit"),
-        (_outcome(b"tiny", exit_code=7), "exit code 0"),
+        (_outcome(b"tiny\0\0\0\0", status="trap", exit_code=None), "expected exit"),
+        (_outcome(b"tiny\0\0\0\0", exit_code=7), "exit code 0"),
         (_outcome(b"other"), "output differs"),
     ],
 )
@@ -176,7 +167,7 @@ def test_outcome_validation_rejects_incorrect_results(
     outcome: RunOutcome,
     message: str,
 ) -> None:
-    case = _load_manifest(_manifest(tmp_path)).cases[0]
+    case = load_benchmark_suite(_manifest(tmp_path)).cases[0]
 
     with pytest.raises(BenchmarkFailure, match=message):
         _require_outcome(case, "correctness run", outcome)
@@ -187,7 +178,8 @@ def test_timed_result_is_checked_after_stopping_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = _manifest(tmp_path)
-    outcomes = iter((_outcome(b"tiny"), _outcome(b"tiny", retired=4)))
+    output = b"tiny\0\0\0\0"
+    outcomes = iter((_outcome(output), _outcome(output, retired=4)))
     clock_calls = []
 
     class FakeServer:
@@ -296,7 +288,6 @@ def test_loaded_suite_selection_reuses_immutable_artifacts(
 
     assert suite.cases != selected.cases
     assert [case.case_id for case in suite.cases] == ["tiny", "streaming"]
-    assert [case.category for case in suite.cases] == ["diagnostic", "diagnostic"]
     assert [case.case_id for case in selected.cases] == ["streaming"]
     assert [case["id"] for case in result["cases"]] == ["streaming"]
     assert result["manifest_sha256"] == suite.sha256
@@ -315,71 +306,68 @@ def test_case_filter_rejects_invalid_selection(
     case_ids: tuple[str, ...],
     message: str,
 ) -> None:
-    cases = _load_manifest(_manifest(tmp_path)).cases
+    cases = load_benchmark_suite(_manifest(tmp_path)).cases
 
     with pytest.raises(BenchmarkFailure, match=message):
         _select_cases(cases, case_ids)
 
 
-def test_manifest_verifies_artifact_hash_and_size(tmp_path: Path) -> None:
+def test_manifest_verifies_artifact_hash(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     root = manifest.parent
 
     (root / "input/tiny.bin").write_bytes(b"TINY")
     with pytest.raises(BenchmarkFailure, match="input hash"):
-        _load_manifest(manifest)
-
-    document = json.loads(manifest.read_text())
-    document["cases"][0]["input_size"] = 3
-    manifest.write_text(json.dumps(document))
-    with pytest.raises(BenchmarkFailure, match="input size"):
-        _load_manifest(manifest)
-
-
-def test_schema_v1_manifest_defaults_missing_category_to_diagnostic(
-    tmp_path: Path,
-) -> None:
-    manifest = _manifest(tmp_path)
-    document = json.loads(manifest.read_text())
-    del document["cases"][0]["category"]
-    manifest.write_text(json.dumps(document))
-
-    suite = load_benchmark_suite(manifest)
-
-    assert suite.cases[0].category == "diagnostic"
-
-
-@pytest.mark.parametrize("category", [None, "other", 1])
-def test_manifest_rejects_invalid_present_category(
-    tmp_path: Path, category: object
-) -> None:
-    manifest = _manifest(tmp_path)
-    document = json.loads(manifest.read_text())
-    document["cases"][0]["category"] = category
-    manifest.write_text(json.dumps(document))
-
-    with pytest.raises(BenchmarkFailure, match="category is invalid"):
         load_benchmark_suite(manifest)
 
 
-def test_manifest_rejects_artifact_size_metadata_above_its_limit(
-    tmp_path: Path,
+@pytest.mark.parametrize("workloads", [["missing"], ["tiny", "tiny"], [1]])
+def test_manifest_rejects_invalid_application_workloads(
+    tmp_path: Path, workloads: list[object]
 ) -> None:
     manifest = _manifest(tmp_path)
     document = json.loads(manifest.read_text())
-    document["cases"][0]["input_size"] = MAX_INPUT_SIZE + 1
+    document["application_workloads"] = workloads
     manifest.write_text(json.dumps(document))
 
-    with pytest.raises(BenchmarkFailure, match="input size exceeds"):
-        _load_manifest(manifest)
+    with pytest.raises(BenchmarkFailure, match="application_workloads|schema"):
+        load_benchmark_suite(manifest)
 
 
-def test_manifest_rejects_on_disk_artifact_above_its_limit(tmp_path: Path) -> None:
+@pytest.mark.parametrize("location", ["manifest", "case"])
+def test_manifest_rejects_unknown_fields(tmp_path: Path, location: str) -> None:
     manifest = _manifest(tmp_path)
-    (manifest.parent / "expected/tiny.bin").write_bytes(bytes(65))
+    document = json.loads(manifest.read_text())
+    target = document if location == "manifest" else document["cases"][0]
+    target["unknown"] = True
+    manifest.write_text(json.dumps(document))
 
-    with pytest.raises(BenchmarkFailure, match="expected_output size exceeds"):
-        _load_manifest(manifest)
+    with pytest.raises(BenchmarkFailure, match="schema|fields"):
+        load_benchmark_suite(manifest)
+
+
+def test_manifest_rejects_on_disk_artifact_above_its_limit(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path)
+    with (manifest.parent / "input/tiny.bin").open("wb") as stream:
+        stream.truncate(MAX_INPUT_SIZE + 1)
+
+    with pytest.raises(BenchmarkFailure, match="input size exceeds"):
+        load_benchmark_suite(manifest)
+
+
+@pytest.mark.parametrize("value", ["00", "z" * 16])
+def test_manifest_rejects_invalid_expected_output_hex(
+    tmp_path: Path, value: str
+) -> None:
+    manifest = _manifest(tmp_path)
+    document = json.loads(manifest.read_text())
+    document["cases"][0]["expected_output_hex"] = value
+    manifest.write_text(json.dumps(document))
+
+    with pytest.raises(BenchmarkFailure, match="expected_output_hex is invalid"):
+        load_benchmark_suite(manifest)
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="mkfifo is unavailable")
@@ -389,7 +377,6 @@ def test_artifact_reader_rejects_fifo_before_opening(tmp_path: Path) -> None:
     record = {
         "input": fifo.name,
         "input_sha256": hashlib.sha256(b"").hexdigest(),
-        "input_size": 0,
     }
 
     with pytest.raises(BenchmarkFailure, match="not a regular file"):
@@ -405,7 +392,6 @@ def test_artifact_reader_normalizes_symlink_loop_error(tmp_path: Path) -> None:
     record = {
         "input": first.name,
         "input_sha256": hashlib.sha256(b"").hexdigest(),
-        "input_size": 0,
     }
 
     with pytest.raises(BenchmarkFailure, match="cannot read input"):
@@ -416,7 +402,6 @@ def test_artifact_reader_normalizes_embedded_nul_error(tmp_path: Path) -> None:
     record = {
         "input": "bad\0path",
         "input_sha256": hashlib.sha256(b"").hexdigest(),
-        "input_size": 0,
     }
 
     with pytest.raises(BenchmarkFailure, match="cannot read input"):
@@ -430,7 +415,7 @@ def test_manifest_rejects_artifact_path_escape(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(document))
 
     with pytest.raises(BenchmarkFailure, match="leaves the artifact directory"):
-        _load_manifest(manifest)
+        load_benchmark_suite(manifest)
 
 
 @pytest.mark.parametrize(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Mapping
 
-from .common import MASK32, header, lcg, profiled_parameters, record, rotl, u32
+from .common import MASK32, header, lcg, profiled_parameters, result, rotl, u32
 
 
 def graph(nodes: int, density: int, seed: int, profile: str = "uniform") -> bytes:
@@ -77,4 +77,4 @@ def output_for(data: bytes) -> bytes:
         for node, distance in enumerate(distances):
             total = u32(total + distance)
             folded ^= rotl(distance, node + source)
-    return record(total, folded)
+    return result(total, folded)

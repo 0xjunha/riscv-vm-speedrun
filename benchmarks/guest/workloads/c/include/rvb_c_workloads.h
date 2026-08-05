@@ -8,9 +8,9 @@ extern "C" {
 #endif
 
 /*
- * Every adapter returns zero on success and writes the primary and auxiliary
- * result words to out[0] and out[1]. On failure it returns a stable nonzero
- * status and leaves the output words unspecified.
+ * Every adapter returns zero on success and writes the low and high words of
+ * one 64-bit result to out[0] and out[1]. On failure it returns a stable
+ * nonzero status and leaves the result unspecified.
  */
 uint32_t rvb_littlefs(const uint8_t *input, uint32_t input_len,
                       uint32_t out[2]);

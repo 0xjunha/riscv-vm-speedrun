@@ -5,33 +5,31 @@
 #[cfg(not(target_os = "none"))]
 pub mod native;
 
-const OUTPUT_MAGIC: u32 = 0x3142_5652; // bytes: RVB1
-
 /// Native or guest implementation of one public workload.
-pub type Workload = fn(&[u8]) -> [u8; 12];
+pub type Workload = fn(&[u8]) -> [u8; 8];
 
 /// ABI shared by the freestanding and host-native C workload adapters.
 pub type CWorkload = unsafe extern "C" fn(*const u8, u32, *mut u32) -> u32;
 
 /// Call an upstream-C workload while preserving the common output contract.
-pub fn run_c(input: &[u8], workload: CWorkload) -> [u8; 12] {
+pub fn run_c(input: &[u8], workload: CWorkload) -> [u8; 8] {
     let Ok(input_len) = u32::try_from(input.len()) else {
-        return encode_output(0, u32::MAX);
+        return encode_result(u64::from(u32::MAX));
     };
     let mut output = [0u32; 2];
     // SAFETY: `input` and `output` remain valid for the duration of the call,
     // and every registered adapter follows the `CWorkload` ABI.
     let status = unsafe { workload(input.as_ptr(), input_len, output.as_mut_ptr()) };
     if status == 0 {
-        encode_output(output[0], output[1])
+        encode_result(join_u32(output[0], output[1]))
     } else {
-        encode_output(0, status)
+        encode_result(u64::from(status))
     }
 }
 
 /// Run a workload, repeating when the `long` feature is enabled.
 #[inline]
-pub fn run(workload: Workload, input: &[u8]) -> [u8; 12] {
+pub fn run(workload: Workload, input: &[u8]) -> [u8; 8] {
     #[cfg(not(feature = "long"))]
     {
         workload(input)
@@ -43,7 +41,7 @@ pub fn run(workload: Workload, input: &[u8]) -> [u8; 12] {
         };
         let repetitions = u32::from_le_bytes(repetitions.try_into().unwrap());
         let workload = core::hint::black_box(workload);
-        let mut output = [0; 12];
+        let mut output = [0; 8];
         for _ in 0..repetitions {
             output = core::hint::black_box(workload(core::hint::black_box(input)));
         }
@@ -59,15 +57,15 @@ mod tests {
 
     static CALLS: AtomicU32 = AtomicU32::new(0);
 
-    fn counted(input: &[u8]) -> [u8; 12] {
+    fn counted(input: &[u8]) -> [u8; 8] {
         CALLS.fetch_add(1, Ordering::Relaxed);
-        [input.len() as u8; 12]
+        [input.len() as u8; 8]
     }
 
     #[test]
     fn long_input_repeats_workload() {
         CALLS.store(0, Ordering::Relaxed);
-        assert_eq!(run(counted, &[3, 0, 0, 0, 1, 2]), [2; 12]);
+        assert_eq!(run(counted, &[3, 0, 0, 0, 1, 2]), [2; 8]);
         assert_eq!(CALLS.load(Ordering::Relaxed), 3);
     }
 }
@@ -97,13 +95,8 @@ impl<'a> Words<'a> {
     }
 
     /// Return the number of complete words in the input.
-    pub fn len(&self) -> usize {
+    pub fn word_count(&self) -> usize {
         self.bytes.len() / 4
-    }
-
-    /// Return whether the input contains no complete words.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 
@@ -114,13 +107,14 @@ pub fn bounded(raw: u32, default: usize, maximum: usize) -> usize {
     value.min(maximum)
 }
 
-/// Encode the common 12-byte result record.
-pub fn encode_output(result: u32, auxiliary: u32) -> [u8; 12] {
-    let mut bytes = [0u8; 12];
-    bytes[0..4].copy_from_slice(&OUTPUT_MAGIC.to_le_bytes());
-    bytes[4..8].copy_from_slice(&result.to_le_bytes());
-    bytes[8..12].copy_from_slice(&auxiliary.to_le_bytes());
-    bytes
+/// Join two independently computed 32-bit observations into one result.
+pub fn join_u32(low: u32, high: u32) -> u64 {
+    u64::from(low) | (u64::from(high) << 32)
+}
+
+/// Encode the common little-endian 64-bit result.
+pub const fn encode_result(result: u64) -> [u8; 8] {
+    result.to_le_bytes()
 }
 
 /// Compute the IEEE CRC-32 of a byte slice.
@@ -138,7 +132,7 @@ pub fn crc32(bytes: &[u8]) -> u32 {
 
 /// Emit one result through the RV32IM execution environment.
 #[cfg(target_os = "none")]
-pub fn emit(result: &[u8; 12]) -> u32 {
+pub fn emit(result: &[u8; 8]) -> u32 {
     if rv32im_guest::write_output(result) == result.len() as u32 {
         0
     } else {

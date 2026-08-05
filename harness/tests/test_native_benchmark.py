@@ -25,25 +25,31 @@ def _artifact(
     path.write_bytes(data)
     record[key] = name
     record[f"{key}_sha256"] = hashlib.sha256(data).hexdigest()
-    record[f"{key}_size"] = len(data)
 
 
-def _manifest(temporary: Path, expected: bytes = b"input") -> Path:
+def _manifest(temporary: Path, expected: bytes = b"input\0\0\0") -> Path:
     root = temporary / "artifacts"
     root.mkdir()
     record: dict[str, object] = {
         "id": "tiny",
         "workload": "tiny",
-        "category": "diagnostic",
-        "expected_exit_code": 0,
+        "expected_output_hex": expected.hex(),
         "instruction_limit": 100,
-        "output_limit": 64,
     }
     _artifact(root, record, "elf", "elf/tiny.elf", b"elf")
-    _artifact(root, record, "input", "input/tiny.bin", b"input")
-    _artifact(root, record, "expected_output", "expected/tiny.bin", expected)
+    _artifact(root, record, "input", "input/tiny.bin", b"input\0\0\0")
     path = root / "manifest.json"
-    path.write_text(json.dumps({"schema_version": 1, "cases": [record]}))
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "application_workloads": [],
+                "builder": {"platform": "test"},
+                "project_inputs": {},
+                "cases": [record],
+            }
+        )
+    )
     return path
 
 
@@ -103,7 +109,7 @@ def test_native_benchmark_runs_workload_executable_and_preserves_samples(
 
 
 def test_native_benchmark_rejects_incorrect_output(tmp_path: Path) -> None:
-    manifest = _manifest(tmp_path, expected=b"wrong")
+    manifest = _manifest(tmp_path, expected=b"wrong!!!")
     directory = _native_executable(tmp_path)
 
     with pytest.raises(BenchmarkFailure, match="native output differs"):

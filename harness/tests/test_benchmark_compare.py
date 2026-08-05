@@ -77,13 +77,10 @@ def _loaded_suite(cases: tuple[tuple[str, str], ...]) -> BenchmarkSuite:
             BenchmarkCase(
                 case_id,
                 workload,
-                "application",
                 b"elf",
                 b"input",
                 b"expected",
-                0,
                 100,
-                16,
             )
             for case_id, workload in cases
         ),

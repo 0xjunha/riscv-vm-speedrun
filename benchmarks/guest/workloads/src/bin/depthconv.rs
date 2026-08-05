@@ -22,7 +22,7 @@
 
 #[cfg(target_os = "none")]
 use rv32im_guest::guest_entry;
-use rv32im_workloads::{crc32, encode_output, Words};
+use rv32im_workloads::{crc32, encode_result, join_u32, Words};
 
 const HEIGHT: usize = 16;
 const WIDTH: usize = 16;
@@ -97,9 +97,9 @@ fn convolve(
     }
 }
 
-fn depthconv(input: &[u8]) -> [u8; 12] {
+fn depthconv(input: &[u8]) -> [u8; 8] {
     if input.len() != INPUT_SIZE {
-        return encode_output(0, 0);
+        return encode_result(0);
     }
     let repetitions = Words::new(input).get(0).clamp(1, 32);
     let activations = &input[ACTIVATION_OFFSET..WEIGHT_OFFSET];
@@ -126,7 +126,7 @@ fn depthconv(input: &[u8]) -> [u8; 12] {
         );
         aggregate ^= crc32(&output).rotate_left(pass & 31);
     }
-    encode_output(aggregate, crc32(&output))
+    encode_result(join_u32(aggregate, crc32(&output)))
 }
 
 #[cfg(target_os = "none")]

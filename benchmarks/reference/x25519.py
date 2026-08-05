@@ -6,7 +6,7 @@ import struct
 import zlib
 from collections.abc import Mapping
 
-from .common import fold, header, lcg, profiled_parameters, record
+from .common import fold, lcg, profiled_parameters, result
 
 RFC7748_PAIRS = (
     (
@@ -101,37 +101,29 @@ def pairs(count: int, seed: int, profile: str) -> bytes:
 
 
 def input_for(values: Mapping[str, object]) -> bytes:
-    (repetitions, pair_count, seed), profile = profiled_parameters(
+    (pair_count, seed), profile = profiled_parameters(
         values,
-        ("repetitions", "pairs", "seed"),
+        ("pairs", "seed"),
         ("rfc7748", "generated", "carry-heavy"),
     )
-    if not 1 <= repetitions <= 32 or not 1 <= pair_count <= 32:
-        raise ValueError("x25519 repetitions or pairs is outside its limit")
-    return struct.pack("<2I", repetitions, pair_count) + pairs(
-        pair_count, seed, profile
-    )
+    if not 1 <= pair_count <= 32:
+        raise ValueError("x25519 pairs is outside its limit")
+    return pairs(pair_count, seed, profile)
 
 
 def output_for(data: bytes) -> bytes:
-    header(data, "x25519")
-    if len(data) < 72:
-        raise ValueError("x25519 input is too short")
-    repetitions, pair_count = struct.unpack_from("<2I", data)
-    if (
-        not 1 <= repetitions <= 32
-        or not 1 <= pair_count <= 32
-        or len(data) != 8 + pair_count * 64
-    ):
-        raise ValueError("x25519 input header is invalid")
+    if len(data) < 64 or len(data) % 64:
+        raise ValueError("x25519 input has an invalid size")
+    pair_count = len(data) // 64
+    if pair_count > 32:
+        raise ValueError("x25519 input contains too many pairs")
     secrets = bytearray()
     for pair_index in range(pair_count):
-        offset = 8 + pair_index * 64
+        offset = pair_index * 64
         secrets.extend(
             x25519(data[offset : offset + 32], data[offset + 32 : offset + 64])
         )
-    final_crc = zlib.crc32(secrets)
-    aggregate = 0x5832_3535
-    for pass_index in range(repetitions):
-        aggregate = fold(aggregate, final_crc, pass_index)
-    return record(aggregate, final_crc)
+    folded = 0x5832_3535
+    for index, (word,) in enumerate(struct.iter_unpack("<I", secrets)):
+        folded = fold(folded, word, index)
+    return result(zlib.crc32(secrets), folded)

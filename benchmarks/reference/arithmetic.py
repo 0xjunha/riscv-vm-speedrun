@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Mapping
 
-from .common import parameters, record, rotl, rotr, u32, words
+from .common import parameters, result, rotl, rotr, u32, words
 
 
 def input_for(values: Mapping[str, object]) -> bytes:
@@ -27,4 +27,4 @@ def output_for(data: bytes) -> bytes:
         y = rotr(y, 11) ^ x
         x = u32(rotl(x, 5) + y)
         step = u32(step + 0x6D2B_79F5)
-    return record(x, y ^ step)
+    return result(x, y ^ step)

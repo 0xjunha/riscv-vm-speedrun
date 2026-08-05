@@ -263,7 +263,7 @@ static uint32_t rvb_lfs_state_digest(lfs_t *filesystem, uint32_t *digest) {
 
 static uint32_t rvb_littlefs_once(const uint8_t *operations,
                                   uint32_t operation_count,
-                                  uint32_t *summary) {
+                                  uint32_t out[2]) {
     memset(rvb_lfs_flash, 0xff, sizeof(rvb_lfs_flash));
     memset(rvb_lfs_read_cache, 0, sizeof(rvb_lfs_read_cache));
     memset(rvb_lfs_prog_cache, 0, sizeof(rvb_lfs_prog_cache));
@@ -360,34 +360,19 @@ static uint32_t rvb_littlefs_once(const uint8_t *operations,
     if (error < 0) {
         return rvb_lfs_error(error);
     }
-    *summary = trace ^ state_digest;
+    out[0] = trace;
+    out[1] = state_digest;
     return 0u;
 }
 
 uint32_t rvb_littlefs(const uint8_t *input, uint32_t input_len,
                       uint32_t out[2]) {
-    if (input_len < 24u) {
+    if (input_len < 16u || input_len % 16u != 0u) {
         return RVB_BAD_INPUT;
     }
-    const uint32_t repetitions = rvb_read_u32(input);
-    const uint32_t operation_count = rvb_read_u32(input + 4u);
-    if (repetitions == 0u || repetitions > 16u || operation_count == 0u ||
-        operation_count > RVB_LFS_MAX_OPERATIONS ||
-        input_len != 8u + operation_count * 16u) {
+    const uint32_t operation_count = input_len / 16u;
+    if (operation_count > RVB_LFS_MAX_OPERATIONS) {
         return RVB_BAD_INPUT;
     }
-
-    uint32_t aggregate = 0x4c465332u;
-    uint32_t final_summary = 0u;
-    for (uint32_t pass = 0; pass < repetitions; ++pass) {
-        const uint32_t status = rvb_littlefs_once(
-            input + 8u, operation_count, &final_summary);
-        if (status != 0u) {
-            return status;
-        }
-        aggregate = rvb_fold(aggregate, final_summary, pass);
-    }
-    out[0] = aggregate;
-    out[1] = final_summary;
-    return 0u;
+    return rvb_littlefs_once(input, operation_count, out);
 }

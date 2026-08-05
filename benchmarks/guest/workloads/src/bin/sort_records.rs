@@ -5,7 +5,7 @@
 
 #[cfg(target_os = "none")]
 use rv32im_guest::guest_entry;
-use rv32im_workloads::{encode_output, Words};
+use rv32im_workloads::{encode_result, join_u32, Words};
 
 const MAX_RECORDS: usize = 2_048;
 
@@ -59,12 +59,12 @@ fn merge_sort(
     }
 }
 
-fn sort_records(input: &[u8]) -> [u8; 12] {
+fn sort_records(input: &[u8]) -> [u8; 8] {
     let words = Words::new(input);
-    let count = words.get(0) as usize;
-    let passes = words.get(1).clamp(1, 16);
-    if !(2..=MAX_RECORDS).contains(&count) || words.len() != 2 + count * 2 {
-        return encode_output(0, 0);
+    let passes = words.get(0).clamp(1, 16);
+    let count = words.word_count().saturating_sub(1) / 2;
+    if !(2..=MAX_RECORDS).contains(&count) || words.word_count() != 1 + count * 2 {
+        return encode_result(0);
     }
 
     let mut records = [Record::default(); MAX_RECORDS];
@@ -75,8 +75,8 @@ fn sort_records(input: &[u8]) -> [u8; 12] {
         let key_mask = pass.wrapping_mul(0x9e37_79b9);
         for (index, record) in records[..count].iter_mut().enumerate() {
             *record = Record {
-                key: words.get(2 + index * 2) ^ key_mask,
-                value: words.get(3 + index * 2),
+                key: words.get(1 + index * 2) ^ key_mask,
+                value: words.get(2 + index * 2),
             };
         }
         merge_sort(&mut records, &mut scratch, count);
@@ -89,7 +89,7 @@ fn sort_records(input: &[u8]) -> [u8; 12] {
         aggregate ^= fold.rotate_left(pass & 31);
         final_fold = fold;
     }
-    encode_output(aggregate, final_fold)
+    encode_result(join_u32(aggregate, final_fold))
 }
 
 #[cfg(target_os = "none")]

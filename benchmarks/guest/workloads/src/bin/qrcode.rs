@@ -5,27 +5,25 @@
 
 #[cfg(target_os = "none")]
 use rv32im_guest::guest_entry;
-use rv32im_workloads::{crc32, encode_output, Words};
+use rv32im_workloads::{crc32, encode_result, join_u32};
 
 use qrcodegen::{QrCode, QrCodeEcc, Version};
 
 const MAX_VERSION: u8 = 20;
+const MAX_PAYLOAD: usize = 666;
 const MAX_SIZE: usize = MAX_VERSION as usize * 4 + 17;
 const BUFFER_SIZE: usize = (MAX_SIZE * MAX_SIZE).div_ceil(8) + 1;
 const MODULE_BYTES: usize = (MAX_SIZE * MAX_SIZE).div_ceil(8);
 
-fn qrcode(input: &[u8]) -> [u8; 12] {
-    let length = Words::new(input).get(0) as usize;
-    if length > BUFFER_SIZE {
-        return encode_output(0, 0);
+fn qrcode(input: &[u8]) -> [u8; 8] {
+    let length = input.len();
+    if length > MAX_PAYLOAD {
+        return encode_result(0);
     }
-    let Some(payload) = input.get(4..4usize.saturating_add(length)) else {
-        return encode_output(0, 0);
-    };
 
     let mut temporary = [0u8; BUFFER_SIZE];
     let mut output = [0u8; BUFFER_SIZE];
-    temporary[..length].copy_from_slice(payload);
+    temporary[..length].copy_from_slice(input);
     let Ok(code) = QrCode::encode_binary(
         &mut temporary,
         length,
@@ -36,7 +34,7 @@ fn qrcode(input: &[u8]) -> [u8; 12] {
         None,
         true,
     ) else {
-        return encode_output(0, 0);
+        return encode_result(0);
     };
 
     let size = code.size() as usize;
@@ -53,7 +51,7 @@ fn qrcode(input: &[u8]) -> [u8; 12] {
     }
     let used = (size * size).div_ceil(8);
     let metadata = (u32::from(code.version().value()) << 24) | size as u32;
-    encode_output(dark, crc32(&modules[..used]) ^ metadata)
+    encode_result(join_u32(dark, crc32(&modules[..used]) ^ metadata))
 }
 
 #[cfg(target_os = "none")]

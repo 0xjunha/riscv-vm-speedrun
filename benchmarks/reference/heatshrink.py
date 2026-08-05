@@ -6,7 +6,7 @@ import struct
 import zlib
 from collections.abc import Mapping
 
-from .common import header, lcg, profiled_parameters, record, rotl
+from .common import lcg, profiled_parameters, result, rotl
 
 TELEMETRY_FORMAT = "<IHHIiii"
 TELEMETRY_RECORD_SIZE = struct.calcsize(TELEMETRY_FORMAT)
@@ -113,14 +113,12 @@ def input_for(values: Mapping[str, object]) -> bytes:
     if records > MAX_PAYLOAD // TELEMETRY_RECORD_SIZE:
         raise ValueError("heatshrink records exceed the 16 KiB payload limit")
     data = telemetry(records, seed, profile)
-    return struct.pack("<I", len(data)) + data
+    return data
 
 
 def output_for(data: bytes) -> bytes:
-    length = header(data, "heatshrink")
-    payload = data[4:]
-    if len(payload) != length:
-        raise ValueError("heatshrink input length is invalid")
-    encoded = encode(payload)
-    auxiliary = zlib.crc32(payload) ^ rotl(len(encoded), 16)
-    return record(zlib.crc32(encoded), auxiliary)
+    if len(data) > MAX_PAYLOAD:
+        raise ValueError("heatshrink input exceeds the 16 KiB payload limit")
+    encoded = encode(data)
+    decoded_summary = zlib.crc32(data) ^ rotl(len(encoded), 16)
+    return result(zlib.crc32(encoded), decoded_summary)

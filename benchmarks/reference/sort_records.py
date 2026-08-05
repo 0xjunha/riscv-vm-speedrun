@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Mapping
 
-from .common import header, lcg, profiled_parameters, record, rotl, u32
+from .common import lcg, profiled_parameters, result, rotl, u32
 
 
 def records(count: int, seed: int, profile: str = "uniform") -> bytes:
@@ -34,13 +34,17 @@ def input_for(values: Mapping[str, object]) -> bytes:
     )
     if not 2 <= count <= 2048 or not 1 <= passes <= 16:
         raise ValueError("sort_records count or passes is outside its limit")
-    return struct.pack("<2I", count, passes) + records(count, seed, profile)
+    return struct.pack("<I", passes) + records(count, seed, profile)
 
 
 def output_for(data: bytes) -> bytes:
-    header(data, "sort_records")
-    count, passes = struct.unpack_from("<2I", data)
-    words = struct.unpack_from(f"<{count * 2}I", data, 8)
+    if len(data) < 20 or (len(data) - 4) % 8:
+        raise ValueError("sort_records input has an invalid size")
+    passes = struct.unpack_from("<I", data)[0]
+    count = (len(data) - 4) // 8
+    if count > 2048 or not 1 <= passes <= 16:
+        raise ValueError("sort_records input is outside its limits")
+    words = struct.unpack_from(f"<{count * 2}I", data, 4)
     aggregate = 0
     final_fold = 0
     for pass_index in range(passes):
@@ -55,4 +59,4 @@ def output_for(data: bytes) -> bytes:
             folded = u32(folded * 0x0100_0193) ^ value
         aggregate ^= rotl(folded, pass_index)
         final_fold = folded
-    return record(aggregate, final_fold)
+    return result(aggregate, final_fold)

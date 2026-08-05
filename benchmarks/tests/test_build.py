@@ -17,8 +17,10 @@ import reference
 from reference import dijkstra as reference_dijkstra
 from reference import heatshrink as reference_heatshrink
 from reference import littlefs as reference_littlefs
+from reference import qrcode as reference_qrcode
 from reference import sha256 as reference_sha256
 from reference import sort_records as reference_sort_records
+from reference import streaming as reference_streaming
 from reference import x25519 as reference_x25519
 
 
@@ -28,33 +30,33 @@ def test_checked_in_artifacts() -> None:
 
 def test_reference_records_are_stable() -> None:
     expected_outputs = {
-        "arithmetic": "52564231b45a03028dac6b0e",
-        "depthconv": "525642313e48b268c2e8ec02",
-        "depthconv-saturated": "525642318ef0d57fb07d2188",
-        "depthconv-sparse": "52564231638fbeb3fd2ec866",
-        "dijkstra": "525642312ec00100de5dd2b4",
-        "dijkstra-clustered": "5256423148c502004791a6bd",
-        "dijkstra-hub": "52564231f06c0300ce126d71",
-        "heatshrink": "52564231a599a52541de76c0",
-        "heatshrink-bursty": "525642310ed87675caae4b5d",
-        "heatshrink-steady": "52564231679d0d473d51d64a",
-        "littlefs": "52564231b66b16f6b49714df",
-        "littlefs-append": "525642315f3240a9efdec283",
-        "littlefs-metadata": "525642318d2724489dcb2621",
-        "qrcode": "52564231a80400007d9fde3e",
-        "qrcode-capacity": "5256423194120000a1fca83a",
-        "qrcode-compact": "52564231bc0100005a25ccd4",
-        "sha256": "525642312b7fa3a8f050c784",
-        "sha256-pages": "525642311d2e78d57e301280",
-        "sha256-sparse": "525642310ce81159f6c0cedc",
-        "sort_records": "525642311f22b550eb0131eb",
-        "sort_records-ascending": "525642318432ded320cac130",
-        "sort_records-duplicates": "52564231d5e64af35327ca28",
-        "streaming": "525642311eb9132b00d8beff",
-        "tiny": "5256423124bb34a108000000",
-        "x25519": "52564231825a70dd62467e39",
-        "x25519-carry": "52564231d65c892bb645178b",
-        "x25519-generated": "5256423155d6565d37fa59b9",
+        "arithmetic": "b45a03028dac6b0e",
+        "depthconv": "3e48b268c2e8ec02",
+        "depthconv-saturated": "8ef0d57fb07d2188",
+        "depthconv-sparse": "638fbeb3fd2ec866",
+        "dijkstra": "2ec00100de5dd2b4",
+        "dijkstra-clustered": "48c502004791a6bd",
+        "dijkstra-hub": "f06c0300ce126d71",
+        "heatshrink": "a599a52541de76c0",
+        "heatshrink-bursty": "0ed87675caae4b5d",
+        "heatshrink-steady": "679d0d473d51d64a",
+        "littlefs": "4a8dcf44fe1adb9b",
+        "littlefs-append": "e0f2f3e40f2c3167",
+        "littlefs-metadata": "9dcb262100000000",
+        "qrcode": "a80400007d9fde3e",
+        "qrcode-capacity": "94120000a1fca83a",
+        "qrcode-compact": "bc0100005a25ccd4",
+        "sha256": "2b7fa3a8f050c784",
+        "sha256-pages": "1d2e78d57e301280",
+        "sha256-sparse": "0ce81159f6c0cedc",
+        "sort_records": "1f22b550eb0131eb",
+        "sort_records-ascending": "8432ded320cac130",
+        "sort_records-duplicates": "d5e64af35327ca28",
+        "streaming": "1eb9132b00d8beff",
+        "tiny": "24bb34a108000000",
+        "x25519": "62467e39743a7d91",
+        "x25519-carry": "b645178bed0bf368",
+        "x25519-generated": "37fa59b9e5835650",
     }
     expected_inputs = {
         "arithmetic": "a34582326b5b9036c0560479357ddfaf3314d354cf320433cc4fd582d6704ee0",
@@ -64,26 +66,26 @@ def test_reference_records_are_stable() -> None:
         "dijkstra": "8fa982e9cbc9f5b3f36f394aafb5145f16deabeba7ba706a903eb770b8417d11",
         "dijkstra-clustered": "a89d6592e353aefb3ca52fe1aa59797aeb2461fdce417d74920a9bcb919e67b9",
         "dijkstra-hub": "f879d70f1e08ad9f553cedb3b413cfc51cbc35936b4e091c58d028b0542d11d3",
-        "heatshrink": "d1debdd4a46789fda12debff4884790d8f03a7007b3ccc1bee5adb6d456e30f0",
-        "heatshrink-bursty": "ca882191b992b7aa50d7d1f590a3f01c1d730240b9ad5c64bc5ef60300ed99ab",
-        "heatshrink-steady": "15e92e12695fafc0fa927ff26b7640f4128e43418fb904972c36b555582cee2c",
-        "littlefs": "5d2ceef91ad18cf728d7e361218a6c9a01379d5156841e2a8b9c729a28a25131",
-        "littlefs-append": "e6758de25d7f17d0c256fd2fbf82a32e0877fa009a2278b319a76843a987c0ca",
-        "littlefs-metadata": "866df6e81a6deb21528fcc47bbb14351c1da5fba34122f3e68152fe363329229",
-        "qrcode": "95dea1e7f058ed0a69642b2182868a8b327ece4233e8101ed1e6d2bf4dec67e2",
-        "qrcode-capacity": "0a5da553401adc7aac0e2a218fb0b12654f3e317c9b56005d0270278994f71ef",
-        "qrcode-compact": "89e8eab7b14478f2cf25ee1fb6ca8a451d304e49e575e7f745d952205dbefcb4",
-        "sha256": "a0fa6f78e072a5732ee155fcf8c09515b2cbcd2f01e12d2a3f475f3e49cb81ce",
-        "sha256-pages": "1ad4f782ce8c8e0534d616798a48ccdf9581df07bb914476d84206d2b26da9dc",
-        "sha256-sparse": "cc0490d086833ff99862d2ac51d458455c84f9a1b574a3db66db7db0dcd06428",
-        "sort_records": "7e89d8a2e6d8e5ba34dc7bbc17ccf589f411ffab93a1c706cdb622adfd8d6b84",
-        "sort_records-ascending": "5dd2ac84af3321a5c5b310f8f6ee962e56b07161853d6a81b62048476c3388bb",
-        "sort_records-duplicates": "8aa422f1ec989651f9292c090f47f0b0f4957b05f274bba587c06dfa85ed04c3",
-        "streaming": "74d6ae3773394cd22a118b599c926dae2b4d519ce9e4be5d69768fc04c350616",
+        "heatshrink": "8cbd9b27bb9d355ce23ef6bf57daff43d9934a07d1b883859bf7dc449d91bf09",
+        "heatshrink-bursty": "6f5df1eb37990a8c49b56e573afb726ebf4a6459bfa114e8128a62929963e660",
+        "heatshrink-steady": "170402a094970735e1a39336bd358ddfb233e5541ed2e73ebd0bfe9f88726811",
+        "littlefs": "f368194ee37796e7d04b0d9bb53317c56ed418f71f4232490cedd7d9974b4662",
+        "littlefs-append": "5e9964658d0e2e7f08c9ffa723de27d613e50102f14e17c268a5df42142afbf2",
+        "littlefs-metadata": "ded3e217a6775c071726378deeb1467e1a1f35a5beaa0831771b64ed38496278",
+        "qrcode": "f0a14d349af37ba22c7c2485ceb7d5462deda8d66f4cb041ddb57b3049c82151",
+        "qrcode-capacity": "84570f120cce49bca08f3b93bf7ebdc7114e1819813f143d86dd1b30dbab9b42",
+        "qrcode-compact": "fb7fe91cb99d4dd5ae7eaa1ca33ec3b5e32ed24fc221c1e67f803e57ec0db309",
+        "sha256": "a8a37f2bd7db770d691baa29f084690d7ebc24cd8aede98796a1dbb184c750f0",
+        "sha256-pages": "d5782e1d4d8b3aaccb9897f0ac072e50c3a3f80ced5134e4d5aafb7c8012307e",
+        "sha256-sparse": "5911e80c2a5efdf6c01d920b1ead7079f901aabbcb0c39ed121e836ddccec0f6",
+        "sort_records": "9d548fdfd0f5671b276e69a22dc26cba081380007ea6ad2a1d518074d9ad53c8",
+        "sort_records-ascending": "3b4740b09dd546ec08de4142cb3f9b20d722382a7af636ddc64976a241b8c59b",
+        "sort_records-duplicates": "f79217deeed5ec37b0d2f1d6c5276e38fdefdee99059ca53c53a8dfdc8f7998a",
+        "streaming": "d87ee0867bab9a16d0c06edf2fc9e02f6fa54057b3e405bd0a3dc0f6baa6023c",
         "tiny": "fdd232547ceee35add35783ca7d518d2a49abccd0b60b028c8a9c629eba6201f",
-        "x25519": "d946e1feb68ddbcedcbf0da908f882b138a85b61f283bdc858b5e14adab917d6",
-        "x25519-carry": "97faa38bc6e8279f984a2ecdc8e85b231adcf5010be9454987a2da88337b4ef4",
-        "x25519-generated": "6757d5c857ae48b117d40608540de3c25aa1877af13cb17b538a689be1895c5a",
+        "x25519": "fcc43432e6e38d6dba6d416ea9fcbb78647afcd79bd3c7e0357a9853357fdd9c",
+        "x25519-carry": "d8f8d06ea49097bacd9d941a8e584f269aa15b6d2ec2d8b644c6a86346115e56",
+        "x25519-generated": "b7ea57b2246d9740e41fa337222dd67ca99f444c6d6de753271618f0cf0f9ebf",
     }
     cases = build.load_cases()
     assert {case.id for case in cases} == set(expected_outputs) == set(expected_inputs)
@@ -114,23 +116,9 @@ def test_application_case_profiles_are_diversified() -> None:
     assert counts == dict.fromkeys(counts, 3)
 
 
-def test_workload_categories_are_complete_and_consistent() -> None:
-    cases = build.load_cases()
-    categories = {
-        workload: {case.category for case in cases if case.workload == workload}
-        for workload in build.WORKLOADS
-    }
-    assert all(len(category) == 1 for category in categories.values())
-    assert {
-        workload
-        for workload, category in categories.items()
-        if category == {"diagnostic"}
-    } == {"tiny", "arithmetic", "streaming"}
-    assert all(
-        category == {"application"}
-        for workload, category in categories.items()
-        if workload not in {"tiny", "arithmetic", "streaming"}
-    )
+def test_application_workloads_are_complete_and_consistent() -> None:
+    application = set(build.load_application_workloads())
+    assert application == set(build.WORKLOADS) - {"tiny", "arithmetic", "streaming"}
 
 
 def test_authored_profiles_have_their_intended_shapes() -> None:
@@ -189,7 +177,6 @@ def test_profile_generators_reject_unknown_profiles() -> None:
             {
                 "operations": 1,
                 "profile": "unknown",
-                "repetitions": 1,
                 "seed": 0,
             },
         )
@@ -440,6 +427,36 @@ def test_heatshrink_limit_is_checked_before_generation(
 
     with pytest.raises(ValueError, match="16 KiB"):
         reference.input_for("heatshrink", {"records": records, "seed": 0})
+
+
+def test_reference_models_enforce_authored_input_limits() -> None:
+    with pytest.raises(ValueError, match="666 bytes"):
+        reference_qrcode.input_for(
+            {"length": reference_qrcode.MAX_PAYLOAD + 1, "seed": 0}
+        )
+    with pytest.raises(ValueError, match="exceeds its limit"):
+        reference_qrcode.output_for(bytes(reference_qrcode.MAX_PAYLOAD + 1))
+
+    with pytest.raises(ValueError, match="1..1024"):
+        reference_streaming.input_for({"passes": 1, "count": 0, "seed": 0})
+    oversized_stream = struct.pack(
+        f"<{reference_streaming.MAX_VALUES + 2}I",
+        1,
+        *range(reference_streaming.MAX_VALUES + 1),
+    )
+    with pytest.raises(ValueError, match="too many words"):
+        reference_streaming.output_for(oversized_stream)
+
+    with pytest.raises(ValueError, match="512 KiB"):
+        reference_sha256.input_for(
+            {
+                "length": reference_sha256.MAX_PAYLOAD + 1,
+                "profile": "pseudorandom",
+                "seed": 0,
+            }
+        )
+    with pytest.raises(ValueError, match="512 KiB"):
+        reference_sha256.output_for(bytes(reference_sha256.MAX_PAYLOAD + 1))
 
 
 def test_third_party_inputs_exclude_standalone_cargo_state(tmp_path: Path) -> None:

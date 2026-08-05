@@ -20,7 +20,6 @@ from .vm_interface import (
     MAX_ELF_SIZE,
     MAX_INPUT_SIZE,
     MAX_INSTRUCTION_LIMIT,
-    MAX_OUTPUT_LIMIT,
     RunOutcome,
 )
 
@@ -28,6 +27,22 @@ DEFAULT_MANIFEST = Path("benchmarks/artifacts/manifest.json")
 DEFAULT_WARMUPS = 2
 DEFAULT_REPETITIONS = 7
 DEFAULT_TIMEOUT = 30.0
+RESULT_SIZE = 8
+MANIFEST_KEYS = frozenset(
+    {"schema_version", "application_workloads", "builder", "project_inputs", "cases"}
+)
+MANIFEST_CASE_KEYS = frozenset(
+    {
+        "id",
+        "workload",
+        "elf",
+        "elf_sha256",
+        "input",
+        "input_sha256",
+        "expected_output_hex",
+        "instruction_limit",
+    }
+)
 
 
 class BenchmarkFailure(RuntimeError):
@@ -40,13 +55,10 @@ class BenchmarkCase:
 
     case_id: str
     workload: str
-    category: str
     elf: bytes
     input_data: bytes
     expected_output: bytes
-    expected_exit_code: int
     instruction_limit: int
-    output_limit: int
 
 
 @dataclass(frozen=True)
@@ -63,12 +75,6 @@ class BenchmarkSuite:
         if selected is self.cases:
             return self
         return BenchmarkSuite(self.sha256, selected)
-
-
-# Compatibility aliases for existing internal callers. New code should use the
-# public immutable suite API above.
-_Case = BenchmarkCase
-_Manifest = BenchmarkSuite
 
 
 def _bounded_integer(
@@ -92,21 +98,14 @@ def _read_artifact(
 ) -> bytes:
     name = record.get(key)
     expected_hash = record.get(f"{key}_sha256")
-    expected_size = record.get(f"{key}_size")
     if (
         not isinstance(name, str)
         or not name
         or not isinstance(expected_hash, str)
         or len(expected_hash) != 64
         or any(character not in "0123456789abcdef" for character in expected_hash)
-        or type(expected_size) is not int
-        or expected_size < 0
     ):
         raise BenchmarkFailure(f"{case_id}: {key} metadata is invalid")
-    if expected_size > maximum_size:
-        raise BenchmarkFailure(
-            f"{case_id}: {key} size exceeds its {maximum_size}-byte limit"
-        )
 
     def require_file(metadata: os.stat_result) -> None:
         if not stat.S_ISREG(metadata.st_mode):
@@ -115,8 +114,6 @@ def _read_artifact(
             raise BenchmarkFailure(
                 f"{case_id}: {key} size exceeds its {maximum_size}-byte limit"
             )
-        if metadata.st_size != expected_size:
-            raise BenchmarkFailure(f"{case_id}: {key} size does not match the manifest")
 
     try:
         relative = Path(name)
@@ -125,21 +122,43 @@ def _read_artifact(
             raise BenchmarkFailure(
                 f"{case_id}: {key} path leaves the artifact directory"
             )
-        require_file(path.stat())
+        initial = path.stat()
+        require_file(initial)
         with path.open("rb") as stream:
-            require_file(os.fstat(stream.fileno()))
-            data = stream.read(expected_size + 1)
+            opened = os.fstat(stream.fileno())
+            require_file(opened)
+            if opened.st_size != initial.st_size:
+                raise BenchmarkFailure(f"{case_id}: {key} changed while opening")
+            data = stream.read(maximum_size + 1)
+            final = os.fstat(stream.fileno())
     except BenchmarkFailure:
         raise
     except (OSError, RuntimeError, ValueError) as error:
         raise BenchmarkFailure(
             f"{case_id}: cannot read {key} {name}: {error}"
         ) from error
-    if len(data) != expected_size:
-        raise BenchmarkFailure(f"{case_id}: {key} size does not match the manifest")
+    if len(data) > maximum_size:
+        raise BenchmarkFailure(
+            f"{case_id}: {key} size exceeds its {maximum_size}-byte limit"
+        )
+    if final.st_size != opened.st_size or len(data) != opened.st_size:
+        raise BenchmarkFailure(f"{case_id}: {key} changed while reading")
     if hashlib.sha256(data).hexdigest() != expected_hash:
         raise BenchmarkFailure(f"{case_id}: {key} hash does not match the manifest")
     return data
+
+
+def _expected_output(record: dict[str, Any], case_id: str) -> bytes:
+    value = record.get("expected_output_hex")
+    if not isinstance(value, str) or len(value) != RESULT_SIZE * 2:
+        raise BenchmarkFailure(f"{case_id}: expected_output_hex is invalid")
+    try:
+        output = bytes.fromhex(value)
+    except ValueError as error:
+        raise BenchmarkFailure(f"{case_id}: expected_output_hex is invalid") from error
+    if len(output) != RESULT_SIZE:
+        raise BenchmarkFailure(f"{case_id}: expected_output_hex is invalid")
+    return output
 
 
 def load_benchmark_suite(
@@ -153,11 +172,19 @@ def load_benchmark_suite(
         document = json.loads(payload)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise BenchmarkFailure(f"cannot read manifest {path}: {error}") from error
-    records = document.get("cases") if isinstance(document, dict) else None
+    if not isinstance(document, dict) or set(document) != MANIFEST_KEYS:
+        raise BenchmarkFailure("manifest schema is invalid")
+    records = document["cases"]
+    application_workloads = document["application_workloads"]
     if (
-        not isinstance(document, dict)
-        or document.get("schema_version") != 1
+        document["schema_version"] != 1
         or not isinstance(records, list)
+        or not isinstance(application_workloads, list)
+        or any(
+            not isinstance(workload, str) or not workload
+            for workload in application_workloads
+        )
+        or len(set(application_workloads)) != len(application_workloads)
     ):
         raise BenchmarkFailure("manifest schema is invalid")
 
@@ -165,8 +192,8 @@ def load_benchmark_suite(
     cases = []
     seen = set()
     for record in records:
-        if not isinstance(record, dict):
-            raise BenchmarkFailure("manifest contains a non-object case")
+        if not isinstance(record, dict) or set(record) != MANIFEST_CASE_KEYS:
+            raise BenchmarkFailure("manifest case fields are invalid")
         case_id = record.get("id")
         workload = record.get("workload")
         if (
@@ -178,58 +205,31 @@ def load_benchmark_suite(
         ):
             raise BenchmarkFailure(f"manifest case is invalid: {case_id!r}")
         seen.add(case_id)
-        # ``category`` was added to schema v1 after the initial manifests had
-        # shipped. Treat an omitted value as diagnostic so a legacy manifest
-        # cannot enter an application aggregate, while still rejecting a
-        # malformed value when the field is present.
-        category = record.get("category", "diagnostic")
-        if not isinstance(category, str) or category not in {
-            "diagnostic",
-            "application",
-        }:
-            raise BenchmarkFailure(f"{case_id}: category is invalid")
-
-        expected_exit_code = _bounded_integer(
-            record, "expected_exit_code", 0xFFFF_FFFF, case_id
-        )
         instruction_limit = _bounded_integer(
             record, "instruction_limit", MAX_INSTRUCTION_LIMIT, case_id
         )
-        output_limit = _bounded_integer(
-            record, "output_limit", MAX_OUTPUT_LIMIT, case_id
-        )
         elf = _read_artifact(root, record, "elf", case_id, MAX_ELF_SIZE)
         input_data = _read_artifact(root, record, "input", case_id, MAX_INPUT_SIZE)
-        expected_output = _read_artifact(
-            root,
-            record,
-            "expected_output",
-            case_id,
-            output_limit,
-        )
+        expected_output = _expected_output(record, case_id)
         cases.append(
             BenchmarkCase(
                 case_id,
                 workload,
-                category,
                 elf,
                 input_data,
                 expected_output,
-                expected_exit_code,
                 instruction_limit,
-                output_limit,
             )
         )
 
     if not cases:
         raise BenchmarkFailure("manifest contains no cases")
+    workloads = {case.workload for case in cases}
+    if any(workload not in workloads for workload in application_workloads):
+        raise BenchmarkFailure(
+            "manifest application_workloads contains an unknown workload"
+        )
     return BenchmarkSuite(hashlib.sha256(payload).hexdigest(), tuple(cases))
-
-
-def _load_manifest(path: Path) -> BenchmarkSuite:
-    """Compatibility wrapper for the former private manifest loader."""
-
-    return load_benchmark_suite(path)
 
 
 def _select_cases(
@@ -262,10 +262,9 @@ def _require_outcome(
     prefix = f"{case.case_id} {phase}"
     if result.status != "exit":
         raise BenchmarkFailure(f"{prefix}: expected exit, got {result.status}")
-    if result.exit_code != case.expected_exit_code:
+    if result.exit_code != 0:
         raise BenchmarkFailure(
-            f"{prefix}: expected exit code {case.expected_exit_code}, "
-            f"got {result.exit_code}"
+            f"{prefix}: expected exit code 0, got {result.exit_code}"
         )
     if outcome.output != case.expected_output:
         raise BenchmarkFailure(
@@ -288,7 +287,7 @@ def _run_untimed(server: VmServer, case: BenchmarkCase, phase: str) -> RunOutcom
         return server.run(
             case.input_data,
             instruction_limit=case.instruction_limit,
-            output_limit=case.output_limit,
+            output_limit=len(case.expected_output),
         )
     except Exception as error:
         raise BenchmarkFailure(f"{case.case_id} {phase}: {error}") from error
@@ -314,7 +313,7 @@ def _measure_case(
     samples = []
     run_arguments = {
         "instruction_limit": case.instruction_limit,
-        "output_limit": case.output_limit,
+        "output_limit": len(case.expected_output),
     }
     for index in range(repetitions):
         started = time.perf_counter_ns()

@@ -48,25 +48,25 @@ Application workloads and input profiles:
 
 ## Workload contracts
 
-All multibyte input fields are little-endian. Every workload emits the common
-12-byte [`RVB1 | result | auxiliary`](guest/README.md#workload-data-contract)
-record. This table defines the valid input layout and the workload-specific
-meaning of its two output fields; the reference models enforce the same
-contracts when generating checked-in artifacts.
+All multibyte fields are little-endian. Every workload emits one 8-byte `u64`
+[`result`](guest/README.md#workload-data-contract). When a workload commits two
+32-bit observations, the first occupies the low half and the second the high
+half. The reference models enforce the same contracts when generating the
+manifest.
 
-| Workload | Valid input layout | `result` | `auxiliary` |
-| --- | --- | --- | --- |
-| `tiny` | Two `u32` values: `a`, `b` | Fixed rotate/XOR mix of `a` and `b` | Input length in bytes |
-| `arithmetic` | Three `u32` values: iteration count, initial `x`, initial `y`; the count defaults to 24,000 when zero and is capped at 120,000 | Final `x` state | Final `y` XOR final step state |
-| `streaming` | Pass count and word count as `u32`, followed by that many `u32` values; passes and count use the documented workload bounds | Wrapping sum XOR position-rotated XOR of scanned values | Stride-mixed wrapping sum |
-| `sha256` | Payload length as `u32`, followed by exactly that many bytes | First 32-bit SHA-256 digest word | Last 32-bit SHA-256 digest word |
-| `heatshrink` | Payload length as `u32`, followed by exactly that many bytes, up to 16 KiB | CRC-32 of the compressed bytes | CRC-32 of the decoded payload XOR the rotated compressed length |
-| `depthconv` | Repetition count as `u32`, then fixed 16x16x8 `i8` activations, 3x3x8 `i8` weights, and eight `i32` biases, multipliers, and shifts | Rotation-XOR aggregate of the output CRC-32 across repetitions | CRC-32 of the final output tensor |
-| `dijkstra` | Node and source counts as `u32`, followed by a `nodes` x `nodes` matrix of `u16` edge weights; zero means no edge | Wrapping sum of all distances across sources | Position-rotated XOR fold of those distances |
-| `sort_records` | Record and pass counts as `u32`, followed by that many `(key: u32, value: u32)` pairs | Rotation-XOR aggregate of the sorted-record fold across passes | Sorted-record fold from the final pass |
-| `qrcode` | Payload length as `u32`, followed by exactly that many bytes | Number of dark modules | CRC-32 of the packed module bitmap XOR version/size metadata |
-| `littlefs` | Repetition and operation counts as `u32`, followed by that many four-`u32` operation records: kind, file, and two operation-specific arguments | Fold of each repeated trace summary | Final event-trace fold XOR filesystem-state CRC-32 |
-| `x25519` | Repetition and pair counts as `u32`, followed by that many 64-byte pairs: 32-byte scalar and 32-byte u-coordinate | Fold of the shared-secret CRC-32 across repetitions | CRC-32 of all shared secrets from the final repetition |
+| Workload | Valid input layout | `result` |
+| --- | --- | --- |
+| `tiny` | Two `u32` values: `a`, `b` | Low: fixed rotate/XOR mix of `a` and `b`; high: input length in bytes |
+| `arithmetic` | Three `u32` values: iteration count, initial `x`, initial `y`; the count defaults to 24,000 when zero and is capped at 120,000 | Low: final `x`; high: final `y` XOR final step state |
+| `streaming` | Pass count as `u32`, followed by 1–1,024 `u32` values | Low: wrapping sum XOR position-rotated XOR; high: stride-mixed wrapping sum |
+| `sha256` | Raw payload of at most 512 KiB | Low and high: first and last 32-bit SHA-256 digest words |
+| `heatshrink` | Raw payload of at most 16 KiB | Low: compressed CRC-32; high: decoded-payload CRC-32 XOR rotated compressed length |
+| `depthconv` | Repetition count as `u32`, then fixed 16x16x8 `i8` activations, 3x3x8 `i8` weights, and eight `i32` biases, multipliers, and shifts | Low: rotation-XOR aggregate of output CRC-32 values; high: final output CRC-32 |
+| `dijkstra` | Node and source counts as `u32`, followed by a `nodes` x `nodes` matrix of `u16` edge weights; zero means no edge | Low: wrapping sum of distances; high: position-rotated XOR fold of distances |
+| `sort_records` | Pass count as `u32`, followed by 2–2,048 `(key: u32, value: u32)` pairs | Low: rotation-XOR aggregate across passes; high: final sorted-record fold |
+| `qrcode` | Raw payload of at most 666 bytes | Low: dark-module count; high: module-bitmap CRC-32 XOR version/size metadata |
+| `littlefs` | 1–96 four-`u32` operation records: kind, file, and two operation-specific arguments | Low: event-trace fold; high: final filesystem-state CRC-32 |
+| `x25519` | 1–32 64-byte pairs: 32-byte scalar and 32-byte u-coordinate | Low: CRC-32 of all shared secrets; high: independent wordwise fold of those secrets |
 
 ## Components
 
@@ -83,8 +83,8 @@ contracts when generating checked-in artifacts.
 - `guest/THIRD_PARTY_NOTICES.md` records exact upstream revisions, licenses,
   local changes, fixture provenance, and oracle sources.
 - `build.py` builds or verifies artifacts and their hashes.
-- `artifacts/manifest.json` describes the ELF, input, and expected output for the
-  host runner. Paths are relative to the manifest.
+- `artifacts/manifest.json` describes each ELF and input by relative path and
+  SHA-256, and embeds the expected 8-byte result as hexadecimal.
 - `harness/src/rv32im_harness/benchmark.py` loads that manifest, drives the VM,
   validates results, and records timings.
 - `harness/src/rv32im_harness/benchmark_compare.py` runs labeled implementations

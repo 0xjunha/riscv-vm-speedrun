@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import struct
 from collections.abc import Mapping
 
-from .common import generated_bytes, header, lcg, profiled_parameters, record
+from .common import generated_bytes, lcg, profiled_parameters, result
+
+MAX_PAYLOAD = 512 * 1024
 
 
 def firmware_payload(length: int, seed: int, profile: str) -> bytes:
@@ -34,18 +35,16 @@ def input_for(values: Mapping[str, object]) -> bytes:
         ("length", "seed"),
         ("pseudorandom", "repeated-pages", "sparse-flash"),
     )
-    if length > 512 * 1024:
+    if length > MAX_PAYLOAD:
         raise ValueError("sha256 length must not exceed 512 KiB")
-    return struct.pack("<I", length) + firmware_payload(length, seed, profile)
+    return firmware_payload(length, seed, profile)
 
 
 def output_for(data: bytes) -> bytes:
-    length = header(data, "sha256")
-    payload = data[4:]
-    if len(payload) != length:
-        raise ValueError("sha256 input length is invalid")
-    digest = hashlib.sha256(payload).digest()
-    return record(
+    if len(data) > MAX_PAYLOAD:
+        raise ValueError("sha256 input exceeds its 512 KiB limit")
+    digest = hashlib.sha256(data).digest()
+    return result(
         int.from_bytes(digest[:4], "big"),
         int.from_bytes(digest[-4:], "big"),
     )

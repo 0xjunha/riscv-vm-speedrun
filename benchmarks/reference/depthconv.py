@@ -6,7 +6,7 @@ import struct
 import zlib
 from collections.abc import Mapping
 
-from .common import header, lcg, profiled_parameters, record, rotl
+from .common import header, lcg, profiled_parameters, result, rotl
 
 HEIGHT = 16
 WIDTH = 16
@@ -127,4 +127,4 @@ def output_for(data: bytes) -> bytes:
     aggregate = 0
     for pass_index in range(repetitions):
         aggregate ^= rotl(checksum, pass_index)
-    return record(aggregate, checksum)
+    return result(aggregate, checksum)

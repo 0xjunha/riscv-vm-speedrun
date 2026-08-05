@@ -5,7 +5,7 @@
 
 #[cfg(target_os = "none")]
 use rv32im_guest::guest_entry;
-use rv32im_workloads::{encode_output, Words};
+use rv32im_workloads::{encode_result, join_u32};
 
 const INITIAL: [u32; 8] = [
     0x6a09_e667,
@@ -150,13 +150,14 @@ fn hash(input: &[u8]) -> [u32; 8] {
     state
 }
 
-fn sha256(input: &[u8]) -> [u8; 12] {
-    let length = Words::new(input).get(0) as usize;
-    let Some(payload) = input.get(4..4usize.saturating_add(length)) else {
-        return encode_output(0, 0);
-    };
-    let digest = hash(payload);
-    encode_output(digest[0], digest[7])
+const MAX_PAYLOAD: usize = 512 * 1024;
+
+fn sha256(input: &[u8]) -> [u8; 8] {
+    if input.len() > MAX_PAYLOAD {
+        return encode_result(0);
+    }
+    let digest = hash(input);
+    encode_result(join_u32(digest[0], digest[7]))
 }
 
 #[cfg(target_os = "none")]

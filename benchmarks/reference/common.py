@@ -6,7 +6,6 @@ import struct
 from collections.abc import Mapping
 
 MASK32 = 0xFFFF_FFFF
-OUTPUT_MAGIC = 0x3142_5652  # bytes: RVB1
 
 
 def u32(value: int) -> int:
@@ -85,5 +84,7 @@ def header(data: bytes, workload: str) -> int:
     return struct.unpack_from("<I", data)[0]
 
 
-def record(result: int, auxiliary: int) -> bytes:
-    return struct.pack("<III", OUTPUT_MAGIC, u32(result), u32(auxiliary))
+def result(low: int, high: int = 0) -> bytes:
+    """Encode one little-endian 64-bit result from two 32-bit observations."""
+
+    return struct.pack("<Q", u32(low) | (u32(high) << 32))

@@ -34,7 +34,7 @@ WORKLOADS = tuple(
     path.stem for path in sorted((GUEST / "workloads/src/bin").glob("*.rs"))
 )
 MAX_INSTRUCTION_LIMIT = 1_000_000_000
-MAX_OUTPUT_LIMIT = 1_048_576
+RESULT_SIZE = 8
 BUILDER_METADATA = {
     "platform": "linux/amd64",
     "target": TARGET,
@@ -50,13 +50,10 @@ BASE_IMAGE_PATTERN = re.compile(
 CASE_KEYS = {
     "id",
     "workload",
-    "regime",
     "parameters",
     "instruction_limit",
-    "output_limit",
 }
 CASE_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
-CASE_CATEGORIES = frozenset(("diagnostic", "application"))
 
 
 class BuildError(RuntimeError):
@@ -67,11 +64,8 @@ class BuildError(RuntimeError):
 class Case:
     id: str
     workload: str
-    category: str
-    regime: str
     parameters: dict[str, object]
     instruction_limit: int
-    output_limit: int
 
 
 @dataclass(frozen=True)
@@ -105,27 +99,40 @@ def _positive_integer(value: object, name: str, maximum: int) -> int:
     return value
 
 
-def load_cases(path: Path = ROOT / "cases.json") -> tuple[Case, ...]:
+def _case_document(path: Path) -> tuple[dict[str, object], tuple[str, ...]]:
     value = _read_json(path)
     if not isinstance(value, dict) or set(value) != {
         "schema_version",
-        "workload_categories",
+        "application_workloads",
         "cases",
     }:
         raise BuildError(
-            "cases.json must contain schema_version, workload_categories, and cases"
+            "cases.json must contain schema_version, application_workloads, and cases"
         )
     if value["schema_version"] != 1 or not isinstance(value["cases"], list):
         raise BuildError("unsupported cases.json schema")
-    workload_categories = value["workload_categories"]
+    application_workloads = value["application_workloads"]
     if (
-        not isinstance(workload_categories, dict)
-        or set(workload_categories) != set(WORKLOADS)
+        not isinstance(application_workloads, list)
+        or not application_workloads
         or any(
-            category not in CASE_CATEGORIES for category in workload_categories.values()
+            not isinstance(workload, str) or workload not in WORKLOADS
+            for workload in application_workloads
         )
+        or len(set(application_workloads)) != len(application_workloads)
     ):
-        raise BuildError("workload_categories must classify every workload")
+        raise BuildError("application_workloads must list unique known workloads")
+    return value, tuple(application_workloads)
+
+
+def load_application_workloads(
+    path: Path = ROOT / "cases.json",
+) -> tuple[str, ...]:
+    return _case_document(path)[1]
+
+
+def load_cases(path: Path = ROOT / "cases.json") -> tuple[Case, ...]:
+    value, _ = _case_document(path)
 
     cases = []
     seen = set()
@@ -134,7 +141,6 @@ def load_cases(path: Path = ROOT / "cases.json") -> tuple[Case, ...]:
             raise BuildError("case fields do not match the schema")
         case_id = raw["id"]
         workload = raw["workload"]
-        regime = raw["regime"]
         parameters = raw["parameters"]
         if not isinstance(case_id, str) or CASE_ID.fullmatch(case_id) is None:
             raise BuildError("case id is invalid")
@@ -142,23 +148,16 @@ def load_cases(path: Path = ROOT / "cases.json") -> tuple[Case, ...]:
             raise BuildError(f"duplicate case id: {case_id}")
         if workload not in WORKLOADS:
             raise BuildError(f"unknown workload: {workload}")
-        if not isinstance(regime, str) or not regime:
-            raise BuildError(f"{case_id} regime must be nonempty")
         if not isinstance(parameters, dict):
             raise BuildError(f"{case_id} parameters must be an object")
         case = Case(
             case_id,
             workload,
-            workload_categories[workload],
-            regime,
             parameters,
             _positive_integer(
                 raw["instruction_limit"],
                 f"{case_id} instruction_limit",
                 MAX_INSTRUCTION_LIMIT,
-            ),
-            _positive_integer(
-                raw["output_limit"], f"{case_id} output_limit", MAX_OUTPUT_LIMIT
             ),
         )
         try:
@@ -166,8 +165,8 @@ def load_cases(path: Path = ROOT / "cases.json") -> tuple[Case, ...]:
             expected = reference.output_for(case.workload, data)
         except ValueError as error:
             raise BuildError(f"{case_id}: {error}") from error
-        if len(expected) > case.output_limit:
-            raise BuildError(f"{case_id} output_limit is too small")
+        if len(expected) != RESULT_SIZE:
+            raise BuildError(f"{case_id} result must be {RESULT_SIZE} bytes")
         cases.append(case)
         seen.add(case_id)
 
@@ -328,11 +327,10 @@ def _builder_metadata(path: Path = ROOT / "Dockerfile") -> dict[str, str]:
     return {**BUILDER_METADATA, "base_image": _base_image(path)}
 
 
-def _case_paths(case: Case, root: Path) -> tuple[Path, Path, Path]:
+def _case_paths(case: Case, root: Path) -> tuple[Path, Path]:
     return (
         root / "elf" / f"{case.workload}.elf",
         root / "input" / f"{case.id}.bin",
-        root / "expected" / f"{case.id}.bin",
     )
 
 
@@ -341,29 +339,33 @@ def _file_record(path: Path, root: Path, prefix: str) -> dict[str, object]:
     return {
         prefix: path.relative_to(root).as_posix(),
         f"{prefix}_sha256": _sha256(data),
-        f"{prefix}_size": len(data),
     }
+
+
+def _manifest_application_workloads(cases: tuple[Case, ...]) -> list[str]:
+    present = {case.workload for case in cases}
+    return [
+        workload for workload in load_application_workloads() if workload in present
+    ]
 
 
 def make_manifest(root: Path, cases: tuple[Case, ...]) -> dict[str, object]:
     records = []
     for case in cases:
-        elf, input_path, expected = _case_paths(case, root)
+        elf, input_path = _case_paths(case, root)
+        expected = reference.output_for(case.workload, input_path.read_bytes())
         record = {
             "id": case.id,
             "workload": case.workload,
-            "category": case.category,
-            "regime": case.regime,
-            "expected_exit_code": 0,
+            "expected_output_hex": expected.hex(),
             "instruction_limit": case.instruction_limit,
-            "output_limit": case.output_limit,
         }
         record.update(_file_record(elf, root, "elf"))
         record.update(_file_record(input_path, root, "input"))
-        record.update(_file_record(expected, root, "expected_output"))
         records.append(record)
     return {
         "schema_version": 1,
+        "application_workloads": _manifest_application_workloads(cases),
         "builder": _builder_metadata(),
         "project_inputs": _project_inputs(),
         "cases": records,
@@ -383,12 +385,11 @@ def _long_cases(cases: tuple[Case, ...]) -> tuple[tuple[Case, int], ...]:
     )
 
 
-def _long_case_paths(case: Case, horizon: int, root: Path) -> tuple[Path, Path, Path]:
+def _long_case_paths(case: Case, horizon: int, root: Path) -> tuple[Path, Path]:
     case_id = f"{case.id}-{horizon}x"
     return (
         root / "elf" / f"{case.workload}.elf",
         root / "input" / f"{case_id}.bin",
-        root / "expected" / f"{case_id}.bin",
     )
 
 
@@ -401,24 +402,24 @@ def _long_input(case: Case, horizon: int) -> bytes:
 def make_long_manifest(root: Path, cases: tuple[Case, ...]) -> dict[str, object]:
     records = []
     for case, horizon in _long_cases(cases):
-        elf, input_path, expected = _long_case_paths(case, horizon, root)
+        elf, input_path = _long_case_paths(case, horizon, root)
+        data = reference.input_for(case.workload, case.parameters)
         record = {
             "id": f"{case.id}-{horizon}x",
             "workload": case.workload,
-            "category": case.category,
-            "regime": f"{case.regime}; {horizon}x horizon",
-            "expected_exit_code": 0,
+            "expected_output_hex": reference.output_for(case.workload, data).hex(),
             "instruction_limit": min(
                 MAX_INSTRUCTION_LIMIT, case.instruction_limit * horizon
             ),
-            "output_limit": case.output_limit,
         }
         record.update(_file_record(elf, root, "elf"))
         record.update(_file_record(input_path, root, "input"))
-        record.update(_file_record(expected, root, "expected_output"))
         records.append(record)
     return {
         "schema_version": 1,
+        "application_workloads": _manifest_application_workloads(
+            tuple(case for case, _ in _long_cases(cases))
+        ),
         "builder": _builder_metadata(),
         "project_inputs": _project_inputs(long=True),
         "cases": records,
@@ -589,26 +590,19 @@ def _write(path: Path, data: bytes) -> None:
 def _build_to(root: Path, target_dir: Path, cases: tuple[Case, ...]) -> None:
     binaries = _compile(target_dir)
     for case in cases:
-        elf, input_path, expected = _case_paths(case, root)
+        elf, input_path = _case_paths(case, root)
         _write(elf, binaries[case.workload].read_bytes())
         data = reference.input_for(case.workload, case.parameters)
         _write(input_path, data)
-        _write(expected, reference.output_for(case.workload, data))
     _write(root / "manifest.json", _canonical_json(make_manifest(root, cases)))
 
 
 def _build_long_to(root: Path, target_dir: Path, cases: tuple[Case, ...]) -> None:
     binaries = _compile(target_dir, long=True)
     for case, horizon in _long_cases(cases):
-        elf, input_path, expected = _long_case_paths(case, horizon, root)
+        elf, input_path = _long_case_paths(case, horizon, root)
         _write(elf, binaries[case.workload].read_bytes())
         _write(input_path, _long_input(case, horizon))
-        _write(
-            expected,
-            reference.output_for(
-                case.workload, reference.input_for(case.workload, case.parameters)
-            ),
-        )
     _write(
         root / "manifest.json",
         _canonical_json(make_long_manifest(root, cases)),
@@ -804,7 +798,6 @@ def _expected_inventory(cases: tuple[Case, ...]) -> set[str]:
             {
                 f"elf/{case.workload}.elf",
                 f"input/{case.id}.bin",
-                f"expected/{case.id}.bin",
             }
         )
     return files
@@ -818,7 +811,6 @@ def _expected_long_inventory(cases: tuple[Case, ...]) -> set[str]:
             {
                 f"elf/{case.workload}.elf",
                 f"input/{case_id}.bin",
-                f"expected/{case_id}.bin",
             }
         )
     return files
@@ -846,14 +838,10 @@ def check(root: Path = ARTIFACTS) -> None:
         )
 
     for case in cases:
-        elf, input_path, expected = _case_paths(case, root)
+        elf, input_path = _case_paths(case, root)
         data = reference.input_for(case.workload, case.parameters)
         if input_path.read_bytes() != data:
             raise BuildError(f"{case.id} input does not match cases.json")
-        if expected.read_bytes() != reference.output_for(case.workload, data):
-            raise BuildError(
-                f"{case.id} expected output does not match the reference model"
-            )
         _validate_elf(elf)
 
     manifest = make_manifest(root, cases)
@@ -873,12 +861,9 @@ def check_long(root: Path = LONG_ARTIFACTS) -> None:
         )
 
     for case, horizon in _long_cases(cases):
-        elf, input_path, expected = _long_case_paths(case, horizon, root)
+        elf, input_path = _long_case_paths(case, horizon, root)
         if input_path.read_bytes() != _long_input(case, horizon):
             raise BuildError(f"{case.id}-{horizon}x input is invalid")
-        data = reference.input_for(case.workload, case.parameters)
-        if expected.read_bytes() != reference.output_for(case.workload, data):
-            raise BuildError(f"{case.id}-{horizon}x expected output is invalid")
         _validate_elf(elf)
 
     manifest = make_long_manifest(root, cases)

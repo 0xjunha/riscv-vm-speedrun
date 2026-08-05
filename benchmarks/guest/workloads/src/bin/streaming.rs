@@ -5,13 +5,23 @@
 
 #[cfg(target_os = "none")]
 use rv32im_guest::guest_entry;
-use rv32im_workloads::{bounded, encode_output, Words};
+use rv32im_workloads::{bounded, encode_result, join_u32, Words};
 
-fn streaming(input: &[u8]) -> [u8; 12] {
+const MAX_VALUES: usize = 1_024;
+
+#[inline(never)]
+fn valid_input(input: &[u8]) -> bool {
+    let word_count = input.len() / 4;
+    input.len().is_multiple_of(4) && (2..=MAX_VALUES + 1).contains(&word_count)
+}
+
+fn streaming(input: &[u8]) -> [u8; 8] {
+    if !valid_input(input) {
+        return encode_result(0);
+    }
     let words = Words::new(input);
     let passes = bounded(words.get(0), 8, 32);
-    let available = words.len().saturating_sub(2);
-    let count = bounded(words.get(1), available.min(256), available.min(1_024));
+    let count = words.word_count().saturating_sub(1).min(MAX_VALUES);
     let mut sum = 0u32;
     let mut xor = 0u32;
     let mut weighted = 0u32;
@@ -19,7 +29,7 @@ fn streaming(input: &[u8]) -> [u8; 12] {
     for pass in 0..passes {
         let mut stride = (pass as u32).wrapping_add(1);
         for index in 0..count {
-            let value = words.get(index + 2);
+            let value = words.get(index + 1);
             sum = sum.wrapping_add(value);
             xor ^= value.rotate_left(((index + pass) & 31) as u32);
             weighted = weighted.wrapping_add(value ^ stride);
@@ -27,7 +37,7 @@ fn streaming(input: &[u8]) -> [u8; 12] {
         }
     }
 
-    encode_output(sum ^ xor, weighted)
+    encode_result(join_u32(sum ^ xor, weighted))
 }
 
 #[cfg(target_os = "none")]

@@ -34,23 +34,14 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as file:
     manifest = json.load(file)
-workloads = []
-cases = manifest.get("cases") if isinstance(manifest, dict) else None
-if not isinstance(cases, list) or not cases:
-    raise SystemExit("benchmark manifest has no cases")
-for case in cases:
-    if not isinstance(case, dict) or case.get("category") not in {
-        "diagnostic",
-        "application",
-    }:
-        raise SystemExit("benchmark case has an invalid category")
-    workload = case.get("workload")
-    if not isinstance(workload, str) or not workload:
-        raise SystemExit("benchmark case has an invalid workload")
-    if case["category"] != "application":
-        continue
-    if workload not in workloads:
-        workloads.append(workload)
+workloads = manifest.get("application_workloads") if isinstance(manifest, dict) else None
+if (
+    not isinstance(workloads, list)
+    or not workloads
+    or any(not isinstance(workload, str) or not workload for workload in workloads)
+    or len(set(workloads)) != len(workloads)
+):
+    raise SystemExit("benchmark manifest has invalid application_workloads")
 print("\n".join(workloads))
 PY
     )
