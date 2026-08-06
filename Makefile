@@ -46,8 +46,8 @@ HARNESS_TESTS := harness/tests
 BENCHMARK_IMAGE := rv32im-benchmark-builder:local
 BENCHMARK_MANIFEST := benchmarks/artifacts/manifest.json
 BENCHMARK_LONG_MANIFEST := benchmarks/long_artifacts/manifest.json
-BENCHMARK_LONG_SMOKE_CASES := sha256-10x heatshrink-10x depthconv-10x \
-	dijkstra-10x sort_records-10x qrcode-10x
+BENCHMARK_LONG_SMOKE_CASES := sha256-10x depthconv-10x qrcode-10x \
+	littlefs-10x x25519-10x picojpeg-grayscale-10x sglib-10x statemate-10x
 BENCHMARK_COMPARE_OUTPUT ?= benchmarks/out/comparison.json
 GCP_ENV_FILE ?= .env.gcp
 CONFORMANCE_IMAGE := rv32im-conformance-builder:local

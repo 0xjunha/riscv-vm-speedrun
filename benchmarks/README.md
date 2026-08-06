@@ -144,10 +144,11 @@ times and validates each `RUN` round trip. Process startup and `LOAD` are exclud
 The retired-instruction count must remain identical across repetitions and VM
 implementations or the comparison fails.
 
-The six original Rust application case IDs listed in `long_cases.json` remain
-the long-horizon representatives. Long-horizon runs repeat those exact inputs;
-they measure amortization over repeated execution, not additional input
-diversity.
+The eight application case IDs listed in `long_cases.json` form a representative
+long-horizon subset spanning Rust and C workloads, computation, encoding and
+decoding, filesystem operations, multiword arithmetic, containers, and control
+flow. Long-horizon runs repeat those exact inputs; they measure amortization
+over repeated execution, not additional input diversity.
 
 The native reference follows the same correctness-run, warmup, and repetition
 counts, but times only the shared workload function. Input reading, process
@@ -211,7 +212,7 @@ table and are listed as excluded from the aggregate.
 
 ## Optional long-horizon comparison
 
-`long_cases.json` defines the six representative case IDs and horizons.
+`long_cases.json` defines the eight representative case IDs and horizons.
 `make gcp-benchmark-long` measures only VM4, VM5, and the host-native
 reference. It repeats each configured workload 10 and 100 times per invocation,
 paying setup once per sample. Separate long binaries leave the standard path

@@ -6,10 +6,12 @@
   ],
   "case_ids": [
     "sha256",
-    "heatshrink",
     "depthconv",
-    "dijkstra",
-    "sort_records",
-    "qrcode"
+    "qrcode",
+    "littlefs",
+    "x25519",
+    "picojpeg-grayscale",
+    "sglib",
+    "statemate"
   ]
 }

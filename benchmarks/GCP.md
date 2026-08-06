@@ -68,7 +68,7 @@ Results are stored below `benchmarks/out/gcp/`.
 
 ## Long-horizon run
 
-Run the six representative Rust application workloads configured in
+Run the eight representative application workloads configured in
 `long_cases.json` at 10x and 100x with VM4, VM5, and the native reference only:
 
 ```sh
