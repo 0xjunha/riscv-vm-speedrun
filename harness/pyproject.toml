@@ -1,7 +1,8 @@
 [project]
 name = "rv32im-harness"
 version = "0.1.0"
-description = "Conformance and benchmarking harness for RV32IM VM implementations"
+description = "Conformance, contract, and benchmarking harness for RV32IM VM implementations"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = []
 
