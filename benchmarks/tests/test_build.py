@@ -38,6 +38,29 @@ def test_aes256_reference_known_answer() -> None:
     )
 
 
+def test_aes_random_records_use_nonoverlapping_material() -> None:
+    data = reference.input_for(
+        "aes", {"records": 2, "profile": "random", "seed": 305_419_896}
+    )
+    chunks = tuple(data[offset : offset + 32] for offset in range(0, len(data), 32))
+
+    assert len(chunks) == 4
+    key_0, plaintext_0, key_1, plaintext_1 = chunks
+    assert key_0[1:] != plaintext_0[:-1]
+    assert plaintext_0[1:] != key_1[:-1]
+    assert key_1[1:] != plaintext_1[:-1]
+
+
+def test_sglib_random_profile_spans_signed_values() -> None:
+    data = reference.input_for(
+        "sglib", {"count": 384, "profile": "random", "seed": 826_366_246}
+    )
+    values = tuple(value[0] for value in struct.iter_unpack("<i", data))
+
+    assert min(values) < 0 < max(values)
+    assert max(values) - min(values) > 1 << 31
+
+
 def test_application_case_profiles_are_diversified() -> None:
     cases = build.load_cases()
     counts = {

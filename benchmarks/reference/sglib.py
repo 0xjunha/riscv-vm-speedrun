@@ -19,7 +19,7 @@ def input_for(values: Mapping[str, object]) -> bytes:
     for index in range(count):
         state = lcg(state)
         if profile == "random":
-            value = state & 0xFFFF
+            value = state - (1 << 32) if state & (1 << 31) else state
         elif profile == "clustered":
             value = ((state >> 24) & 15) * 257 + index % 5
         else:

@@ -6,7 +6,7 @@ import struct
 import zlib
 from collections.abc import Mapping
 
-from .common import generated_bytes, lcg, profiled_parameters, result
+from .common import lcg, profiled_parameters, result
 
 
 def _multiply(left: int, right: int) -> int:
@@ -99,6 +99,14 @@ def _encrypt_block(key: bytes, block: bytes) -> bytes:
     return bytes(state)
 
 
+def _generated_bytes(length: int, state: int) -> tuple[bytes, int]:
+    output = bytearray()
+    for _ in range(length):
+        state = lcg(state)
+        output.append(state >> 24)
+    return bytes(output), state
+
+
 def input_for(values: Mapping[str, object]) -> bytes:
     (records, seed), profile = profiled_parameters(
         values, ("records", "seed"), ("random", "zero-heavy", "counter")
@@ -109,9 +117,8 @@ def input_for(values: Mapping[str, object]) -> bytes:
     state = seed
     for record in range(records):
         if profile == "random":
-            key = generated_bytes(32, state)
-            state = lcg(state)
-            plaintext = generated_bytes(32, state)
+            key, state = _generated_bytes(32, state)
+            plaintext, state = _generated_bytes(32, state)
         elif profile == "zero-heavy":
             key = bytearray(32)
             plaintext = bytearray(32)
