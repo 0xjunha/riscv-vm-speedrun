@@ -70,7 +70,7 @@ text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSyst
 <text x="317.8" y="394.0" class="vm" text-anchor="middle">VM2</text>
 <text x="317.8" y="415.0" class="architecture" text-anchor="middle">Rust</text>
 <text x="317.8" y="431.0" class="architecture" text-anchor="middle">Interpreter</text>
-<text x="317.8" y="456.0" class="baseline" text-anchor="middle">234× baseline</text>
+<text x="317.8" y="456.0" class="baseline" text-anchor="middle">235× baseline</text>
 <text x="411.2" y="394.0" class="vm" text-anchor="middle">VM3</text>
 <text x="411.2" y="415.0" class="architecture" text-anchor="middle">Cached Rust</text>
 <text x="411.2" y="431.0" class="architecture" text-anchor="middle">Interpreter</text>
@@ -78,22 +78,22 @@ text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSyst
 <text x="504.8" y="394.0" class="vm" text-anchor="middle">VM4</text>
 <text x="504.8" y="415.0" class="architecture" text-anchor="middle">Rust JIT</text>
 <text x="504.8" y="431.0" class="architecture" text-anchor="middle">Compiler</text>
-<text x="504.8" y="456.0" class="baseline" text-anchor="middle">2,037× baseline</text>
+<text x="504.8" y="456.0" class="baseline" text-anchor="middle">2,046× baseline</text>
 <text x="598.2" y="394.0" class="vm" text-anchor="middle">VM5</text>
 <text x="598.2" y="415.0" class="architecture" text-anchor="middle">Rust AOT</text>
 <text x="598.2" y="431.0" class="architecture" text-anchor="middle">Compiler</text>
-<text x="598.2" y="456.0" class="baseline" text-anchor="middle">4,620× baseline</text>
-<path d="M 130.8 329.9 L 224.2 303.9 L 317.8 211.4 L 411.2 204.3 L 504.8 164.4 L 598.2 146.6" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<circle cx="130.8" cy="329.9" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-<text x="130.8" y="317.9" class="value" text-anchor="middle">0.0050%</text>
+<text x="598.2" y="456.0" class="baseline" text-anchor="middle">4,613× baseline</text>
+<path d="M 130.8 329.8 L 224.2 303.9 L 317.8 211.3 L 411.2 204.2 L 504.8 164.3 L 598.2 146.6" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="130.8" cy="329.8" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="130.8" y="317.8" class="value" text-anchor="middle">0.0051%</text>
 <circle cx="224.2" cy="303.9" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
 <text x="224.2" y="267.9" class="value" text-anchor="middle">0.017%</text>
-<circle cx="317.8" cy="211.4" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-<text x="317.8" y="199.4" class="value" text-anchor="middle">1.18%</text>
-<circle cx="411.2" cy="204.3" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-<text x="411.2" y="192.3" class="value" text-anchor="middle">1.64%</text>
-<circle cx="504.8" cy="164.4" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-<text x="504.8" y="152.4" class="value" text-anchor="middle">10.3%</text>
+<circle cx="317.8" cy="211.3" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="317.8" y="199.3" class="value" text-anchor="middle">1.18%</text>
+<circle cx="411.2" cy="204.2" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="411.2" y="192.2" class="value" text-anchor="middle">1.64%</text>
+<circle cx="504.8" cy="164.3" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="504.8" y="152.3" class="value" text-anchor="middle">10.3%</text>
 <circle cx="598.2" cy="146.6" r="5.5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
 <text x="598.2" y="134.6" class="value" text-anchor="middle">23.3%</text>
 </svg>
