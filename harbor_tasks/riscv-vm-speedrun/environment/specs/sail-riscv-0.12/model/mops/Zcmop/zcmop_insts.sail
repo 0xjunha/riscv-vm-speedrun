@@ -1,0 +1,22 @@
+// =======================================================================================
+// This Sail RISC-V architecture model, comprising all files and
+// directories except where otherwise noted is subject the BSD
+// two-clause license in the LICENSE file.
+//
+// SPDX-License-Identifier: BSD-2-Clause
+// =======================================================================================
+
+function clause currentlyEnabled(Ext_Zcmop) = hartSupports(Ext_Zcmop) & currentlyEnabled(Ext_Zca)
+
+union clause instruction = ZCMOP : (bits(3))
+
+mapping clause encdec_compressed = ZCMOP(mop)
+  <-> 0b01100 @ mop : bits(3) @ 0b100000 @ 0b01
+  when currentlyEnabled(Ext_Zcmop)
+
+mapping clause assembly = ZCMOP(mop)
+  <-> "c.mop." ^ dec_bits_4(mop @ 0b1)
+
+function clause execute ZCMOP(_mop) = {
+  RETIRE_SUCCESS
+}
