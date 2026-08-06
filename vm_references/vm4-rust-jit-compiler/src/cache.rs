@@ -94,8 +94,8 @@ struct RegionBoundary {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RegionMetadata {
-    // Compact u32 retirement boundaries keep eight-entry metadata the same
-    // size as the former four-entry usize representation on x86-64.
+    // Compact u32 retirement boundaries limit the memory cost of eight-entry
+    // metadata on x86-64.
     boundaries: [RegionBoundary; VM4_REGION_MAX_BLOCKS],
     block_count: usize,
     shape: RegionShape,

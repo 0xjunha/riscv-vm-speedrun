@@ -57,11 +57,6 @@ readonly \
 : "${BENCHMARK_REPETITIONS:=7}"
 : "${BENCHMARK_TIMEOUT_SECONDS:=30}"
 
-if [ "${GCP_IMAGE_FAMILY+x}" = x ]; then
-    echo "GCP_IMAGE_FAMILY is no longer supported; set GCP_IMAGE to a concrete image name" >&2
-    exit 2
-fi
-
 require_official_value() {
     if [ "$2" != "$3" ]; then
         echo "official GCP benchmark requires $1=$3 (got $2)" >&2

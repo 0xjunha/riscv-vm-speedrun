@@ -55,11 +55,19 @@ def test_entrypoint_delegates_aggregate_policy_to_comparator(tmp_path: Path) -> 
     assert arguments[-2:] == ["--warmups", "0"]
 
 
-def test_entrypoint_forwards_case_selection(tmp_path: Path) -> None:
-    selection = ("--case", "tiny")
-    arguments = _entrypoint_arguments(tmp_path, selection)
+def test_entrypoint_selects_long_horizon_suite(tmp_path: Path) -> None:
+    arguments = _entrypoint_arguments(tmp_path, ("--long", "--warmups", "0"))
 
-    assert arguments[-len(selection) :] == list(selection)
+    assert arguments[:3] == [
+        "-m",
+        "rv32im_harness.benchmark_compare",
+        "/opt/rv32im/long-benchmarks/manifest.json",
+    ]
+    assert arguments[arguments.index("--vm") + 1] == "vm4=/opt/rv32im/vms/vm4/rv32vm"
+    assert "vm5=/opt/rv32im/vms/vm5/rv32vm" in arguments
+    assert "--horizon-report" in arguments
+    assert "--long" not in arguments
+    assert arguments[-2:] == ["--warmups", "0"]
 
 
 def test_entrypoint_is_posix_shell_syntax() -> None:

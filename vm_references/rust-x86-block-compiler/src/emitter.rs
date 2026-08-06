@@ -15,12 +15,12 @@ use crate::{
     },
 };
 
-/// Legacy/default number of basic blocks accepted by a predicted region.
+/// Default number of basic blocks accepted by a predicted region.
 ///
 /// Counted loops deliberately retain this bound even when a caller opts into
 /// a wider finite bounded region through [`RegionLimits`].
 pub const MAX_REGION_BLOCKS: usize = 4;
-/// Legacy/default predicted-path instruction count accepted by one region.
+/// Default predicted-path instruction count accepted by one region.
 pub const MAX_REGION_INSTRUCTIONS: usize = 128;
 /// Largest finite bounded-region block count accepted by the generic emitter.
 pub const MAX_BOUNDED_REGION_BLOCKS: usize = 16;
@@ -59,7 +59,7 @@ impl RegionLimits {
         }
     }
 
-    /// Legacy shared behavior used by [`CompiledBlock::compile_region`] and
+    /// Default shared behavior used by [`CompiledBlock::compile_region`] and
     /// [`CompiledBlock::compile_unrolled_region`].
     pub const DEFAULT: Self = Self::new(MAX_REGION_BLOCKS, MAX_REGION_INSTRUCTIONS, usize::MAX);
 
@@ -921,7 +921,7 @@ impl CompiledBlock {
     /// `group_factor` is the number of logical guest cycles emitted in one
     /// host-loop iteration. It must be in `1..=MAX_LOOP_GROUP_FACTOR`, and the
     /// finalized code must fit [`MAX_GROUPED_LOOP_CODE_BYTES`]. The ordinary
-    /// [`Self::compile_loop`] entry point deliberately retains one-copy legacy
+    /// [`Self::compile_loop`] entry point deliberately retains one-copy default
     /// behavior; grouping is an opt-in caller policy.
     pub fn compile_grouped_loop(blocks: &[RegionBlock<'_>], group_factor: usize) -> Option<Self> {
         compile_grouped_loop(blocks, group_factor)

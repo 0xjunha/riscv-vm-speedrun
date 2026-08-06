@@ -292,18 +292,3 @@ def test_authoring_profile_allows_explicit_host_overrides(
     assert "--zone=us-central1-a" in calls
     assert "--machine-type=c3-highcpu-8" in calls
     assert "--image=custom-ubuntu-image" in calls
-
-
-def test_rolling_image_family_is_rejected(tmp_path: Path) -> None:
-    config = tmp_path / "gcp.env"
-    _write_config(config, GCP_IMAGE_FAMILY="ubuntu-2404-lts-amd64")
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("GCP_", "BENCHMARK_", "FAKE_"))
-    }
-
-    completed = _run(config, environment)
-
-    assert completed.returncode == 2
-    assert "GCP_IMAGE_FAMILY is no longer supported" in completed.stderr
