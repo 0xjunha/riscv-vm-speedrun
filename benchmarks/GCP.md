@@ -54,7 +54,7 @@ Set `GCP_PROJECT`, network, and subnet. Set `GCP_USE_IAP=1` for IAP, or set
 Official runs reject changes to the pinned zone, machine, and image. The
 `authoring` profile allows other zones, machines, and concrete Ubuntu Noble
 images, but its results are not official. The runner verifies the exact CPU
-after creation because `--min-cpu-platform` specifies only a minimum generation.
+after creation because GCE does not provide an exact CPU-model selector.
 
 ## Run
 
@@ -76,5 +76,5 @@ make gcp-benchmark-long
 ```
 
 The standard run is unchanged. This command prints native-relative geometric
-means by horizon and stores raw data in `comparison-long.json`. The instruction
-limit remains 100 million by default, with a 1 billion maximum.
+means by horizon and stores raw data in `comparison-long.json`. Each case's
+instruction limit scales with its horizon, capped at 1 billion.

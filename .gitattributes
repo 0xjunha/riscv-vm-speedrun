@@ -13,11 +13,13 @@ third_party/riscv/**/*.bin -text -diff
 conformance/artifacts/** linguist-generated=true
 contracts/artifacts/** linguist-generated=true
 benchmarks/artifacts/** linguist-generated=true
+benchmarks/long_artifacts/** linguist-generated=true
 
 # Treat generated benchmark inputs and executables as binary data.
 benchmarks/artifacts/elf/** -text -diff
 benchmarks/artifacts/input/** -text -diff
-benchmarks/artifacts/expected/** -text -diff
+benchmarks/long_artifacts/elf/** -text -diff
+benchmarks/long_artifacts/input/** -text -diff
 
 # Keep project-owned import tooling and provenance metadata portable.
 .gitattributes text eol=lf

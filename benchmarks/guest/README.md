@@ -61,8 +61,9 @@ build.py -> Cargo -> build.rs compiles adapter + upstream C into a static archiv
          -> build.py copies the ELF into artifacts/elf/
 ```
 
-Each workload has one ELF. All cases for that workload reuse it with separate
-input files; the manifest embeds each expected result.
+Each artifact set contains one RV32IM ELF for every workload it includes.
+Cases in that set reuse the workload's ELF with separate input files; its
+manifest embeds each case's expected result.
 
 ## Workload data contract
 

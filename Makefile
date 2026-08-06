@@ -288,11 +288,14 @@ benchmark-test:
 	PYTHONDONTWRITEBYTECODE=1 uv run --locked pytest benchmarks/tests
 
 benchmark-format:
-	uv run --locked ruff format benchmarks/*.py benchmarks/gcp/*.py benchmarks/tests
+	uv run --locked ruff format \
+		benchmarks/*.py benchmarks/gcp/*.py benchmarks/reference benchmarks/tests
 
 benchmark-lint:
-	uv run --locked ruff format --check benchmarks/*.py benchmarks/gcp/*.py benchmarks/tests
-	uv run --locked ruff check benchmarks/*.py benchmarks/gcp/*.py benchmarks/tests
+	uv run --locked ruff format --check \
+		benchmarks/*.py benchmarks/gcp/*.py benchmarks/reference benchmarks/tests
+	uv run --locked ruff check \
+		benchmarks/*.py benchmarks/gcp/*.py benchmarks/reference benchmarks/tests
 
 benchmark-guest-lint: benchmark-image
 	docker run --rm --platform linux/amd64 \
@@ -394,7 +397,7 @@ contract-reproducible: conformance-image
 		python3 contracts/build.py reproduce
 
 check: lock-check spec-check $(VM_LIST) vm4-x86-check vm5-x86-check \
-	native-vm-runtime-status harness-lint harness-test benchmark-check \
+	native-vm-runtime-status native-x86-test harness-lint harness-test benchmark-check \
 	benchmark-guest-lint benchmark-correctness benchmark-lint benchmark-test \
 	conformance-lint conformance-test contract-lint contract-test \
 	$(VM_RUNTIME_CONFORMANCE_TARGETS) $(VM_RUNTIME_CONTRACT_TARGETS) \
