@@ -290,12 +290,14 @@ def _run_cli_contracts(
     invalid_limits = (
         ("instruction-negative", "--instruction-limit", "-1"),
         ("instruction-signed", "--instruction-limit", "+1"),
+        ("instruction-noninteger", "--instruction-limit", "1.0"),
         (
             "instruction-too-large",
             "--instruction-limit",
             str(MAX_INSTRUCTION_LIMIT + 1),
         ),
         ("output-negative", "--output-limit", "-1"),
+        ("output-signed", "--output-limit", "+1"),
         ("output-noninteger", "--output-limit", "1.0"),
         ("output-too-large", "--output-limit", "1048577"),
     )
@@ -456,6 +458,8 @@ def _run_cli_contracts(
         ("whitespace", " 1:0"),
         ("missing-hex-digits", "0x:0"),
         ("missing-separator", "1"),
+        ("wrapping-range", "0xffffffff:2"),
+        ("zero-length-above-address-space", "0x4000001:0"),
     )
     for case_id, text in invalid_inspections:
         _require_cli_error(
