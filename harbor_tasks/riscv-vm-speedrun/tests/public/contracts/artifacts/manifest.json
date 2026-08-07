@@ -1,41 +1,13 @@
 {
   "schema_version": 1,
-  "builder_platform": "linux/amd64",
-  "toolchain": {
-    "UBUNTU_IMAGE": "ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90",
-    "UBUNTU_SNAPSHOT": "20260715T000000Z",
-    "RISCV_GNU_TOOLCHAIN_COMMIT": "aa35d455489235c4984fd2c8c0efbff5948dde5a",
-    "RISCV_GCC_VERSION": "16.1.0",
-    "RISCV_BINUTILS_VERSION": "2.46"
-  },
-  "project_inputs": {
-    "contracts/build.py": "753ceef5a21b857225e3aa0b52ab448a7458e8986138fd4758299417a6f19006",
-    "contracts/cases.json": "9d45281609052c7c1184f54a4c3662783c5efdc7ec7f0f31e2dec706fc06ab54",
-    "contracts/elf_builder.py": "44c1cb02a90d9dda9a6b744e6529604629a6d4d01955d60cabbb9e2affee743a",
-    "conformance/Dockerfile": "b99e0e7247442da1f7c2c971f23c5b98d1eeb54666ff0a37467c4fe4caac05a7",
-    "conformance/toolchain.env": "7c1122b300e47ab69e9e49106a17d2e917f84b30c618e31392170fc46cec7913",
-    "contracts/guest/exit.S": "ac00939f151435867718f1e197c29df702c4788dbf900845e0d4a72729991757",
-    "contracts/guest/faults.S": "4a13facfa6b12dedd46af3c7c933413ead654755914587c18a34d204cdf68003",
-    "contracts/guest/fence.S": "dd48c3c636103f3f245a35b3221712ee503070e981fd198c3133b575734266cc",
-    "contracts/guest/limits.S": "0288b9b9abab3130697019e2e7a537ff3002d8b63672bef992e97c6470e7b816",
-    "contracts/guest/raw_instruction.S": "7679a28fbf81564e42892b584a5045e86c1eb818f0cee4b09ba53079a28d2a95",
-    "contracts/guest/state.S": "5cc47af13ba6fb973dfc1371246c5cfba878c51d1cc28da1d054e6dd6aeddea8",
-    "contracts/guest/syscalls.S": "716d34c2310866ff8c329464972e501e2b4e0695a2e5442aef2bd1b10b0305c8",
-    "contracts/guest/link.ld": "0e1a4309219491ba1118a5e3973c447ddd9cee34800ba26922b2eb483a00b807"
-  },
   "cases": [
     {
       "id": "initial-state",
-      "spec": [
-        "rv32im-eei.md \u00a73",
-        "rv32im-eei.md \u00a75",
-        "rv32im-eei.md \u00a79"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "input_hex": "616263",
@@ -98,24 +70,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/initial-state.elf",
       "elf_sha256": "993b0b15ba08d5bcff97d8a74a30885b9e60566df62e35fa476d9ba5973d9a45"
     },
     {
       "id": "exit-code",
-      "spec": [
-        "rv32im-eei.md \u00a77.1",
-        "rv32im-eei.md \u00a79"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=7"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -132,24 +96,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/exit-code.elf",
       "elf_sha256": "44ca23ac2c7ffc6642bea67f0cc1bbe76712bb0ca8dbbf29fd51ff54dc7c6b16"
     },
     {
       "id": "image-a",
-      "spec": [
-        "rv32im-eei.md \u00a710",
-        "rv32vm-interface.md \u00a73.2"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=11"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -159,24 +115,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/image-a.elf",
       "elf_sha256": "c24bd212fe249f125fe4275564437bf4eef09a929a22e5f463347337271f1037"
     },
     {
       "id": "image-b",
-      "spec": [
-        "rv32im-eei.md \u00a710",
-        "rv32vm-interface.md \u00a73.2"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=22"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -186,20 +134,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/image-b.elf",
       "elf_sha256": "964ffd619609f79aa931f7db00de77e81b05d132f93d0f03ae813837c4f3b628"
     },
     {
       "id": "fence-noops",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/fence.S",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65568
+      },
       "runs": [
         {
           "result": {
@@ -209,24 +153,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65568
-      },
       "elf": "contracts/artifacts/elf/fence-noops.elf",
       "elf_sha256": "86db2a26b55abe3093720438480638ca98e0def57daad54dfe6f992e57f9f96c"
     },
     {
       "id": "write-and-exit",
-      "spec": [
-        "rv32im-eei.md \u00a77.1",
-        "rv32im-eei.md \u00a77.2"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_WRITE_EXIT"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65556
+      },
       "runs": [
         {
           "input_hex": "68656c6c6f",
@@ -246,23 +182,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65556
-      },
       "elf": "contracts/artifacts/elf/write-and-exit.elf",
       "elf_sha256": "7c33ab5c358108341b62843820207d2f387906df8e91d5dbbb1e6b31e6dae991"
     },
     {
       "id": "append-output",
-      "spec": [
-        "rv32im-eei.md \u00a77.2"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_APPEND"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65576
+      },
       "runs": [
         {
           "input_hex": "61626364",
@@ -274,23 +203,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65576
-      },
       "elf": "contracts/artifacts/elf/append-output.elf",
       "elf_sha256": "db79c9f44520f04715e823b989763bac23ef0b6ceaf79f1becfeb9ac7f081132"
     },
     {
       "id": "zero-length-write",
-      "spec": [
-        "rv32im-eei.md \u00a77.2"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_ZERO_LENGTH"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65560
+      },
       "runs": [
         {
           "result": {
@@ -300,24 +222,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65560
-      },
       "elf": "contracts/artifacts/elf/zero-length-write.elf",
       "elf_sha256": "e3a9a4e04373f96d6a1ab2ace4a32a22e9e21ca5a6efb1fb2cf6ee7ffebb847e"
     },
     {
       "id": "invalid-syscall",
-      "spec": [
-        "rv32im-eei.md \u00a77",
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_INVALID_SYSCALL"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65540
+      },
       "runs": [
         {
           "result": {
@@ -331,24 +245,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65540
-      },
       "elf": "contracts/artifacts/elf/invalid-syscall.elf",
       "elf_sha256": "947f65bf64b0d05c14a5dcb6c72bff68adf703ea492dc054680706508194ffb2"
     },
     {
       "id": "write-invalid-source",
-      "spec": [
-        "rv32im-eei.md \u00a77.2",
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_INVALID_SOURCE"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65548
+      },
       "runs": [
         {
           "result": {
@@ -362,24 +268,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65548
-      },
       "elf": "contracts/artifacts/elf/write-invalid-source.elf",
       "elf_sha256": "25c641ce01e0c07053c09f5a0a58117ad912c09889319fa1ff7de31c08af5476"
     },
     {
       "id": "write-wrapping-source",
-      "spec": [
-        "rv32im-eei.md \u00a73",
-        "rv32im-eei.md \u00a77.2"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_WRAPPING_SOURCE"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65548
+      },
       "runs": [
         {
           "result": {
@@ -393,24 +291,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65548
-      },
       "elf": "contracts/artifacts/elf/write-wrapping-source.elf",
       "elf_sha256": "f074b3c5d3cca1f4d110cfc072c82ad72bed78106821abcf7e8cd37d03ebe8a2"
     },
     {
       "id": "output-limit-atomic",
-      "spec": [
-        "rv32im-eei.md \u00a77.2",
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_OUTPUT_LIMIT"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65544
+      },
       "runs": [
         {
           "input_hex": "61626364",
@@ -434,24 +324,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65544
-      },
       "elf": "contracts/artifacts/elf/output-limit-atomic.elf",
       "elf_sha256": "974a3c3f9cdd62ac31105ea5147ad6560c3158bd8414d1ff414dbf572d5d7f82"
     },
     {
       "id": "output-before-trap",
-      "spec": [
-        "rv32im-eei.md \u00a77.2",
-        "rv32vm-interface.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_OUTPUT_BEFORE_TRAP"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65552
+      },
       "runs": [
         {
           "input_hex": "61",
@@ -467,24 +349,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65552
-      },
       "elf": "contracts/artifacts/elf/output-before-trap.elf",
       "elf_sha256": "cf3b1e007398d9bc000366edd973ea11504d5360bb434c6c52b842267802cdf4"
     },
     {
       "id": "output-before-instruction-limit",
-      "spec": [
-        "rv32im-eei.md \u00a77.2",
-        "rv32im-eei.md \u00a79"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_OUTPUT_BEFORE_LIMIT"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "next_instruction": 65548
+      },
       "runs": [
         {
           "input_hex": "61",
@@ -500,24 +374,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "next_instruction": 65548
-      },
       "elf": "contracts/artifacts/elf/output-before-instruction-limit.elf",
       "elf_sha256": "252217eeed21ee337c038f8cad1233b41dc47f2d861933308af2cd3ce951ab8a"
     },
     {
       "id": "failed-write-preserves-output",
-      "spec": [
-        "rv32im-eei.md \u00a76",
-        "rv32im-eei.md \u00a77.2"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_FAILED_WRITE_PRESERVES_OUTPUT"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65560
+      },
       "runs": [
         {
           "input_hex": "616263",
@@ -533,24 +399,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65560
-      },
       "elf": "contracts/artifacts/elf/failed-write-preserves-output.elf",
       "elf_sha256": "68df86f9a596f0393551154da076c7e4dd01e3dd54b6d603b1238012add9a57e"
     },
     {
       "id": "write-source-before-output-limit",
-      "spec": [
-        "rv32im-eei.md \u00a76",
-        "rv32im-eei.md \u00a77.2"
-      ],
       "kind": "execute",
-      "source": "guest/syscalls.S",
-      "defines": [
-        "CASE_INVALID_SOURCE"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65548
+      },
       "runs": [
         {
           "output_limit": 0,
@@ -565,24 +423,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65548
-      },
       "elf": "contracts/artifacts/elf/write-source-before-output-limit.elf",
       "elf_sha256": "25c641ce01e0c07053c09f5a0a58117ad912c09889319fa1ff7de31c08af5476"
     },
     {
       "id": "pristine-writable-state",
-      "spec": [
-        "rv32im-eei.md \u00a75",
-        "rv32im-eei.md \u00a710"
-      ],
       "kind": "execute",
-      "source": "guest/state.S",
-      "defines": [
-        "CASE_PRISTINE"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65604
+      },
       "runs": [
         {
           "repeat": 2,
@@ -594,23 +444,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65604
-      },
       "elf": "contracts/artifacts/elf/pristine-writable-state.elf",
       "elf_sha256": "1e75b3706bc63ab5c12984823de2f76e88979bb1c56322e7c50931ff343128b7"
     },
     {
       "id": "input-tail-reset",
-      "spec": [
-        "rv32im-eei.md \u00a75"
-      ],
       "kind": "execute",
-      "source": "guest/state.S",
-      "defines": [
-        "CASE_INPUT_TAIL"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65556
+      },
       "runs": [
         {
           "input_hex": "41424344",
@@ -631,23 +474,17 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65556
-      },
       "elf": "contracts/artifacts/elf/input-tail-reset.elf",
       "elf_sha256": "f7cda21270391623dfba19481bb7100a78e88f027d790158af96bc14326101bd"
     },
     {
       "id": "unfetched-illegal-word",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/state.S",
-      "defines": [
-        "CASE_UNFETCHED_ILLEGAL"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "after_illegal": 65544,
+        "exit_ecall": 65552
+      },
       "runs": [
         {
           "result": {
@@ -657,24 +494,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "after_illegal": 65544,
-        "exit_ecall": 65552
-      },
       "elf": "contracts/artifacts/elf/unfetched-illegal-word.elf",
       "elf_sha256": "82ec44f8cdae44f3e7ee2365df1d87496ce2c21b658961824b3551e46b36a550"
     },
     {
       "id": "ebreak",
-      "spec": [
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_EBREAK"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -688,24 +517,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/ebreak.elf",
       "elf_sha256": "bb30244fbd6a9a6836f6644584c4ae36977947895b55c4b0acd5510aeeab4e47"
     },
     {
       "id": "load-alignment-before-access",
-      "spec": [
-        "rv32im-eei.md \u00a76",
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_LOAD_MISALIGNED"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -719,24 +540,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/load-alignment-before-access.elf",
       "elf_sha256": "00aa75f87aaa98ce4bb90c895db21c296f88d4df26c67b41f1793f9481aebb98"
     },
     {
       "id": "load-access-fault",
-      "spec": [
-        "rv32im-eei.md \u00a73",
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_LOAD_ACCESS"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -750,24 +563,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/load-access-fault.elf",
       "elf_sha256": "6322e827fb1d7fc4ad518e5a6a1d60762de8bec216615d6c08c6153d77663142"
     },
     {
       "id": "store-address-misaligned",
-      "spec": [
-        "rv32im-eei.md \u00a76",
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_STORE_MISALIGNED"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -781,24 +586,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/store-address-misaligned.elf",
       "elf_sha256": "d956efc9ca9f2e4016a5a85e7bdba6e66b5e749d5b19d6a34ac2d90d31e46828"
     },
     {
       "id": "store-access-fault",
-      "spec": [
-        "rv32im-eei.md \u00a73",
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_STORE_ACCESS"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -812,23 +609,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/store-access-fault.elf",
       "elf_sha256": "0c1cd1f93ca1ab1c99fd6614fcced2deb60262c299136f23cb0c6ee75b70d237"
     },
     {
       "id": "executable-page-store",
-      "spec": [
-        "rv32im-eei.md \u00a73"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_STORE_CODE"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65540
+      },
       "runs": [
         {
           "result": {
@@ -848,24 +638,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65540
-      },
       "elf": "contracts/artifacts/elf/executable-page-store.elf",
       "elf_sha256": "289fb21e8bd4759a712e6bc67c7e9ee668b2cad9058e60a3f9e2e7783461b619"
     },
     {
       "id": "input-is-read-only",
-      "spec": [
-        "rv32im-eei.md \u00a73",
-        "rv32im-eei.md \u00a75"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_STORE_INPUT"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "input_hex": "6775617264",
@@ -888,23 +670,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/input-is-read-only.elf",
       "elf_sha256": "6a1c7608b6f277ea77c31e761739d77e3493b49f42c02c7977506d2c664a1e7a"
     },
     {
       "id": "taken-branch-misaligned",
-      "spec": [
-        "rv32im-eei.md \u00a76"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_BRANCH_MISALIGNED"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -918,23 +693,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/taken-branch-misaligned.elf",
       "elf_sha256": "6b0b3cd94c36560df377c72db6b7e7e074961705474af04768ac8966fdcf3120"
     },
     {
       "id": "not-taken-branch-ignores-misaligned-target",
-      "spec": [
-        "rv32im-eei.md \u00a76"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_BRANCH_NOT_TAKEN"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65548
+      },
       "runs": [
         {
           "result": {
@@ -944,23 +712,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65548
-      },
       "elf": "contracts/artifacts/elf/not-taken-branch-ignores-misaligned-target.elf",
       "elf_sha256": "62cef8bbd043e2f443010363b09258b9b357ea21da69430357604fc9fc7d6882"
     },
     {
       "id": "misaligned-jal-preserves-link",
-      "spec": [
-        "rv32im-eei.md \u00a76"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_JAL_MISALIGNED"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -979,23 +740,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/misaligned-jal-preserves-link.elf",
       "elf_sha256": "2dedcaeed898cd5ffaad760354a914084bf836518a2ef2bc30ab3a92cdb8b867"
     },
     {
       "id": "misaligned-jalr-preserves-link",
-      "spec": [
-        "rv32im-eei.md \u00a76"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_JALR_MISALIGNED"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1015,23 +769,15 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65544
-      },
       "elf": "contracts/artifacts/elf/misaligned-jalr-preserves-link.elf",
       "elf_sha256": "914aa9e5e95930f723497e747e4b50ce4e7ab14a3d56872a7d9e8d0133b5ae2d"
     },
     {
       "id": "control-transfer-unmapped-fetch",
-      "spec": [
-        "rv32im-eei.md \u00a76"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_FETCH_UNMAPPED"
-      ],
+      "symbols": {
+        "_start": 65536
+      },
       "runs": [
         {
           "result": {
@@ -1048,23 +794,15 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536
-      },
       "elf": "contracts/artifacts/elf/control-transfer-unmapped-fetch.elf",
       "elf_sha256": "d2565e8d794f0e8fffcf76c16b156d7ca791efb58314ca4855861b9d4e4bc8db"
     },
     {
       "id": "control-transfer-nonexec-fetch",
-      "spec": [
-        "rv32im-eei.md \u00a73",
-        "rv32im-eei.md \u00a76"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_FETCH_NONEXEC"
-      ],
+      "symbols": {
+        "_start": 65536
+      },
       "runs": [
         {
           "result": {
@@ -1085,23 +823,15 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536
-      },
       "elf": "contracts/artifacts/elf/control-transfer-nonexec-fetch.elf",
       "elf_sha256": "93811e60c1346e4eea44d2e205eba36d05bcc183557267adafc3db04fbe6fa4c"
     },
     {
       "id": "jalr-clears-low-bit",
-      "spec": [
-        "rv32im-eei.md \u00a71",
-        "rv32im-eei.md \u00a76"
-      ],
       "kind": "execute",
-      "source": "guest/faults.S",
-      "defines": [
-        "CASE_JALR_LOW_BIT"
-      ],
+      "symbols": {
+        "_start": 65536
+      },
       "runs": [
         {
           "result": {
@@ -1122,22 +852,15 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536
-      },
       "elf": "contracts/artifacts/elf/jalr-clears-low-bit.elf",
       "elf_sha256": "0dc0ad05240cf1c72a9bfa907ef7ae3a7a82a63f3ab11bcf0c2645e7f2f82d75"
     },
     {
       "id": "instruction-limit-loop",
-      "spec": [
-        "rv32im-eei.md \u00a79"
-      ],
       "kind": "execute",
-      "source": "guest/limits.S",
-      "defines": [
-        "CASE_LOOP"
-      ],
+      "symbols": {
+        "_start": 65536
+      },
       "runs": [
         {
           "instruction_limit": 7,
@@ -1151,22 +874,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536
-      },
       "elf": "contracts/artifacts/elf/instruction-limit-loop.elf",
       "elf_sha256": "8dd03f8c77d2564a9361342027c183fd307769b9d9419a5602bfde8d4bafe831"
     },
     {
       "id": "instruction-limit-zero",
-      "spec": [
-        "rv32im-eei.md \u00a79"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "instruction_limit": 0,
@@ -1180,23 +897,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/instruction-limit-zero.elf",
       "elf_sha256": "993b0b15ba08d5bcff97d8a74a30885b9e60566df62e35fa476d9ba5973d9a45"
     },
     {
       "id": "instruction-limit-before-fetch-fault",
-      "spec": [
-        "rv32im-eei.md \u00a79"
-      ],
       "kind": "execute",
-      "source": "guest/limits.S",
-      "defines": [
-        "CASE_BRANCH_UNMAPPED"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "transfer": 65540
+      },
       "runs": [
         {
           "instruction_limit": 2,
@@ -1210,23 +920,15 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "transfer": 65540
-      },
       "elf": "contracts/artifacts/elf/instruction-limit-before-fetch-fault.elf",
       "elf_sha256": "d2565e8d794f0e8fffcf76c16b156d7ca791efb58314ca4855861b9d4e4bc8db"
     },
     {
       "id": "instruction-limit-mid-block",
-      "spec": [
-        "rv32im-eei.md \u00a79"
-      ],
       "kind": "execute",
-      "source": "guest/limits.S",
-      "defines": [
-        "CASE_STRAIGHT_LINE"
-      ],
+      "symbols": {
+        "_start": 65536
+      },
       "runs": [
         {
           "instruction_limit": 7,
@@ -1243,23 +945,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536
-      },
       "elf": "contracts/artifacts/elf/instruction-limit-mid-block.elf",
       "elf_sha256": "fd59fc22ae9d0f917f0f9278b79eadb9280f850b9273a6640022fe5b9e1e0ae0"
     },
     {
       "id": "positive-align-zero",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "align-0",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1269,24 +964,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-align-zero.elf",
       "elf_sha256": "bc5b83ab8cf3a68c1386e87a330182a891de1537a3a0719ec66077ef129162a5"
     },
     {
       "id": "positive-align-one",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "align-1",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1296,24 +983,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-align-one.elf",
       "elf_sha256": "6cb3b36e0a1e2a71ef4e92cc81857e28032a1ff6fd0548e18a9fa08e59890bb1"
     },
     {
       "id": "positive-section-table",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "section-table",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1323,24 +1002,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-section-table.elf",
       "elf_sha256": "a6ddb2aa64ae925f683c1f6a491f777a1f0bca4d0647a7d6cce68b2fb1fab922"
     },
     {
       "id": "positive-read-only-segment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "read-only-segment",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1350,24 +1021,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-read-only-segment.elf",
       "elf_sha256": "081f875e38d7c081d3225abd1de4323c2217245601da1bc94343dd2874114221"
     },
     {
       "id": "positive-compatible-same-page",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "compatible-same-page",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1377,24 +1040,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-compatible-same-page.elf",
       "elf_sha256": "9a3efebc59f423585b1f8b0e48c1f11e865da06ca43fdc13ff872b98be8dee71"
     },
     {
       "id": "positive-nonallocated-dynamic",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "nonallocated-dynamic",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1404,24 +1059,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-nonallocated-dynamic.elf",
       "elf_sha256": "0d9427880a6846748a09c098ad505427fa78078ef616022b344ad253e91dba19"
     },
     {
       "id": "positive-nonallocated-rel",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "nonallocated-rel",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1431,24 +1078,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-nonallocated-rel.elf",
       "elf_sha256": "19f4b48e23029d12576e94bf8afaac1dd735906b8aaac3b2144b51f5c85f2dc5"
     },
     {
       "id": "positive-nonallocated-rela",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "nonallocated-rela",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1458,24 +1097,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-nonallocated-rela.elf",
       "elf_sha256": "5d9d74e7b407e94376d3c0af097889a470952bdfcc18e8aced8f4b8975768f0d"
     },
     {
       "id": "positive-nonexec-gnu-stack",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "nonexec-gnu-stack",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1485,24 +1116,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-nonexec-gnu-stack.elf",
       "elf_sha256": "b0daef87d80b94c4e3ef463737c84b3f748dec3c61acea61316e4f976cbd2971"
     },
     {
       "id": "positive-empty-load-ignored-fields",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "execute",
-      "source": "guest/exit.S",
-      "defines": [
-        "EXIT_CODE=0"
-      ],
-      "elf_variant": "empty-load-ignored-fields",
+      "symbols": {
+        "_start": 65536,
+        "exit_ecall": 65544
+      },
       "runs": [
         {
           "result": {
@@ -1512,600 +1135,352 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "exit_ecall": 65544
-      },
       "elf": "contracts/artifacts/elf/positive-empty-load-ignored-fields.elf",
       "elf_sha256": "c07dffbf38ff0f54dd02999564ea8fd5d2f7018befd40c9447a78fe67b7569ea"
     },
     {
       "id": "bad-elf-magic",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "bad-magic",
-      "expected_rejection": "bad-magic",
       "symbols": {},
       "elf": "contracts/artifacts/elf/bad-elf-magic.elf",
       "elf_sha256": "be88317c96848a4ae1f8481d243d71af8eab48a167725bebdddbf811e12c450f"
     },
     {
       "id": "not-elf32",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "not-elf32",
-      "expected_rejection": "not-elf32",
       "symbols": {},
       "elf": "contracts/artifacts/elf/not-elf32.elf",
       "elf_sha256": "f1c158f1145b079ff8e970a66d917e996d3ad5ed4d1aa0f336903e492fe78eae"
     },
     {
       "id": "not-little-endian",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "not-little-endian",
-      "expected_rejection": "not-little-endian",
       "symbols": {},
       "elf": "contracts/artifacts/elf/not-little-endian.elf",
       "elf_sha256": "b0d17f12f6328b3803de5f0a8e4c189ca1f175b3a9d52406f231c7f7ef7e2cd4"
     },
     {
       "id": "bad-ident-version",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "bad-ident-version",
-      "expected_rejection": "bad-ident-version",
       "symbols": {},
       "elf": "contracts/artifacts/elf/bad-ident-version.elf",
       "elf_sha256": "e823b379feb744e68ff08edeabd71c549bc5f52d4f46f999c1ace65a2ccc1265"
     },
     {
       "id": "bad-header-version",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "bad-header-version",
-      "expected_rejection": "bad-header-version",
       "symbols": {},
       "elf": "contracts/artifacts/elf/bad-header-version.elf",
       "elf_sha256": "ce082ece148a4f92d12e9b84d28d47440df608b13d357d2be7a9eec90ad0692e"
     },
     {
       "id": "not-et-exec",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "not-et-exec",
-      "expected_rejection": "not-et-exec",
       "symbols": {},
       "elf": "contracts/artifacts/elf/not-et-exec.elf",
       "elf_sha256": "cffdfe3f36f20c8b8dbdde84fd613dadbc6886b3cbf0b80b05aaa405f66f8dd7"
     },
     {
       "id": "not-riscv",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "not-riscv",
-      "expected_rejection": "not-riscv",
       "symbols": {},
       "elf": "contracts/artifacts/elf/not-riscv.elf",
       "elf_sha256": "1d12ad85af0c980224f9351a16552de6ef69b05666b4c0fc33da667ec5ecc72f"
     },
     {
       "id": "unsupported-elf-flags",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "unsupported-flags",
-      "expected_rejection": "unsupported-flags",
       "symbols": {},
       "elf": "contracts/artifacts/elf/unsupported-elf-flags.elf",
       "elf_sha256": "23d729f2e51e386e84becb8be7c4b692f31b30dd63181b1e3d03e51d079e80a8"
     },
     {
       "id": "bad-elf-header-size",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "bad-elf-header-size",
-      "expected_rejection": "bad-elf-header-size",
       "symbols": {},
       "elf": "contracts/artifacts/elf/bad-elf-header-size.elf",
       "elf_sha256": "53c1e5542a8d29c31aefa45994ee965f3d2811b850c324c51133a9043e2c1f0e"
     },
     {
       "id": "bad-program-header-size",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "bad-program-header-size",
-      "expected_rejection": "bad-program-header-size",
       "symbols": {},
       "elf": "contracts/artifacts/elf/bad-program-header-size.elf",
       "elf_sha256": "a92175296cdb55e6cb015717e095b788ba37a6e161ecdf7e2e296d3335b82093"
     },
     {
       "id": "zero-program-headers",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "zero-program-headers",
-      "expected_rejection": "zero-program-headers",
       "symbols": {},
       "elf": "contracts/artifacts/elf/zero-program-headers.elf",
       "elf_sha256": "19f7cc8294c1728fb38cfccef0f6d676e66588c6af1a387917b356625edf2a52"
     },
     {
       "id": "extended-program-headers",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "extended-program-headers",
-      "expected_rejection": "extended-program-headers",
       "symbols": {},
       "elf": "contracts/artifacts/elf/extended-program-headers.elf",
       "elf_sha256": "ee5a99fbbe15ce1719f02c51d8142726c46acb528dc79079072295758c2a1565"
     },
     {
       "id": "misaligned-entry",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "misaligned-entry",
-      "expected_rejection": "misaligned-entry",
       "symbols": {},
       "elf": "contracts/artifacts/elf/misaligned-entry.elf",
       "elf_sha256": "071c2bd5f1cbdc41934c90db96059046dbbeed88392ad91bced5c365b4d1925b"
     },
     {
       "id": "truncated-elf-header",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "truncated-header",
-      "expected_rejection": "truncated-header",
       "symbols": {},
       "elf": "contracts/artifacts/elf/truncated-elf-header.elf",
       "elf_sha256": "0cfe2e2d336b48a8475a094b254a6dac0e4f35dfb5b4049d64a9eac1de2ddac6"
     },
     {
       "id": "truncated-program-headers",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "truncated-program-headers",
-      "expected_rejection": "truncated-program-headers",
       "symbols": {},
       "elf": "contracts/artifacts/elf/truncated-program-headers.elf",
       "elf_sha256": "6f71fa4240ce85496bd20f5c1e97664ad546d743659d1ffd40438622f2e127cf"
     },
     {
       "id": "no-load-segment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "no-load-segment",
-      "expected_rejection": "no-load-segment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/no-load-segment.elf",
       "elf_sha256": "1e5c8a7d3ac80498cf9c51704d75f582bdaa63e89507579c96da4bb7e5f43144"
     },
     {
       "id": "filesz-exceeds-memsz",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "filesz-exceeds-memsz",
-      "expected_rejection": "filesz-exceeds-memsz",
       "symbols": {},
       "elf": "contracts/artifacts/elf/filesz-exceeds-memsz.elf",
       "elf_sha256": "811aa17906960d0117a70b377b036e859bc971c78a58caf9d6d4091f71d9911c"
     },
     {
       "id": "segment-outside-image",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "segment-outside-image",
-      "expected_rejection": "segment-outside-image",
       "symbols": {},
       "elf": "contracts/artifacts/elf/segment-outside-image.elf",
       "elf_sha256": "94f13e38a125c6b7fa81d2c0ddbad433a3b2b06212f63ecd5b0b3ab553d5af39"
     },
     {
       "id": "overlapping-segments",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "overlapping-segments",
-      "expected_rejection": "overlapping-segments",
       "symbols": {},
       "elf": "contracts/artifacts/elf/overlapping-segments.elf",
       "elf_sha256": "4f352dc43d20719ee4b98e38c59e96adade70a8a2569bb1244efb964ad42c61f"
     },
     {
       "id": "writable-executable-segment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "writable-executable",
-      "expected_rejection": "writable-executable",
       "symbols": {},
       "elf": "contracts/artifacts/elf/writable-executable-segment.elf",
       "elf_sha256": "ee6fa3867653280ff08a36a1f08cacada04eb8126c14cf784959373356bb1163"
     },
     {
       "id": "entry-not-executable",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "entry-not-executable",
-      "expected_rejection": "entry-not-executable",
       "symbols": {},
       "elf": "contracts/artifacts/elf/entry-not-executable.elf",
       "elf_sha256": "9c37c92f37305a985498e4175083db0c15396c824ae3ea658cd63e1ae66cbc89"
     },
     {
       "id": "bad-offset-address-alignment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "bad-offset-address-alignment",
-      "expected_rejection": "bad-offset-address-alignment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/bad-offset-address-alignment.elf",
       "elf_sha256": "a97db2d428116a4594449832bb45fbf1315cc9bef72f0d0731050b9154669cc9"
     },
     {
       "id": "load-file-range-outside",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "load-file-range-outside",
-      "expected_rejection": "load-file-range-outside",
       "symbols": {},
       "elf": "contracts/artifacts/elf/load-file-range-outside.elf",
       "elf_sha256": "79b3c38822601d075c7f5cdd96adb589b6218fd1a3ae09d3469e2d9a43fbbc11"
     },
     {
       "id": "non-power-of-two-alignment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "non-power-of-two-alignment",
-      "expected_rejection": "non-power-of-two-alignment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/non-power-of-two-alignment.elf",
       "elf_sha256": "fcbe68c7bbe44532c0c2df0cb47b4c90d8f1afac91303e1d6e2002c76c78b362"
     },
     {
       "id": "execute-only-segment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "execute-only-segment",
-      "expected_rejection": "execute-only-segment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/execute-only-segment.elf",
       "elf_sha256": "106e157522b2bceb8b1b76c04362d2e3171790770a857ea36fae6d328e5eb94f"
     },
     {
       "id": "write-only-segment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "write-only-segment",
-      "expected_rejection": "write-only-segment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/write-only-segment.elf",
       "elf_sha256": "122dd1d6e1eefad3544f592ab22cd50b8572b04e60d23d5b1c7c28d0530140bf"
     },
     {
       "id": "unknown-segment-permission",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "unknown-segment-permission",
-      "expected_rejection": "unknown-segment-permission",
       "symbols": {},
       "elf": "contracts/artifacts/elf/unknown-segment-permission.elf",
       "elf_sha256": "4f68cc06e4710afa8c00b96bdf0eacfe44c14cfd57583d35dcf743c9d27ef12c"
     },
     {
       "id": "page-permission-union-wx",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "page-permission-union-wx",
-      "expected_rejection": "page-permission-union-wx",
       "symbols": {},
       "elf": "contracts/artifacts/elf/page-permission-union-wx.elf",
       "elf_sha256": "7ccae556b99efd5ecc7dc17aed035192b55fc3d60310d387fd43b49e17549d7c"
     },
     {
       "id": "rx-vaddr-not-four-aligned",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "rx-vaddr-not-four-aligned",
-      "expected_rejection": "rx-vaddr-not-four-aligned",
       "symbols": {},
       "elf": "contracts/artifacts/elf/rx-vaddr-not-four-aligned.elf",
       "elf_sha256": "6f8be60745c8c60913d5fa3b3ba4f177a939f7fed973c53ab5c771d50a37194f"
     },
     {
       "id": "rx-filesz-not-four-granular",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "rx-filesz-not-four-granular",
-      "expected_rejection": "rx-filesz-not-four-granular",
       "symbols": {},
       "elf": "contracts/artifacts/elf/rx-filesz-not-four-granular.elf",
       "elf_sha256": "03970e1d3c134e3f3c7f38083ca4b3a2fc0f9b04473290af04448874c8b52aad"
     },
     {
       "id": "rx-memsz-not-four-granular",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "rx-memsz-not-four-granular",
-      "expected_rejection": "rx-memsz-not-four-granular",
       "symbols": {},
       "elf": "contracts/artifacts/elf/rx-memsz-not-four-granular.elf",
       "elf_sha256": "062e060c67db804f69cf3b994314daa72b0ce4c88354c190c3fc8475a194b5a3"
     },
     {
       "id": "dynamic-segment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "dynamic-segment",
-      "expected_rejection": "dynamic-segment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/dynamic-segment.elf",
       "elf_sha256": "c257c4703930585b2c646d6f32eecc2a44eb7a78870861feb5e049162457cfb8"
     },
     {
       "id": "interpreter-segment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "interpreter-segment",
-      "expected_rejection": "interpreter-segment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/interpreter-segment.elf",
       "elf_sha256": "8af22c0d1979b9aaf16496cd72daee731ac8735a456f8f4bcb524ea8738b6a71"
     },
     {
       "id": "tls-segment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "tls-segment",
-      "expected_rejection": "tls-segment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/tls-segment.elf",
       "elf_sha256": "70b9607697bbfb1143a500d8fd343754c84beacae146f237c5796909f7826c05"
     },
     {
       "id": "executable-gnu-stack",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "executable-gnu-stack",
-      "expected_rejection": "executable-gnu-stack",
       "symbols": {},
       "elf": "contracts/artifacts/elf/executable-gnu-stack.elf",
       "elf_sha256": "0fd52f516509f68c40b74ec0c354dd45d2dab037561922bed872209f6e8916cd"
     },
     {
       "id": "only-empty-load-segments",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "only-empty-load-segments",
-      "expected_rejection": "only-empty-load-segments",
       "symbols": {},
       "elf": "contracts/artifacts/elf/only-empty-load-segments.elf",
       "elf_sha256": "d081b74d785ab26b8f0e40b4ff674372817f16190eef8052056218b2c2fabec3"
     },
     {
       "id": "empty-load-invalid-file-range",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "empty-load-invalid-file-range",
-      "expected_rejection": "load-file-range-outside",
       "symbols": {},
       "elf": "contracts/artifacts/elf/empty-load-invalid-file-range.elf",
       "elf_sha256": "1b914bc48cc50d397d5a3bba923e4d9adc071b8016c2d359a3654862635c60da"
     },
     {
       "id": "empty-load-invalid-alignment",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "empty-load-invalid-alignment",
-      "expected_rejection": "non-power-of-two-alignment",
       "symbols": {},
       "elf": "contracts/artifacts/elf/empty-load-invalid-alignment.elf",
       "elf_sha256": "5cde62447f27e95be6369d5890fd89fdacd8b3dbc18fb69b24f2ec3dbf365c71"
     },
     {
       "id": "allocated-dynamic-section",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "allocated-dynamic-section",
-      "expected_rejection": "allocated-dynamic-section",
       "symbols": {},
       "elf": "contracts/artifacts/elf/allocated-dynamic-section.elf",
       "elf_sha256": "855da727c641c9c6fcb4985bdcf803a08dd374664aa40d53589acb93c092cf06"
     },
     {
       "id": "allocated-rel-section",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "allocated-rel-section",
-      "expected_rejection": "allocated-rel-section",
       "symbols": {},
       "elf": "contracts/artifacts/elf/allocated-rel-section.elf",
       "elf_sha256": "faa6a7ed9ed47b016a85cf0531a949fa88c3162a21f69dc1ea96a64c8d813dfa"
     },
     {
       "id": "allocated-rela-section",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "allocated-rela-section",
-      "expected_rejection": "allocated-rela-section",
       "symbols": {},
       "elf": "contracts/artifacts/elf/allocated-rela-section.elf",
       "elf_sha256": "5460495f2866d3dc9acfbe06e0d44fe88f2a20d38b68d9f603cf2dd3cb7a102e"
     },
     {
       "id": "tls-section",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "tls-section",
-      "expected_rejection": "tls-section",
       "symbols": {},
       "elf": "contracts/artifacts/elf/tls-section.elf",
       "elf_sha256": "6a4d0042ceb2c5d58c40be40fef5554649b655a3eaa82e5c40718efe6d0db5b3"
     },
     {
       "id": "truncated-section-table",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "truncated-section-table",
-      "expected_rejection": "truncated-section-table",
       "symbols": {},
       "elf": "contracts/artifacts/elf/truncated-section-table.elf",
       "elf_sha256": "e72933bc5f663e73f63d6d5dc4bd875638199b64186f53fb051d210e662d9cb8"
     },
     {
       "id": "zero-section-offset",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "zero-section-offset",
-      "expected_rejection": "zero-section-offset",
       "symbols": {},
       "elf": "contracts/artifacts/elf/zero-section-offset.elf",
       "elf_sha256": "06eee9862567c5f23c6695cfb70d38d47aa2a63da6462f3f136604163899ab8f"
     },
     {
       "id": "bad-section-name-index",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "bad-section-name-index",
-      "expected_rejection": "bad-section-name-index",
       "symbols": {},
       "elf": "contracts/artifacts/elf/bad-section-name-index.elf",
       "elf_sha256": "8c3907103b8093bb0b38d361742201d22c17af47b304cf80fc3444329a9e0680"
     },
     {
       "id": "bad-section-header-size",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "bad-section-header-size",
-      "expected_rejection": "bad-section-header-size",
       "symbols": {},
       "elf": "contracts/artifacts/elf/bad-section-header-size.elf",
       "elf_sha256": "ce9b03b0f692444d09f8732db8b82b8c63406ac49a28c8723aa76867ce0c9895"
     },
     {
       "id": "section-name-index-without-sections",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "section-name-index-without-sections",
-      "expected_rejection": "section-name-index-without-sections",
       "symbols": {},
       "elf": "contracts/artifacts/elf/section-name-index-without-sections.elf",
       "elf_sha256": "d12a47215281c51ee1fa27d2e13d30178b2d7b1cb4fd2561e4a89bb6ccacb579"
     },
     {
       "id": "extended-section-numbering",
-      "spec": [
-        "rv32im-eei.md \u00a74"
-      ],
       "kind": "reject",
-      "elf_variant": "extended-section-numbering",
-      "expected_rejection": "extended-section-numbering",
       "symbols": {},
       "elf": "contracts/artifacts/elf/extended-section-numbering.elf",
       "elf_sha256": "99e8e1830adfdc16faf0b6e0d2e17456da7e0667bfce662a1a7752254a92d1f9"
     },
     {
       "id": "unsupported-generic-word",
-      "spec": [
-        "rv32im-eei.md \u00a71",
-        "rv32im-eei.md \u00a78"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0xffffffff"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2119,23 +1494,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-generic-word.elf",
       "elf_sha256": "8e09fc6eb1b7916d9731a3a82cec70ff7849f87131968c872df56aa224187668"
     },
     {
       "id": "unsupported-fence-i",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x0000100f"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2149,23 +1517,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-fence-i.elf",
       "elf_sha256": "c772ccfb3dfa11079d4263ae518e0e267c35b5d27ad48697574993e7ce5d8c30"
     },
     {
       "id": "unsupported-compressed",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x00010001"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2179,23 +1540,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-compressed.elf",
       "elf_sha256": "22d064e3510af709ceda4dd5b82eae5970b0ec3003127565cad36fd04127c488"
     },
     {
       "id": "unsupported-atomic",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x0000202f"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2209,23 +1563,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-atomic.elf",
       "elf_sha256": "a7df1985a116cedf1ce86270ebd7a152a5998309edf40a0c0cd661033f55ca63"
     },
     {
       "id": "unsupported-floating-load",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x00002007"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2239,23 +1586,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-floating-load.elf",
       "elf_sha256": "a4d0f41eb5433e1faa7cefa36b9317e167bf9102b0fa35015b1b7f99b8b59e7b"
     },
     {
       "id": "unsupported-floating-operation",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x00000053"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2269,23 +1609,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-floating-operation.elf",
       "elf_sha256": "ce1da73d4c8189916d5454b4400dfead047abdccde42aca968af99f32f8649fd"
     },
     {
       "id": "unsupported-vector",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x00000057"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2299,23 +1632,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-vector.elf",
       "elf_sha256": "200289ed1f0e74ff734cbb813a8346fb4e51a0e97985aaf575011d3e7f26bb09"
     },
     {
       "id": "unsupported-bitmanip",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x40007033"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2329,23 +1655,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-bitmanip.elf",
       "elf_sha256": "50a38c32f0ddd54f13901bddfe5b53de7f9895aad777cf7c00eabc0d79cb471f"
     },
     {
       "id": "unsupported-csr",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0xc0002073"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2359,23 +1678,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-csr.elf",
       "elf_sha256": "385c95a1efed0006f87aad72387d102d69dd93f7559fda51e15624d41e10a36e"
     },
     {
       "id": "unsupported-mret",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x30200073"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2389,23 +1701,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-mret.elf",
       "elf_sha256": "c0208f524b25e45a5998ea6d98e79db89dc94105f8a50283b0fc4cb23d91fb7c"
     },
     {
       "id": "unsupported-wfi",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x10500073"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2419,23 +1724,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/unsupported-wfi.elf",
       "elf_sha256": "1045364eab6fb8825b74233a13d1b3a4498317e0bcd92db9d112df481158d208"
     },
     {
       "id": "reserved-branch",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x00002063"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2449,23 +1747,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/reserved-branch.elf",
       "elf_sha256": "88565b407398440d382a84b8efe8bd52a42493ab066f68a926e355eabeed6844"
     },
     {
       "id": "reserved-load",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x00003003"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2479,23 +1770,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/reserved-load.elf",
       "elf_sha256": "038cab27035bb70503a4f4aa5618054eb2f297bfeaa876deb33ae5ab53c7c513"
     },
     {
       "id": "reserved-store",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x00003023"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2509,23 +1793,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/reserved-store.elf",
       "elf_sha256": "b079389551b648fdf691f73fa31f425d457a17da4f62048d9c4c7bd5e6364c95"
     },
     {
       "id": "noncanonical-ecall",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x000000f3"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2539,23 +1816,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/noncanonical-ecall.elf",
       "elf_sha256": "9a7bf159e188cd7e80eeb3966a003288316a05e2750f4a5d36c6e32ed28742ef"
     },
     {
       "id": "reserved-slli",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x02001013"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2569,23 +1839,16 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/reserved-slli.elf",
       "elf_sha256": "b02aa78ce050d1b4a41f86a78b682d7675fbec1f1c8a11af02b95c92b5617b3d"
     },
     {
       "id": "reserved-misc-mem",
-      "spec": [
-        "rv32im-eei.md \u00a71"
-      ],
       "kind": "execute",
-      "source": "guest/raw_instruction.S",
-      "defines": [
-        "TEST_WORD=0x0000200f"
-      ],
+      "symbols": {
+        "_start": 65536,
+        "fault": 65536
+      },
       "runs": [
         {
           "result": {
@@ -2599,10 +1862,6 @@
           }
         }
       ],
-      "symbols": {
-        "_start": 65536,
-        "fault": 65536
-      },
       "elf": "contracts/artifacts/elf/reserved-misc-mem.elf",
       "elf_sha256": "695be0b4a207b42aefadd275cac9f66ac9f761e82d98c64ec8d33dfca4445618"
     }

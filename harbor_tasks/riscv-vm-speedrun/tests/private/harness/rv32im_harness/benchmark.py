@@ -28,9 +28,7 @@ DEFAULT_WARMUPS = 2
 DEFAULT_REPETITIONS = 7
 DEFAULT_TIMEOUT = 30.0
 RESULT_SIZE = 8
-MANIFEST_KEYS = frozenset(
-    {"schema_version", "application_workloads", "builder", "project_inputs", "cases"}
-)
+MANIFEST_KEYS = frozenset({"schema_version", "application_workloads", "cases"})
 MANIFEST_CASE_KEYS = frozenset(
     {
         "id",

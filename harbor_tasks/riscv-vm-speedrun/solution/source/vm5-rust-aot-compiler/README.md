@@ -97,14 +97,10 @@ setup and exit logic.
 - Space for entries, exits, retries, and missing targets is reserved before a
   region is accepted. Code that does not fit remains interpreted.
 
-## Build and verification
+## Build
 
 ```sh
-make vm5
-make vm5-conformance
-make vm5-contract
-make vm5-benchmark-smoke
-make vm5-x86-check
+./build.sh
 ```
 
 ## Optional profiler
@@ -112,8 +108,7 @@ make vm5-x86-check
 The `profile` feature builds a diagnostic VM5. It is absent from normal builds.
 
 ```sh
-cargo build --locked --release --features profile \
-  --manifest-path vm_references/vm5-rust-aot-compiler/Cargo.toml
+cargo build --locked --release --features profile
 ```
 
 After each `RUN`, the diagnostic build writes one JSON record to standard
