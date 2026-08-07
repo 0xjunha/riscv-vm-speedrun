@@ -54,6 +54,7 @@ CONFORMANCE_IMAGE := rv32im-conformance-builder:local
 CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolchain.env)
 CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 CONTRACT_MANIFEST := contracts/artifacts/manifest.json
+HARBOR_TASK := harbor_tasks/riscv-vm-speedrun
 
 .PHONY: benchmark benchmark-build benchmark-check benchmark-compare \
 	benchmark-correctness benchmark-format \
@@ -63,7 +64,8 @@ CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 	conformance-reproducible conformance-sources conformance-test contract \
 	contract-build contract-check contract-format contract-lint \
 	contract-reproducible contract-test harness-format harness-lint \
-	gcp-benchmark gcp-benchmark-long harness-test lock-check python-vm-format python-vm-lint \
+	gcp-benchmark gcp-benchmark-long harbor-check harness-test lock-check \
+	python-vm-format python-vm-lint \
 	rust-vm-common-format rust-vm-common-lint rust-vm-common-test \
 	rust-x86-compiler-format rust-x86-compiler-lint rust-x86-compiler-test \
 	native-vm-runtime-status native-x86-test spec-check \
@@ -78,6 +80,11 @@ lock-check:
 
 spec-check:
 	./scripts/verify-riscv-specifications.sh
+
+harbor-check:
+	uv run --locked ruff format --check $(HARBOR_TASK)
+	uv run --locked ruff check $(HARBOR_TASK)
+	harbor run --path $(HARBOR_TASK) --agent nop --print-config >/dev/null
 
 define VM_RULES
 $(1)-build:
