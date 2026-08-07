@@ -1,0 +1,293 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-add",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-add.elf",
+      "elf_sha256": "9df6d3a8000d1a99606dbe4457a491135b1f37d0acae2b2b2b0c829f1beb615f"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-addi",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-addi.elf",
+      "elf_sha256": "76f47b12ef2f080912a564b25828fc54dad60668b9bc417719870a4980346f0a"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-and",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-and.elf",
+      "elf_sha256": "e77fd8fa2198834547de34a89d9db16713b28500708dc0ddd94db06aa60fe98a"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-andi",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-andi.elf",
+      "elf_sha256": "8e14565b1c49eb85310125588b0194f949037b3325b4199e9e0a1d38676f31ea"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-auipc",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-auipc.elf",
+      "elf_sha256": "411652c528733e8948c82d0301856ef86bb3ba8d41c1b2c0c25a5e8ced752da6"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-beq",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-beq.elf",
+      "elf_sha256": "111962428caeb398e77ec0a8a4111eb1a68b25952307745de400ac41b6908b91"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-bge",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-bge.elf",
+      "elf_sha256": "67f8b0c42d050cd843a9f91446021dbd1f51c4546b2d4de2de0169e9be8087a4"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-bgeu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-bgeu.elf",
+      "elf_sha256": "2c2a6a9325f858ec28d9b778e2d3d2c5d3bd187f5f9b93c69b52ea7886d273be"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-blt",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-blt.elf",
+      "elf_sha256": "6997de77d458ecdf41110269d7618c13cc7690ef5e31cb315bebf3a44986b463"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-bltu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-bltu.elf",
+      "elf_sha256": "8dc74dfe29ab62b80af84872c5a4e33c84c88f39369c7b6b56198e38fea3f38e"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-bne",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-bne.elf",
+      "elf_sha256": "6d0d0c52f1b5a8c27e96af89f25448fe0239f63a8cdc685a7aaace48f085157c"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-jal",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-jal.elf",
+      "elf_sha256": "f6240b3dda074998b695db748d4eaae527c3ba4c1c8e151617dea79bdcc6d043"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-jalr",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-jalr.elf",
+      "elf_sha256": "fb94e1de4fe5d9fede25d1842937217784b7cfe2b2d93b26b86b97a0a5a4ab6f"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-lb",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-lb.elf",
+      "elf_sha256": "5b74e08d444830c8dcff5592716e3d99cd37756b88f81fcd7aa182e5bbdf5449"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-lbu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-lbu.elf",
+      "elf_sha256": "74c53339da0e4ac7677331bb9c4cb58508f818b80a80fe3879f4786dfde44882"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-ld_st",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-ld_st.elf",
+      "elf_sha256": "713d46232f8d5ec364395f85d14c391d40ae6517b634420c5148dc920f69b78f"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-lh",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-lh.elf",
+      "elf_sha256": "1e0f88f8e4f461f205b77941d072da32fac4d5a98b1592c63323670ada84e67b"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-lhu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-lhu.elf",
+      "elf_sha256": "bb5c515ddc0acf821e0f6b7021ee15ed2a83b4bbf364cb609b6c6e75a7a30de4"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-lui",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-lui.elf",
+      "elf_sha256": "76bab4ed02267aa35b03ed0bc528ca1ff7289ffa0e8873be50ea04f1707b7f8a"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-lw",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-lw.elf",
+      "elf_sha256": "b350758cccd0f18237f52bab559a7a1723c6341e7966d66176603caa865cde71"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-or",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-or.elf",
+      "elf_sha256": "109085fe9b969d2845ae992c0bfd7a648684667b7b0334e86a89e0185122d118"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-ori",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-ori.elf",
+      "elf_sha256": "d5dd8437ad1ad030a9c0cf948641f61de84d8d9c322e0a9b7cafa3fdbaeb486d"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-sb",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-sb.elf",
+      "elf_sha256": "a503bad321361c160933dbb91aa0a9c6fb99cece2360fd41bbe77193e071bfda"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-sh",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-sh.elf",
+      "elf_sha256": "6d50d0c4f6efa262a5b8134b207c2ea679f04e5b3dc8ee748355b33b59ba7d20"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-simple",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-simple.elf",
+      "elf_sha256": "b3ba6b79fd25a50d1e173b3b8fb689ce0a77ce8a08b78e82284b0595259842c7"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-sll",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-sll.elf",
+      "elf_sha256": "3d53325f12039c6c62117441738eedbdf1b55d372b7151c14d1727e1f82fa1e4"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-slli",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-slli.elf",
+      "elf_sha256": "4b17a4b1cfee7b5728091b1e3eca00f5bd7e3be24c564ab702465f56af4001c7"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-slt",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-slt.elf",
+      "elf_sha256": "21a8d16a52ca3eea3047698132f37cb3584090dcd729885b53cb69b5cdd103f6"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-slti",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-slti.elf",
+      "elf_sha256": "a6153a8fbed5a89f40e02a71b42df601f9d0df92ba331d63bf999f74c68457e6"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-sltiu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-sltiu.elf",
+      "elf_sha256": "ed19567038de5a0ebdd582494a77b4e529800dcc33471729058982f369416afd"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-sltu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-sltu.elf",
+      "elf_sha256": "4bb266d5dc6ff1d970541d346ed1e45eb32a5d3906dffec86278965c778114df"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-sra",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-sra.elf",
+      "elf_sha256": "93a1b2362bd4f88e6625a3d68de6a05950fd2305bbf06d080fd20a71a871f1c4"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-srai",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-srai.elf",
+      "elf_sha256": "b24aa00d9dcee1d38110821765d66303223fca99e2ccb17c605f6a4488651434"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-srl",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-srl.elf",
+      "elf_sha256": "9ad0d72d818d0d0ead6d499d8906d5ca1f1119a5e7d9d3abbdad86fa8bcb87eb"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-srli",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-srli.elf",
+      "elf_sha256": "3a68cc0156d83c2818bcf3d7d53a2b85323cc201174809c9d24b9c2739b22910"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-st_ld",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-st_ld.elf",
+      "elf_sha256": "cb8691165463c4ea06426987475c593d9efbe7c4d02c014560ab3a47e31f6865"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-sub",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-sub.elf",
+      "elf_sha256": "2be9628db029a10920248e26fab3d0267ba2e0397977675d8448fe6be21006b2"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-sw",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-sw.elf",
+      "elf_sha256": "11908a649a51ec951e6c2ac59b050a1094e046318ed35e2d63db788ab98dced9"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-xor",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-xor.elf",
+      "elf_sha256": "90b35de4062ec0d7898b187032b9315435e158ffd13e96166d1ae343d427b090"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32ui-p-xori",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32ui-p-xori.elf",
+      "elf_sha256": "735975eeef4b8eccd954c7c057b6826cb6079e295a93bbcf55075edfa1f67d2c"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32um-p-div",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32um-p-div.elf",
+      "elf_sha256": "6eae8f31891faec204de2ea1e3a0e041b4fdda3b5852438b1f98b7b65a61abd5"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32um-p-divu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32um-p-divu.elf",
+      "elf_sha256": "dea645aa268546fa9123b8375a335ca625f3c01ff9a938bcb205dd712f03d51a"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32um-p-mul",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32um-p-mul.elf",
+      "elf_sha256": "21256bca98ecd9edf89e36b06cfcb11c8f90c34ea53e5113734cef9b24a18f30"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32um-p-mulh",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32um-p-mulh.elf",
+      "elf_sha256": "0818de97ce92be23e8fd091b7cc20d762a655c50eb0e5f7a9b8fb32eba4435a6"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32um-p-mulhsu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32um-p-mulhsu.elf",
+      "elf_sha256": "965278034e7e26fbfafc73454a0341df8ab5144aacfb94992331d0e2ef295820"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32um-p-mulhu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32um-p-mulhu.elf",
+      "elf_sha256": "006cc83cfab247337389ad60ddc8885d1228224850b185d6055c522eb884211a"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32um-p-rem",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32um-p-rem.elf",
+      "elf_sha256": "f23002f5041cafbb47ddaac05dc888d0696cb7ffd23057257786471abb4eb093"
+    },
+    {
+      "suite": "riscv-tests",
+      "id": "rv32um-p-remu",
+      "elf": "conformance/artifacts/elf/riscv-tests/rv32um-p-remu.elf",
+      "elf_sha256": "61288806154f93385ee5f818ab2ca98ab78ee08927886595186b7c21de848b5d"
+    }
+  ]
+}
