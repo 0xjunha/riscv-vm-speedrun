@@ -59,6 +59,7 @@ set +a
 : "${HARBOR_VERSION:=0.20.0}"
 : "${UV_VERSION:=0.9.9}"
 : "${CODEX_AUTH_JSON:=$HOME/.codex/auth.json}"
+: "${CODEX_ALLOWED_HOSTS:=snapshot.debian.org raw.githubusercontent.com nodejs.org registry.npmjs.org chatgpt.com auth.openai.com api.openai.com}"
 : "${AGENT_KWARG:=reasoning_effort=xhigh}"
 : "${EXPECTED_CPUS:=4}"
 : "${STARTING_VM:=vm0}"
@@ -67,6 +68,11 @@ set +a
 for value in $agent $models $AGENT_KWARG; do
     case "$value" in
         *[!A-Za-z0-9._/=-]*) echo "agent, model, and agent kwarg values must be shell-safe" >&2; exit 2 ;;
+    esac
+done
+for host in $CODEX_ALLOWED_HOSTS; do
+    case "$host" in
+        *[!A-Za-z0-9.*:/-]*) echo "Codex allowed hosts must be hostnames or IP addresses/CIDRs" >&2; exit 2 ;;
     esac
 done
 case "$GCP_USE_IAP" in 0|1) ;; *) echo "GCP_USE_IAP must be 0 or 1" >&2; exit 2 ;; esac
@@ -208,7 +214,12 @@ run_one() {
         if [ -n "$model" ]; then
             printf ' -m %s --ak %s' "$model" "$AGENT_KWARG"
         fi
-        [ "$agent" != codex ] || printf ' --ae CODEX_FORCE_AUTH_JSON=1'
+        if [ "$agent" = codex ]; then
+            printf ' --ae CODEX_AUTH_JSON_PATH=/root/.codex/auth.json'
+            for host in $CODEX_ALLOWED_HOSTS; do
+                printf ' --allow-environment-host %s' "$host"
+            done
+        fi
         [ -z "$timeout_multiplier" ] || printf ' --agent-timeout-multiplier %s' "$timeout_multiplier"
         echo ' -o /opt/harbor-run/jobs --yes >>/opt/harbor-run/harbor.log 2>&1'
         echo 'status=$?'
@@ -317,7 +328,7 @@ import json
 import pathlib
 import sys
 
-results = list(pathlib.Path(sys.argv[1]).rglob("result.json"))
+results = list(pathlib.Path(sys.argv[1]).glob("*/result.json"))
 if not results:
     raise SystemExit(1)
 for path in results:

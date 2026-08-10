@@ -33,6 +33,9 @@ only after their Harbor results pass a local integrity check. Failed VMs remain
 available for inspection and have a maximum lifetime set by
 `GCP_MAX_RUN_DURATION`.
 
+`CODEX_ALLOWED_HOSTS` permits Codex installation and API access while the
+separate verifier stays offline. Override it in `.env.gcp.harbor` as needed.
+
 Set `GCP_TRAJECTORY_BUCKET` to an existing bucket name to upload each validated
 run as one root-level `.tgz` archive. List or delete archives with:
 
