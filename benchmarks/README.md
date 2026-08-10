@@ -138,10 +138,9 @@ RW data/BSS on separately permissioned pages, defines the global-pointer and
 BSS/image-bound symbols, rejects images reaching the EEI input region at
 `0x03000000`, and discards non-runtime sections.
 
-For each VM case, the host runner starts a fresh persistent server process, loads
-the ELF, checks one untimed run, performs the requested untimed warmups, then
-times and validates each `RUN` round trip. Process startup and `LOAD` are excluded.
-The retired-instruction count must remain identical across repetitions and VM
+Each correctness, warmup, and timed VM execution uses a fresh server process and
+loads the ELF before its single `RUN`. Process startup and `LOAD` are excluded.
+The retired-instruction count must remain identical across executions and VM
 implementations or the comparison fails.
 
 The eight application case IDs listed in `long_cases.json` form a representative
@@ -157,8 +156,8 @@ reference, not an RV32IM VM or scoring baseline.
 
 The defaults are two warmups, seven timed repetitions, and a 30-second timeout
 for each VM operation. Three untimed executions therefore precede the first
-sample. A retained implementation cache is warm during timed runs, even with
-`--warmups 0` because the correctness run still executes first.
+sample. They may warm system-level caches, but implementation state is not
+retained between processes.
 
 Run from the repository root:
 

@@ -26,6 +26,8 @@ setpriv \
     PYTHONHASHSEED=0 \
     /app/rv32vm "$@" || status=$?
 
-# Remove descendants that detached from the submission's process group.
+# Remove detached descendants and cross-process state.
 pkill -KILL -u 65534 2>/dev/null || [ "$?" -eq 1 ]
+setpriv --reuid=65534 --regid=65534 --clear-groups ipcrm --all
+find /tmp /var/tmp /run/lock /dev/shm /dev/mqueue -xdev -uid 65534 -delete
 exit "$status"

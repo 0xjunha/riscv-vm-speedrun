@@ -108,7 +108,7 @@ def _outcome(
     )
 
 
-def test_run_benchmarks_measures_only_persistent_runs(
+def test_run_benchmarks_measures_only_serve_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -144,16 +144,16 @@ def test_run_benchmarks_measures_only_persistent_runs(
     assert all(type(sample) is int and sample > 0 for sample in samples)
     assert result["cases"][0]["median_ns"] == statistics.median(samples)
     assert "score" not in json.dumps(result)
-    assert log.read_text().splitlines() == [
-        "load",
-        "run",  # correctness
-        "run",  # warmup
-        "run",
-        "run",
-        "run",
-        "unload",
-        "shutdown",
-    ]
+    assert (
+        log.read_text().splitlines()
+        == [
+            "load",
+            "run",
+            "unload",
+            "shutdown",
+        ]
+        * 5
+    )
 
 
 def test_correctness_failure_precedes_timing(
@@ -253,7 +253,7 @@ def test_run_benchmarks_rejects_nonpositive_elapsed_time(
         )
 
 
-def test_each_selected_case_uses_a_fresh_server(
+def test_each_execution_uses_a_fresh_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -273,11 +273,17 @@ def test_each_selected_case_uses_a_fresh_server(
     assert log.read_text().splitlines() == [
         "load",
         "run",
+        "unload",
+        "shutdown",
+        "load",
         "run",
         "unload",
         "shutdown",
         "load",
         "run",
+        "unload",
+        "shutdown",
+        "load",
         "run",
         "unload",
         "shutdown",

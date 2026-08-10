@@ -105,9 +105,9 @@ The summary first takes the geometric mean across cases within each workload,
 then across workloads, and reports performance relative to VM0 and the x86-64
 native workload implementations.
 
-**VM startup and ELF loading are not timed**. For each case, a single VM process
-handles all timed `RUN` requests, allowing decoded or compiled code to be reused
-where permitted by the interface.
+**VM startup and ELF loading are not timed**. Every correctness, warmup, and
+timed `RUN` uses a fresh VM process, so implementation state cannot carry
+between executions.
 
 See [`benchmarks/README.md`](benchmarks/README.md) for the exact measurement and
 reproducibility rules.

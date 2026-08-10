@@ -1,4 +1,4 @@
-"""Measure manifest-defined workloads through persistent ``rv32vm serve``."""
+"""Measure manifest-defined workloads in isolated ``rv32vm serve`` processes."""
 
 from __future__ import annotations
 
@@ -289,59 +289,54 @@ def _require_outcome(
     return result.retired_instructions
 
 
-def _run_untimed(server: VmServer, case: BenchmarkCase, phase: str) -> RunOutcome:
+def _run_fresh(
+    executable: str | os.PathLike[str],
+    case: BenchmarkCase,
+    phase: str,
+    timeout: float,
+    *,
+    timed: bool = False,
+) -> tuple[RunOutcome, int | None]:
     try:
-        return server.run(
-            case.input_data,
-            instruction_limit=case.instruction_limit,
-            output_limit=len(case.expected_output),
-        )
+        with VmServer(executable, timeout=timeout) as server:
+            server.load(case.elf)
+            started = time.perf_counter_ns() if timed else None
+            outcome = server.run(
+                case.input_data,
+                instruction_limit=case.instruction_limit,
+                output_limit=len(case.expected_output),
+            )
+            elapsed = time.perf_counter_ns() - started if started is not None else None
+            server.unload()
     except Exception as error:
         raise BenchmarkFailure(f"{case.case_id} {phase}: {error}") from error
+    if elapsed is not None and elapsed <= 0:
+        raise BenchmarkFailure(f"{case.case_id} {phase}: clock did not advance")
+    return outcome, elapsed
 
 
 def _measure_case(
-    server: VmServer,
+    executable: str | os.PathLike[str],
     case: BenchmarkCase,
     warmups: int,
     repetitions: int,
+    timeout: float,
 ) -> dict[str, object]:
-    try:
-        server.load(case.elf)
-    except Exception as error:
-        raise BenchmarkFailure(f"{case.case_id} load: {error}") from error
-
-    correctness = _run_untimed(server, case, "correctness run")
+    correctness, _ = _run_fresh(executable, case, "correctness run", timeout)
     retired = _require_outcome(case, "correctness run", correctness)
     for index in range(warmups):
-        outcome = _run_untimed(server, case, f"warmup {index + 1}")
-        _require_outcome(case, f"warmup {index + 1}", outcome, retired)
+        phase = f"warmup {index + 1}"
+        outcome, _ = _run_fresh(executable, case, phase, timeout)
+        _require_outcome(case, phase, outcome, retired)
 
     samples = []
-    run_arguments = {
-        "instruction_limit": case.instruction_limit,
-        "output_limit": len(case.expected_output),
-    }
     for index in range(repetitions):
-        started = time.perf_counter_ns()
-        try:
-            outcome = server.run(case.input_data, **run_arguments)
-        except Exception as error:
-            raise BenchmarkFailure(
-                f"{case.case_id} repetition {index + 1}: {error}"
-            ) from error
-        elapsed = time.perf_counter_ns() - started
-        _require_outcome(case, f"repetition {index + 1}", outcome, retired)
-        if elapsed <= 0:
-            raise BenchmarkFailure(
-                f"{case.case_id} repetition {index + 1}: clock did not advance"
-            )
+        phase = f"repetition {index + 1}"
+        outcome, elapsed = _run_fresh(executable, case, phase, timeout, timed=True)
+        _require_outcome(case, phase, outcome, retired)
+        assert elapsed is not None
         samples.append(elapsed)
 
-    try:
-        server.unload()
-    except Exception as error:
-        raise BenchmarkFailure(f"{case.case_id} unload: {error}") from error
     return {
         "id": case.case_id,
         "workload": case.workload,
@@ -374,8 +369,7 @@ def run_benchmark_suite(
     results = []
     for case in suite.cases:
         try:
-            with VmServer(executable, timeout=timeout) as server:
-                result = _measure_case(server, case, warmups, repetitions)
+            result = _measure_case(executable, case, warmups, repetitions, timeout)
         except BenchmarkFailure:
             raise
         except Exception as error:
@@ -423,7 +417,7 @@ def _json_text(result: dict[str, object]) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Measure public RV32IM workloads through persistent serve mode."
+        description="Measure RV32IM workloads through isolated serve processes."
     )
     parser.add_argument("vm", help="path to an rv32vm executable")
     parser.add_argument(
