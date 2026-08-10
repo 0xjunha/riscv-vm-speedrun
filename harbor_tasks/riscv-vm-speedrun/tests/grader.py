@@ -498,10 +498,9 @@ def _fixed_benchmarks(suite: object) -> FixedBenchmarks:
         "normalization": str(BASELINE_VM),
         "reference": str(REFERENCE_VM),
     }
-    starting_hash = _sha256(STARTING_VM)
-    if starting_hash == _sha256(BASELINE_VM):
+    if starting_vm == "vm0":
         starting_label = "normalization"
-    elif starting_hash == _sha256(REFERENCE_VM):
+    elif starting_vm == "vm5":
         starting_label = "reference"
     else:
         starting_label = "starting"

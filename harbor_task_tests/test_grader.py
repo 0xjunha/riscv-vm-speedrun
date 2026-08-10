@@ -161,7 +161,7 @@ def test_fixed_benchmarks_measure_each_reference_once(
     reference = tmp_path / "starting"
     reference.mkdir()
     (reference / "starting-vm").write_text(starting_vm)
-    (reference / "rv32vm").write_bytes(starting_vm.encode())
+    (reference / "rv32vm").write_bytes(b"wrapper")
     baseline = tmp_path / "baseline"
     baseline.write_bytes(b"vm0")
     scoring_reference = tmp_path / "scoring-reference"
