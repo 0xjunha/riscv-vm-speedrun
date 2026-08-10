@@ -18,17 +18,10 @@ BENCHMARK_MANIFEST = PRIVATE / "benchmarks/artifacts/manifest.json"
 PRIVATE_CONFORMANCE_MANIFEST = PRIVATE / "conformance/artifacts/manifest.json"
 
 BENCHMARK_CASE_IDS = (
-    "aes",
-    "depthconv",
     "dijkstra",
-    "heatshrink",
-    "littlefs",
     "mont64",
     "picojpeg-grayscale",
-    "qrcode",
-    "sglib",
     "sha256",
-    "slre",
     "sort_records",
     "statemate",
     "ud",

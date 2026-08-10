@@ -55,6 +55,7 @@ CONFORMANCE_BASE_IMAGE := $(shell sed -n 's/^UBUNTU_IMAGE=//p' conformance/toolc
 CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 HARBOR_TASK := harbor_tasks/riscv-vm-speedrun
+HARBOR_TASK_TESTS := harbor_task_tests
 
 .PHONY: benchmark benchmark-build benchmark-check benchmark-compare \
 	benchmark-correctness benchmark-format \
@@ -82,8 +83,12 @@ spec-check:
 	./scripts/verify-riscv-specifications.sh
 
 harbor-check:
-	uv run --locked ruff format --check $(HARBOR_TASK)
-	uv run --locked ruff check $(HARBOR_TASK)
+	./scripts/sync-harbor-task-assets.py --check
+	uv run --locked ruff format --check $(HARBOR_TASK) $(HARBOR_TASK_TESTS) \
+		scripts/sync-harbor-task-assets.py
+	uv run --locked ruff check $(HARBOR_TASK) $(HARBOR_TASK_TESTS) \
+		scripts/sync-harbor-task-assets.py
+	uv run --locked pytest $(HARBOR_TASK_TESTS)
 	harbor run --path $(HARBOR_TASK) --agent nop --print-config >/dev/null
 
 define VM_RULES

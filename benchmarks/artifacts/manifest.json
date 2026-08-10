@@ -528,7 +528,7 @@
     "benchmarks/guest/runtime/src/lib.rs": "f4b55453e49f7131b9cc657ca55306e2ddfcfd0598ad82106a7ebb9d4eb8fa64",
     "benchmarks/guest/rust-toolchain.toml": "006ebca004c93d8741623c05dbee1d3fe58a2637dcddaf5b2488994e88d8f9ca",
     "benchmarks/guest/workloads/Cargo.toml": "0fb8947002bdb2263cd5e2c1e25f52bc93886d4fc3469c9dd7a90a06b76ecbd5",
-    "benchmarks/guest/workloads/build.rs": "d9b2a1dfa2228639864848c017b5f87b8d860e12a74ad92fba267ad461e2cf89",
+    "benchmarks/guest/workloads/build.rs": "44c4667cdaac95d0a34feff548642cbe205131efaa32a3bd11248f82f482ee69",
     "benchmarks/guest/workloads/c/adapters/aes.c": "a4f0361ad37f030ceb04de57d9b49a744600912bddcb15022eda615b5c42b139",
     "benchmarks/guest/workloads/c/adapters/littlefs.c": "557ff8310e6bc65212e7e9d3521de6df50964f339709808cdf2734acc95b9104",
     "benchmarks/guest/workloads/c/adapters/mont64.c": "8c0c0dbc760ac0c1e802c4702702afd63bab31a0fdc17f8a477167730ba63342",

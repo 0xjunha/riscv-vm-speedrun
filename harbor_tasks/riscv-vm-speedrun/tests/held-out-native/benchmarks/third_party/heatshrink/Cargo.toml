@@ -1,0 +1,15 @@
+[package]
+name = "heatshrink-lib"
+version = "1.0.0"
+edition = "2021"
+license = "ISC"
+publish = false
+
+[lib]
+name = "heatshrink"
+
+[features]
+default = ["heatshrink-use-index"]
+heatshrink-use-index = []
+
+[workspace]

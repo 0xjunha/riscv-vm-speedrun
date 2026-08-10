@@ -1,0 +1,8 @@
+[package]
+name = "qrcodegen"
+version = "1.8.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace]

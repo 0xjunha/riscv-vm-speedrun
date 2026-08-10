@@ -1,0 +1,62 @@
+[package]
+name = "rv32im-workloads"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[features]
+c-workloads = []
+long = []
+
+[[bin]]
+name = "littlefs"
+path = "src/bin/littlefs.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "x25519"
+path = "src/bin/x25519.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "aes"
+path = "src/bin/aes.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "mont64"
+path = "src/bin/mont64.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "picojpeg"
+path = "src/bin/picojpeg.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "sglib"
+path = "src/bin/sglib.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "slre"
+path = "src/bin/slre.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "statemate"
+path = "src/bin/statemate.rs"
+required-features = ["c-workloads"]
+
+[[bin]]
+name = "ud"
+path = "src/bin/ud.rs"
+required-features = ["c-workloads"]
+
+[dependencies]
+heatshrink-lib = { path = "../../third_party/heatshrink" }
+qrcodegen = { path = "../../third_party/qrcodegen" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+rv32im-guest = { path = "../runtime" }

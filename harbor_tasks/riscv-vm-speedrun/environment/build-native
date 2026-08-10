@@ -1,0 +1,24 @@
+#!/bin/bash
+set -eu
+
+[ "$#" -ge 3 ] || { echo "usage: build-native SOURCE DESTINATION WORKLOAD..." >&2; exit 2; }
+source=$1
+destination=$2
+shift 2
+workloads=("$@")
+target=$(mktemp -d)
+trap 'rm -rf "$target"' EXIT
+
+build_args=()
+for workload in "${workloads[@]}"; do
+    build_args+=(--bin "$workload")
+done
+RVB_C_WORKLOADS="${workloads[*]}" CARGO_TARGET_DIR=$target cargo build --frozen --release \
+    --manifest-path "$source/guest/Cargo.toml" \
+    --package rv32im-workloads "${build_args[@]}" --features c-workloads \
+    --target x86_64-unknown-linux-gnu
+
+mkdir -p "$destination"
+for workload in "${workloads[@]}"; do
+    install -m 0755 "$target/x86_64-unknown-linux-gnu/release/$workload" "$destination/$workload"
+done

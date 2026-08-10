@@ -1,0 +1,54 @@
+#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(target_os = "none", no_main)]
+
+//! Memory-read-heavy workload scanning guest input words sequentially.
+
+#[cfg(target_os = "none")]
+use rv32im_guest::guest_entry;
+use rv32im_workloads::{bounded, encode_result, join_u32, Words};
+
+const MAX_VALUES: usize = 1_024;
+
+#[inline(never)]
+fn valid_input(input: &[u8]) -> bool {
+    let word_count = input.len() / 4;
+    input.len().is_multiple_of(4) && (2..=MAX_VALUES + 1).contains(&word_count)
+}
+
+fn streaming(input: &[u8]) -> [u8; 8] {
+    if !valid_input(input) {
+        return encode_result(0);
+    }
+    let words = Words::new(input);
+    let passes = bounded(words.get(0), 8, 32);
+    let count = words.word_count().saturating_sub(1).min(MAX_VALUES);
+    let mut sum = 0u32;
+    let mut xor = 0u32;
+    let mut weighted = 0u32;
+
+    for pass in 0..passes {
+        let mut stride = (pass as u32).wrapping_add(1);
+        for index in 0..count {
+            let value = words.get(index + 1);
+            sum = sum.wrapping_add(value);
+            xor ^= value.rotate_left(((index + pass) & 31) as u32);
+            weighted = weighted.wrapping_add(value ^ stride);
+            stride = stride.wrapping_add(0x9e37_79b9);
+        }
+    }
+
+    encode_result(join_u32(sum ^ xor, weighted))
+}
+
+#[cfg(target_os = "none")]
+fn guest_main(input: &[u8]) -> u32 {
+    rv32im_workloads::emit(&rv32im_workloads::run(streaming, input))
+}
+
+#[cfg(target_os = "none")]
+guest_entry!(guest_main);
+
+#[cfg(not(target_os = "none"))]
+fn main() -> std::process::ExitCode {
+    rv32im_workloads::native::main(|input| rv32im_workloads::run(streaming, input))
+}
