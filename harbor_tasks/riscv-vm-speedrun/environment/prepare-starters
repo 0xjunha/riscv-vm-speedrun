@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+source=$1
+destination=$2
+target=$(mktemp -d)
+trap 'rm -rf "$target"' EXIT
+mkdir -p "$destination"
+
+prepare_python() {
+    name=$1
+    variant=$2
+    "$source/$variant/build.sh"
+    mkdir -p "$destination/$name/source"
+    cp -R "$source/$variant/out/." "$destination/$name/source"
+    printf '%s\n' '#!/bin/sh' 'exec python3 "$(dirname "$0")/source/rv32vm" "$@"' > "$destination/$name/rv32vm"
+    chmod 0755 "$destination/$name/rv32vm"
+}
+
+prepare_rust() {
+    name=$1
+    variant=$2
+    shift 2
+    CARGO_TARGET_DIR=$target "$source/$variant/build.sh"
+    mkdir -p "$destination/$name/source"
+    for package in "$variant" "$@"; do
+        cp -R "$source/$package" "$destination/$name/source/$package"
+        rm -rf "$destination/$name/source/$package/out" "$destination/$name/source/$package/target"
+    done
+    install -m 0755 "$source/$variant/out/rv32vm" "$destination/$name/rv32vm"
+}
+
+prepare_python vm0 vm0-python-interpreter
+prepare_python vm1 vm1-python-block-interpreter
+prepare_rust vm2 vm2-rust-interpreter rust-interpreter-common
+prepare_rust vm3 vm3-rust-block-interpreter rust-interpreter-common
+prepare_rust vm4 vm4-rust-jit-compiler rust-interpreter-common rust-x86-block-compiler
+prepare_rust vm5 vm5-rust-aot-compiler rust-interpreter-common
