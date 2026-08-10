@@ -16,6 +16,7 @@ jobs/
 
 # Env file
 .env.gcp
+.env.gcp.harbor
 
 # OS
 .DS_Store
