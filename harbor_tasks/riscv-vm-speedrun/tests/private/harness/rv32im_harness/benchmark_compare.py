@@ -1,4 +1,4 @@
-"""Compare labeled VMs with identical public benchmark settings."""
+"""Compare labeled VMs with identical manifest-defined benchmark settings."""
 
 from __future__ import annotations
 
