@@ -47,6 +47,7 @@ set +a
 : "${GCP_SUBNET:=default}"
 : "${GCP_NETWORK_TAGS:=}"
 : "${GCP_USE_IAP:=0}"
+: "${GCP_TRAJECTORY_BUCKET:=}"
 : "${GCP_MACHINE_TYPE:=c3-highcpu-8}"
 : "${GCP_THREADS_PER_CORE:=1}"
 : "${GCP_IMAGE_PROJECT:=ubuntu-os-cloud}"
@@ -69,6 +70,10 @@ for value in $agent $models $AGENT_KWARG; do
     esac
 done
 case "$GCP_USE_IAP" in 0|1) ;; *) echo "GCP_USE_IAP must be 0 or 1" >&2; exit 2 ;; esac
+case "$GCP_TRAJECTORY_BUCKET" in
+    '') ;;
+    *[!a-z0-9._-]*) echo "GCP_TRAJECTORY_BUCKET must be a bucket name without gs://" >&2; exit 2 ;;
+esac
 case "$starting_vm" in vm0|vm1|vm2|vm3|vm4|vm5) ;; *) echo "starting VM must be vm0 through vm5" >&2; exit 2 ;; esac
 case "$timeout_multiplier" in
     '') ;;
@@ -109,7 +114,8 @@ if [ "$dry_run" = true ]; then
         revision "$revision" agent "$agent" models "${models:-<none>}" \
         starting_vm "$starting_vm" \
         machine "$GCP_MACHINE_TYPE (threads-per-core=$GCP_THREADS_PER_CORE)" \
-        zone "$GCP_ZONE" results "$result_root"
+        zone "$GCP_ZONE" trajectory_bucket "${GCP_TRAJECTORY_BUCKET:-<disabled>}" \
+        results "$result_root"
     exit 0
 fi
 
@@ -143,16 +149,24 @@ log() {
     printf '[%s] %s\n' "$1" "$2"
 }
 
+slug() {
+    printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9.]\{1,\}/-/g; s/^-//; s/-$//'
+}
+
 # Run one isolated Harbor trial on its own VM.
 run_one() {
     index=$1
     model=$2
-    slug=$(printf '%s' "${model:-$agent}" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//')
-    tag=$(printf '%02d-%s-%s' "$index" "$starting_vm" "$slug")
+    model_slug=$(slug "${model:-default}")
+    effort=${AGENT_KWARG#reasoning_effort=}
+    [ -n "$model" ] || effort=default
+    tag=$(printf '%02d-%s-%s' "$index" "$starting_vm" "$(slug "${model:-$agent}")")
+    run_id=$(printf '%s-%02d-%s-%s-%s-%s' "$stamp" "$index" "$starting_vm" "$(slug "$agent")" "$model_slug" "$(slug "$effort")")
     instance=$(printf '%s-%s-%02d' "$GCP_INSTANCE_PREFIX" "$stamp" "$index" | cut -c1-63 | sed 's/-$//')
     destination=$result_root/$tag
     runner=$temporary_dir/$tag-run.sh
     mkdir -p "$destination"
+    printf '%s\n' "$revision" >"$destination/source-revision.txt"
 
     fail() {
         log "$tag" "FAILED: $1"
@@ -312,12 +326,26 @@ for path in results:
 PY
     [ "$exit_code" -eq 0 ] || { fail "Harbor exited with $exit_code"; return 1; }
 
+    upload_status=0
+    if [ -n "$GCP_TRAJECTORY_BUCKET" ]; then
+        trajectory_archive=$temporary_dir/$run_id.tgz
+        log "$tag" "uploading $run_id.tgz"
+        if tar -czf "$trajectory_archive" -C "$destination" . && \
+            gcloud storage cp "$trajectory_archive" "gs://$GCP_TRAJECTORY_BUCKET/$run_id.tgz"; then
+            log "$tag" "uploaded trajectory"
+        else
+            log "$tag" "FAILED: could not upload trajectory"
+            upload_status=1
+        fi
+    fi
+
     if [ "$keep" = true ]; then
         log "$tag" "done; kept $instance"
     else
         gcloud compute instances delete "$instance" --project="$GCP_PROJECT" --zone="$GCP_ZONE" --quiet >/dev/null
         log "$tag" "done; deleted $instance"
     fi
+    return "$upload_status"
 }
 
 # Run one VM per model in parallel and aggregate failures.

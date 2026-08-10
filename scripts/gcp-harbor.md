@@ -32,3 +32,11 @@ Results are downloaded to `jobs/gcp/<timestamp>/`. Successful VMs are deleted
 only after their Harbor results pass a local integrity check. Failed VMs remain
 available for inspection and have a maximum lifetime set by
 `GCP_MAX_RUN_DURATION`.
+
+Set `GCP_TRAJECTORY_BUCKET` to an existing bucket name to upload each validated
+run as one root-level `.tgz` archive. List or delete archives with:
+
+```sh
+scripts/list-gcp-trajectories.sh
+scripts/delete-gcp-trajectories.sh ARCHIVE.tgz [...]
+```
