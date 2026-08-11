@@ -26,7 +26,7 @@ RUN sed -i \
         /etc/apt/sources.list.d/debian.sources \
     && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libstdc++6 procps util-linux \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libstdc++6 procps util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 COPY test.sh grader.py run-submission /tests/
