@@ -28,7 +28,20 @@ DEFAULT_WARMUPS = 2
 DEFAULT_REPETITIONS = 7
 DEFAULT_TIMEOUT = 30.0
 RESULT_SIZE = 8
-MANIFEST_KEYS = frozenset({"schema_version", "application_workloads", "cases"})
+MANIFEST_SCHEMAS = frozenset(
+    {
+        frozenset({"schema_version", "application_workloads", "cases"}),
+        frozenset(
+            {
+                "schema_version",
+                "application_workloads",
+                "builder",
+                "project_inputs",
+                "cases",
+            }
+        ),
+    }
+)
 MANIFEST_CASE_KEYS = frozenset(
     {
         "id",
@@ -175,7 +188,7 @@ def load_benchmark_suite(
         document = json.loads(payload)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise BenchmarkFailure(f"cannot read manifest {path}: {error}") from error
-    if not isinstance(document, dict) or set(document) != MANIFEST_KEYS:
+    if not isinstance(document, dict) or frozenset(document) not in MANIFEST_SCHEMAS:
         raise BenchmarkFailure("manifest schema is invalid")
     records = document["cases"]
     application_workloads = document["application_workloads"]
