@@ -94,6 +94,16 @@ def test_manifest_retains_application_workloads_in_selected_suite(
     assert suite.select(("sha256",)).application_workloads == ("sha256",)
 
 
+def test_manifest_accepts_sanitized_metadata(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    document = json.loads(manifest.read_text())
+    del document["builder"]
+    del document["project_inputs"]
+    manifest.write_text(json.dumps(document))
+
+    assert load_benchmark_suite(manifest).cases[0].case_id == "tiny"
+
+
 def _outcome(
     output: bytes,
     *,
