@@ -351,7 +351,7 @@ PY
     [ "$exit_code" -eq 0 ] || { fail "Harbor exited with $exit_code"; return 1; }
 
     upload_status=0
-    if [ -n "$GCP_TRAJECTORY_BUCKET" ]; then
+    if [ -n "$GCP_TRAJECTORY_BUCKET" ] && [ "$agent" != nop ] && [ "$agent" != oracle ]; then
         trajectory_archive=$temporary_dir/$run_id.tgz
         log "$tag" "uploading $run_id.tgz"
         if tar -czf "$trajectory_archive" -C "$destination" . && \
