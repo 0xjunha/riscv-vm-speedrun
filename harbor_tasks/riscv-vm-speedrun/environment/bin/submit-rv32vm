@@ -10,7 +10,6 @@ import shutil
 import stat
 import sys
 import tempfile
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -127,12 +126,10 @@ def store() -> dict[str, object]:
         temporary = Path(tempfile.mkdtemp(prefix=".incoming-", dir=STORAGE))
         try:
             copy_snapshot(temporary)
-            started = float((STATE / "started").read_text())
             metadata = {
                 "schema_version": 1,
                 "sequence": sequence,
                 "submitted_at": datetime.now(UTC).isoformat(),
-                "elapsed_seconds": round(max(0.0, time.monotonic() - started), 3),
             }
             (temporary / "metadata.json").write_text(
                 json.dumps(metadata, sort_keys=True) + "\n"

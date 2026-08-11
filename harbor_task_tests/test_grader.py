@@ -30,7 +30,6 @@ def candidate(
         executable_hash,
         executable_hash if source_hash is None else source_hash,
         None,
-        None,
     )
 
 

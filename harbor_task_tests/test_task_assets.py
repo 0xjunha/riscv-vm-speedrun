@@ -81,7 +81,7 @@ def test_agent_budget_uses_harbor_agent_phase_timeout() -> None:
         for path in (TASK / "environment/bin").iterdir()
         if path.is_file() and "time.monotonic()" in path.read_text()
     }
-    assert "check-time" in timer_scripts
+    assert timer_scripts == {"check-time"}
 
 
 def test_selected_reference_is_exported_to_the_verifier() -> None:

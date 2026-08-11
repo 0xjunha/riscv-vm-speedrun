@@ -64,7 +64,6 @@ class Candidate:
     executable_sha256: str
     source_sha256: str
     submitted_at: str | None
-    elapsed_seconds: float | None
 
     @property
     def fingerprint(self) -> tuple[str, str]:
@@ -181,19 +180,13 @@ def _checkpoint(path: Path, sequence: int) -> Candidate:
         "schema_version",
         "sequence",
         "submitted_at",
-        "elapsed_seconds",
     }
     if not isinstance(metadata, dict) or set(metadata) != expected_keys:
         raise CandidateFailure("invalid metadata schema")
-    elapsed = metadata["elapsed_seconds"]
     if (
         metadata["schema_version"] != 1
         or metadata["sequence"] != sequence
         or not isinstance(metadata["submitted_at"], str)
-        or isinstance(elapsed, bool)
-        or not isinstance(elapsed, (int, float))
-        or not math.isfinite(elapsed)
-        or elapsed < 0
     ):
         raise CandidateFailure("invalid metadata values")
     hashes = _validate_and_freeze(path)
@@ -202,7 +195,6 @@ def _checkpoint(path: Path, sequence: int) -> Candidate:
         path,
         *hashes,
         metadata["submitted_at"],
-        float(elapsed),
     )
 
 
@@ -223,7 +215,7 @@ def _prune_source(source: Path) -> None:
 def _snapshot_final() -> Candidate:
     root = SUBMISSIONS / "final"
     if root.exists():
-        return Candidate("final", root, *_validate_and_freeze(root), None, None)
+        return Candidate("final", root, *_validate_and_freeze(root), None)
 
     _prune_source(APP / "source")
     hashes = _validate_and_freeze(APP)
@@ -235,7 +227,7 @@ def _snapshot_final() -> Candidate:
     except Exception:
         shutil.rmtree(root, ignore_errors=True)
         raise
-    return Candidate("final", root, *hashes, None, None)
+    return Candidate("final", root, *hashes, None)
 
 
 def _load_candidates() -> tuple[list[Candidate], list[dict[str, object]]]:
@@ -262,7 +254,6 @@ def _load_candidates() -> tuple[list[Candidate], list[dict[str, object]]]:
                     "id": identifier,
                     "status": "validated",
                     "submitted_at": candidate.submitted_at,
-                    "elapsed_seconds": candidate.elapsed_seconds,
                     "executable_sha256": candidate.executable_sha256,
                     "source_sha256": candidate.source_sha256,
                 }
@@ -283,7 +274,6 @@ def _load_candidates() -> tuple[list[Candidate], list[dict[str, object]]]:
                 "id": "final",
                 "status": "validated",
                 "submitted_at": None,
-                "elapsed_seconds": None,
                 "executable_sha256": candidate.executable_sha256,
                 "source_sha256": candidate.source_sha256,
             }
