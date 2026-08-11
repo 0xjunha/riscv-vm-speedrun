@@ -104,6 +104,13 @@ for command in gcloud git python3 ssh-keygen tar; do
     command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 2; }
 done
 
+agent_timeout_seconds=
+if [ "$agent" = codex ]; then
+    agent_timeout_multiplier=${timeout_multiplier:-1}
+    agent_timeout_seconds=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["agent"]["timeout_sec"] * float(sys.argv[2]))' \
+        "$repository/$task/task.toml" "$agent_timeout_multiplier")
+fi
+
 # Package exactly the committed revision for reproducible remote execution.
 cd "$repository"
 [ -z "$(git status --porcelain)" ] || {
@@ -119,6 +126,7 @@ if [ "$dry_run" = true ]; then
     printf '%-18s %s\n' \
         revision "$revision" agent "$agent" models "${models:-<none>}" \
         starting_vm "$starting_vm" \
+        agent_budget "${agent_timeout_seconds:-<not available>}" \
         machine "$GCP_MACHINE_TYPE (threads-per-core=$GCP_THREADS_PER_CORE)" \
         zone "$GCP_ZONE" trajectory_bucket "${GCP_TRAJECTORY_BUCKET:-<disabled>}" \
         results "$result_root"
@@ -207,14 +215,19 @@ run_one() {
     {
         echo '#!/bin/sh'
         echo 'set -u'
-        echo 'export HOME=/root PATH=/usr/local/bin:$PATH'
+        echo 'export HOME=/root PATH=/usr/local/bin:$PATH PYTHONPATH=/opt/harbor-run/source'
         printf 'export STARTING_VM=%s\n' "$starting_vm"
         echo 'cd /opt/harbor-run/source'
-        printf 'harbor run -p %s -a %s' "$task" "$agent"
+        harbor_agent=$agent
+        if [ "$agent" = codex ]; then
+            harbor_agent=scripts.harbor_codex_budget:BudgetCodex
+        fi
+        printf 'harbor run -p %s -a %s' "$task" "$harbor_agent"
         if [ -n "$model" ]; then
             printf ' -m %s --ak %s' "$model" "$AGENT_KWARG"
         fi
         if [ "$agent" = codex ]; then
+            printf ' --ak budget_seconds=%s' "$agent_timeout_seconds"
             printf ' --ae CODEX_AUTH_JSON_PATH=/root/.codex/auth.json'
             for host in $CODEX_ALLOWED_HOSTS; do
                 printf ' --allow-environment-host %s' "$host"

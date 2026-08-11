@@ -36,6 +36,10 @@ available for inspection and have a maximum lifetime set by
 `CODEX_ALLOWED_HOSTS` permits Codex installation and API access while the
 separate verifier stays offline. Override it in `.env.gcp.harbor` as needed.
 
+`run-gcp-harbor.sh` starts `check-time` at the Codex agent phase using the
+resolved agent timeout, excluding setup. Other launchers must use
+`scripts.harbor_codex_budget:BudgetCodex` and pass `budget_seconds`.
+
 Set `GCP_TRAJECTORY_BUCKET` to an existing bucket name to upload each validated
 run as one root-level `.tgz` archive. List or delete archives with:
 

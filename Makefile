@@ -56,6 +56,7 @@ CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 HARBOR_TASK := harbor_tasks/riscv-vm-speedrun
 HARBOR_TASK_TESTS := harbor_task_tests
+HARBOR_SUPPORT := scripts/harbor_codex_budget.py scripts/sync-harbor-task-assets.py
 
 .PHONY: benchmark benchmark-build benchmark-check benchmark-compare \
 	benchmark-correctness benchmark-format \
@@ -85,9 +86,9 @@ spec-check:
 harbor-check:
 	./scripts/sync-harbor-task-assets.py --check
 	uv run --locked ruff format --check $(HARBOR_TASK) $(HARBOR_TASK_TESTS) \
-		scripts/sync-harbor-task-assets.py
+		$(HARBOR_SUPPORT)
 	uv run --locked ruff check $(HARBOR_TASK) $(HARBOR_TASK_TESTS) \
-		scripts/sync-harbor-task-assets.py
+		$(HARBOR_SUPPORT)
 	uv run --locked pytest $(HARBOR_TASK_TESTS)
 	harbor run --path $(HARBOR_TASK) --agent nop --print-config >/dev/null
 
