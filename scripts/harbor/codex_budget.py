@@ -1,4 +1,4 @@
-"""Simple wrapper around Harbor's Codex agent that starts the time budget clock."""
+"""Harbor Codex wrapper that starts the protected time-budget clock."""
 
 from __future__ import annotations
 

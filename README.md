@@ -118,7 +118,7 @@ After changing VM references, benchmark or harness inputs, or the workload
 split, refresh and verify the embedded Harbor assets:
 
 ```sh
-./scripts/sync-harbor-task-assets.py
+./scripts/harbor/sync-task-assets.py
 make harbor-check
 ```
 

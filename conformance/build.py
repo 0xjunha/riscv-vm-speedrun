@@ -143,7 +143,7 @@ def read_lock(path: Path = HERE / "toolchain.env") -> dict[str, str]:
 
 
 def verify_imported_sources() -> None:
-    run(ROOT / "scripts/verify-riscv-conformance.sh")
+    run(ROOT / "scripts/riscv/verify-conformance.sh")
 
 
 def act4_cases() -> list[Case]:

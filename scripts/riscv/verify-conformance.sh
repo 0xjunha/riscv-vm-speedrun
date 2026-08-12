@@ -6,7 +6,7 @@ LC_ALL=C
 export LC_ALL
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 ACT4_DESTINATION="riscv-arch-test-act4-619aa169"
 ACT4_EXPECTED_ENTRY_COUNT=316

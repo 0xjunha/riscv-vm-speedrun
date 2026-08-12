@@ -1,9 +1,10 @@
 #!/bin/sh
 set -eu
 
-repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repository=$(CDPATH= cd -- "$script_dir/../../.." && pwd)
 task=harbor_tasks/riscv-vm-speedrun
-startup_script=$repository/scripts/gcp-harbor-startup.sh
+startup_script=$script_dir/startup.sh
 env_file=$repository/.env.gcp.harbor
 agent=codex
 timeout_multiplier=
@@ -220,7 +221,7 @@ run_one() {
         echo 'cd /opt/harbor-run/source'
         harbor_agent=$agent
         if [ "$agent" = codex ]; then
-            harbor_agent=scripts.harbor_codex_budget:BudgetCodex
+            harbor_agent=scripts.harbor.codex_budget:BudgetCodex
         fi
         printf 'harbor run -p %s -a %s' "$task" "$harbor_agent"
         if [ -n "$model" ]; then

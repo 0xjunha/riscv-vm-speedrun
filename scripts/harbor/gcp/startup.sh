@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# Pin the host packages that affect container execution.
+# Pin the GCP host packages that affect container execution.
 run_root=/opt/harbor-run
 ready_marker=/var/tmp/rv32im-harbor-ready
 failed_marker=/var/tmp/rv32im-harbor-failed

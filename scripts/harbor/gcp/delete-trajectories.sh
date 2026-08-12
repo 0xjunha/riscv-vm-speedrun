@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repository=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 env_file=$repository/.env.gcp.harbor
 
 [ "$#" -gt 0 ] || { echo "usage: $0 ARCHIVE.tgz [...]" >&2; exit 2; }

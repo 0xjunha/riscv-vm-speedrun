@@ -53,7 +53,7 @@ def adapter(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     contexts.AgentContext = object
     monkeypatch.setitem(sys.modules, contexts.__name__, contexts)
 
-    return load_module("harbor_codex_budget", "scripts/harbor_codex_budget.py")
+    return load_module("harbor_codex_budget", "scripts/harbor/codex_budget.py")
 
 
 def test_adapter_starts_clock_before_codex(

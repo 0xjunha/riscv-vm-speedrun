@@ -8,7 +8,7 @@ This directory builds 95 public, self-checking ELF inputs:
 ## Provenance and Pipeline
 
 The untouched upstream sources live under `third_party/riscv/conformance/`.
-`scripts/verify-riscv-conformance.sh` checks their pinned inventory and hashes.
+`scripts/riscv/verify-conformance.sh` checks their pinned inventory and hashes.
 
 For ACT4, `build.py` reruns the imported upstream generator from the imported
 test plans and requires all 47 generated `.S` files to match the imported files

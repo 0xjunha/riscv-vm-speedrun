@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts/run-gcp-benchmark.sh"
+SCRIPT = ROOT / "scripts/benchmarks/run-gcp.sh"
 ENV_EXAMPLE = ROOT / ".env.gcp.example"
 RESULTS = ROOT / "benchmarks/out/gcp"
 OFFICIAL_ZONE = "asia-northeast3-a"

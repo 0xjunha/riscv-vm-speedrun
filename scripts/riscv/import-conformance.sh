@@ -7,8 +7,8 @@ LC_ALL=C
 export LC_ALL
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-VERIFY_SCRIPT="$SCRIPT_DIR/verify-riscv-conformance.sh"
+REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+VERIFY_SCRIPT="$SCRIPT_DIR/verify-conformance.sh"
 
 ACT4_NAME="riscv-arch-test"
 ACT4_REPOSITORY="https://github.com/riscv/riscv-arch-test.git"

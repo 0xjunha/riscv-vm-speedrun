@@ -7,8 +7,8 @@ LC_ALL=C
 export LC_ALL
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-VERIFY_SCRIPT="$SCRIPT_DIR/verify-riscv-specifications.sh"
+REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+VERIFY_SCRIPT="$SCRIPT_DIR/verify-specifications.sh"
 
 MANUAL_NAME="riscv-isa-manual"
 MANUAL_REPOSITORY="https://github.com/riscv/riscv-isa-manual.git"

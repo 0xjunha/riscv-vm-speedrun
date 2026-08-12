@@ -12,8 +12,8 @@ Do not edit the imported snapshots directly. Their exact sources, revisions,
 and hashes are recorded in
 [`specifications.lock.json`](../manifests/specifications.lock.json) and
 [`specifications.inventory.tsv`](../manifests/specifications.inventory.tsv).
-Use `scripts/import-riscv-specifications.sh` to create a fresh import and
-`scripts/verify-riscv-specifications.sh` to verify one.
+Use `scripts/riscv/import-specifications.sh` to create a fresh import and
+`scripts/riscv/verify-specifications.sh` to verify one.
 
 Licenses and attribution are recorded in
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).

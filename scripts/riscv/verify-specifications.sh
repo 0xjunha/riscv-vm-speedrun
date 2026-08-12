@@ -6,7 +6,7 @@ LC_ALL=C
 export LC_ALL
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 DESTINATION="$REPOSITORY_ROOT/third_party/riscv"
 HASH_STYLE=""
 TEMPORARY_DIRECTORY=""

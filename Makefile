@@ -56,7 +56,7 @@ CONFORMANCE_MANIFEST := conformance/artifacts/manifest.json
 CONTRACT_MANIFEST := contracts/artifacts/manifest.json
 HARBOR_TASK := harbor_tasks/riscv-vm-speedrun
 HARBOR_TASK_TESTS := harbor_task_tests
-HARBOR_SUPPORT := scripts/harbor_codex_budget.py scripts/sync-harbor-task-assets.py
+HARBOR_SUPPORT := scripts/harbor/codex_budget.py scripts/harbor/sync-task-assets.py
 
 .PHONY: benchmark benchmark-build benchmark-check benchmark-compare \
 	benchmark-correctness benchmark-format \
@@ -81,10 +81,10 @@ lock-check:
 	uv lock --check
 
 spec-check:
-	./scripts/verify-riscv-specifications.sh
+	./scripts/riscv/verify-specifications.sh
 
 harbor-check:
-	./scripts/sync-harbor-task-assets.py --check
+	./scripts/harbor/sync-task-assets.py --check
 	uv run --locked ruff format --check $(HARBOR_TASK) $(HARBOR_TASK_TESTS) \
 		$(HARBOR_SUPPORT)
 	uv run --locked ruff check $(HARBOR_TASK) $(HARBOR_TASK_TESTS) \
@@ -220,7 +220,7 @@ ifneq ($(HOST_PLATFORM),Linux-x86_64)
 endif
 
 native-x86-test: benchmark-image
-	./scripts/test-native-x86.sh "$(BENCHMARK_IMAGE)"
+	./scripts/benchmarks/test-native-x86.sh "$(BENCHMARK_IMAGE)"
 
 vm4-platform-test: vm4-build
 ifneq ($(HOST_PLATFORM),Linux-x86_64)
@@ -335,10 +335,10 @@ benchmark-compare: native-vm-runtime-status $(VM_RUNTIME_BUILD_TARGETS) benchmar
 		$(BENCHMARK_COMPARE_ARGS)
 
 gcp-benchmark:
-	./scripts/run-gcp-benchmark.sh "$(GCP_ENV_FILE)"
+	./scripts/benchmarks/run-gcp.sh "$(GCP_ENV_FILE)"
 
 gcp-benchmark-long:
-	./scripts/run-gcp-benchmark.sh "$(GCP_ENV_FILE)" long
+	./scripts/benchmarks/run-gcp.sh "$(GCP_ENV_FILE)" long
 
 conformance-sources:
 	PYTHONDONTWRITEBYTECODE=1 python3 conformance/build.py check-sources

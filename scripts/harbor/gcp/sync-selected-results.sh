@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repository=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 destination=$repository/jobs/gcp-harbor-selected
 
 command -v gcloud >/dev/null 2>&1 || {

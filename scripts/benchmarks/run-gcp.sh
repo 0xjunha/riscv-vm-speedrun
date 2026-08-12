@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repository=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 env_file=${1:-"$repository/.env.gcp"}
 mode=${2:-standard}
 
