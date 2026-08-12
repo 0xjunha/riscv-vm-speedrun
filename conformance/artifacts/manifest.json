@@ -11,7 +11,7 @@
     "SAIL_ARCHIVE_SHA256": "7cb129d831384ed9dcb47f25f9866254a673834aa692499c87b1d5a91d110c0f"
   },
   "project_inputs": {
-    "conformance/build.py": "6aa7af2d3f03119fb37371a1e56004cf8be96bd28c36bd70305fafcb8659fc21",
+    "conformance/build.py": "6f92bafa4c6ec929d47fea0d9a8a2958758b1daccef1fde4c62c095adbfe8bd8",
     "conformance/Dockerfile": "b99e0e7247442da1f7c2c971f23c5b98d1eeb54666ff0a37467c4fe4caac05a7",
     "conformance/toolchain.env": "7c1122b300e47ab69e9e49106a17d2e917f84b30c618e31392170fc46cec7913",
     "conformance/adapters/act4/link.ld": "4ffac6b2c736eb0ae409407f530f23bd149144612f4cc28627d53b9dacfe61f4",
