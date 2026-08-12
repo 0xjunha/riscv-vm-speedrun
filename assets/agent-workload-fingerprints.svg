@@ -1,0 +1,538 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="1181" viewBox="0 0 1040 1181" role="img" aria-labelledby="title desc">
+  <title id="title">Held-out workload performance relative to VM5</title>
+  <desc id="desc">Heatmap of each selected agent result from 30 substantive runs relative to the same-host VM5 reference across eight held-out workloads.</desc>
+  <style>
+.canvas{fill:#fff}.primary{fill:#24292f}.secondary{fill:#57606a}.grid{stroke:#d8dee4}.frame{stroke:#afb8c1}.reference{stroke:#6e7781}.failure{stroke:#cf222e}.selected-ring{stroke:#fff}.vm0-fill{fill:#0969da}.vm0-stroke{stroke:#0969da}.vm1-fill{fill:#8250df}.vm1-stroke{stroke:#8250df}.vm2-fill{fill:#bf8700}.vm2-stroke{stroke:#bf8700}.vm3-fill{fill:#bc4c00}.vm3-stroke{stroke:#bc4c00}.vm4-fill{fill:#1a7f37}.vm4-stroke{stroke:#1a7f37}.vm5-fill{fill:#0a7c86}.vm5-stroke{stroke:#0a7c86}
+text{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.title{font-size:25px;font-weight:500;letter-spacing:-.3px}.subtitle{font-size:13px}.axis{font-size:11px}.axis-title{font-size:12px;font-weight:500}.legend{font-size:11px}.run-label{font-size:11px;font-weight:500}.value{font-size:11px;font-weight:500}.group{font-size:15px;font-weight:500}.architecture{font-size:13px;font-weight:500}.advance-label{font-size:14px;font-weight:500}.panel-title{font-size:13px;font-weight:500}.cell-value{font-size:11px;font-weight:500}.above{fill:#0969da}.below{fill:#bc4c00}@media(prefers-color-scheme:dark){.above{fill:#58a6ff}.below{fill:#f0883e}}
+@media(prefers-color-scheme:dark){.canvas{fill:#0d1117}.primary{fill:#f0f6fc}.secondary{fill:#8c959f}.grid{stroke:#30363d}.frame{stroke:#484f58}.reference{stroke:#8c959f}.failure{stroke:#f85149}.selected-ring{stroke:#0d1117}.vm0-fill{fill:#58a6ff}.vm0-stroke{stroke:#58a6ff}.vm1-fill{fill:#bc8cff}.vm1-stroke{stroke:#bc8cff}.vm2-fill{fill:#d29922}.vm2-stroke{stroke:#d29922}.vm3-fill{fill:#f0883e}.vm3-stroke{stroke:#f0883e}.vm4-fill{fill:#3fb950}.vm4-stroke{stroke:#3fb950}.vm5-fill{fill:#39c5cf}.vm5-stroke{stroke:#39c5cf}}
+</style>
+
+  <rect class="canvas" width="1040" height="1181"/>
+<text x="38" y="42" class="title primary">Held-out workload performance relative to VM5</text>
+<text x="38" y="67" class="subtitle secondary">Selected result from each of 30 substantive runs · values above 1.00 are faster than same-host VM5</text>
+<text x="192" y="132" class="axis primary" text-anchor="middle">dijkstra</text>
+<text x="300" y="132" class="axis primary" text-anchor="middle">mont64</text>
+<text x="408" y="132" class="axis primary" text-anchor="middle">picojpeg-grayscale</text>
+<text x="516" y="132" class="axis primary" text-anchor="middle">sha256</text>
+<text x="624" y="132" class="axis primary" text-anchor="middle">sort_records</text>
+<text x="732" y="132" class="axis primary" text-anchor="middle">statemate</text>
+<text x="840" y="132" class="axis primary" text-anchor="middle">ud</text>
+<text x="948" y="132" class="axis primary" text-anchor="middle">x25519</text>
+<text x="127" y="173" class="run-label primary" text-anchor="end">VM0-1</text>
+<rect x="140" y="153" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="192" y="172" class="cell-value primary" text-anchor="middle">1.14</text>
+<rect x="248" y="153" width="104" height="28" class="below" fill-opacity="0.08"/>
+<text x="300" y="172" class="cell-value primary" text-anchor="middle">1.00</text>
+<rect x="356" y="153" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="408" y="172" class="cell-value primary" text-anchor="middle">1.12</text>
+<rect x="464" y="153" width="104" height="28" class="above" fill-opacity="0.30"/>
+<text x="516" y="172" class="cell-value primary" text-anchor="middle">1.79</text>
+<rect x="572" y="153" width="104" height="28" class="above" fill-opacity="0.20"/>
+<text x="624" y="172" class="cell-value primary" text-anchor="middle">1.36</text>
+<rect x="680" y="153" width="104" height="28" class="above" fill-opacity="0.24"/>
+<text x="732" y="172" class="cell-value primary" text-anchor="middle">1.52</text>
+<rect x="788" y="153" width="104" height="28" class="below" fill-opacity="0.08"/>
+<text x="840" y="172" class="cell-value primary" text-anchor="middle">1.00</text>
+<rect x="896" y="153" width="104" height="28" class="above" fill-opacity="0.35"/>
+<text x="948" y="172" class="cell-value primary" text-anchor="middle">2.02</text>
+<text x="127" y="205" class="run-label primary" text-anchor="end">VM0-2</text>
+<rect x="140" y="185" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="192" y="204" class="cell-value primary" text-anchor="middle">1.11</text>
+<rect x="248" y="185" width="104" height="28" class="below" fill-opacity="0.14"/>
+<text x="300" y="204" class="cell-value primary" text-anchor="middle">0.85</text>
+<rect x="356" y="185" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="408" y="204" class="cell-value primary" text-anchor="middle">1.16</text>
+<rect x="464" y="185" width="104" height="28" class="above" fill-opacity="0.25"/>
+<text x="516" y="204" class="cell-value primary" text-anchor="middle">1.55</text>
+<rect x="572" y="185" width="104" height="28" class="above" fill-opacity="0.20"/>
+<text x="624" y="204" class="cell-value primary" text-anchor="middle">1.37</text>
+<rect x="680" y="185" width="104" height="28" class="above" fill-opacity="0.20"/>
+<text x="732" y="204" class="cell-value primary" text-anchor="middle">1.36</text>
+<rect x="788" y="185" width="104" height="28" class="below" fill-opacity="0.11"/>
+<text x="840" y="204" class="cell-value primary" text-anchor="middle">0.92</text>
+<rect x="896" y="185" width="104" height="28" class="above" fill-opacity="0.34"/>
+<text x="948" y="204" class="cell-value primary" text-anchor="middle">1.99</text>
+<text x="127" y="237" class="run-label primary" text-anchor="end">VM0-3</text>
+<rect x="140" y="217" width="104" height="28" class="above" fill-opacity="0.15"/>
+<text x="192" y="236" class="cell-value primary" text-anchor="middle">1.20</text>
+<rect x="248" y="217" width="104" height="28" class="above" fill-opacity="0.08"/>
+<text x="300" y="236" class="cell-value primary" text-anchor="middle">1.00</text>
+<rect x="356" y="217" width="104" height="28" class="above" fill-opacity="0.09"/>
+<text x="408" y="236" class="cell-value primary" text-anchor="middle">1.04</text>
+<rect x="464" y="217" width="104" height="28" class="above" fill-opacity="0.30"/>
+<text x="516" y="236" class="cell-value primary" text-anchor="middle">1.80</text>
+<rect x="572" y="217" width="104" height="28" class="above" fill-opacity="0.21"/>
+<text x="624" y="236" class="cell-value primary" text-anchor="middle">1.41</text>
+<rect x="680" y="217" width="104" height="28" class="above" fill-opacity="0.21"/>
+<text x="732" y="236" class="cell-value primary" text-anchor="middle">1.40</text>
+<rect x="788" y="217" width="104" height="28" class="below" fill-opacity="0.08"/>
+<text x="840" y="236" class="cell-value primary" text-anchor="middle">0.99</text>
+<rect x="896" y="217" width="104" height="28" class="above" fill-opacity="0.28"/>
+<text x="948" y="236" class="cell-value primary" text-anchor="middle">1.67</text>
+<text x="127" y="269" class="run-label primary" text-anchor="end">VM0-4</text>
+<rect x="140" y="249" width="104" height="28" class="below" fill-opacity="0.09"/>
+<text x="192" y="268" class="cell-value primary" text-anchor="middle">0.97</text>
+<rect x="248" y="249" width="104" height="28" class="below" fill-opacity="0.13"/>
+<text x="300" y="268" class="cell-value primary" text-anchor="middle">0.87</text>
+<rect x="356" y="249" width="104" height="28" class="below" fill-opacity="0.14"/>
+<text x="408" y="268" class="cell-value primary" text-anchor="middle">0.85</text>
+<rect x="464" y="249" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="516" y="268" class="cell-value primary" text-anchor="middle">1.07</text>
+<rect x="572" y="249" width="104" height="28" class="below" fill-opacity="0.10"/>
+<text x="624" y="268" class="cell-value primary" text-anchor="middle">0.95</text>
+<rect x="680" y="249" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="732" y="268" class="cell-value primary" text-anchor="middle">1.06</text>
+<rect x="788" y="249" width="104" height="28" class="below" fill-opacity="0.16"/>
+<text x="840" y="268" class="cell-value primary" text-anchor="middle">0.82</text>
+<rect x="896" y="249" width="104" height="28" class="below" fill-opacity="0.13"/>
+<text x="948" y="268" class="cell-value primary" text-anchor="middle">0.88</text>
+<text x="127" y="301" class="run-label primary" text-anchor="end">VM0-5</text>
+<rect x="140" y="281" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="192" y="300" class="cell-value primary" text-anchor="middle">1.06</text>
+<rect x="248" y="281" width="104" height="28" class="above" fill-opacity="0.09"/>
+<text x="300" y="300" class="cell-value primary" text-anchor="middle">1.03</text>
+<rect x="356" y="281" width="104" height="28" class="above" fill-opacity="0.18"/>
+<text x="408" y="300" class="cell-value primary" text-anchor="middle">1.29</text>
+<rect x="464" y="281" width="104" height="28" class="above" fill-opacity="0.11"/>
+<text x="516" y="300" class="cell-value primary" text-anchor="middle">1.08</text>
+<rect x="572" y="281" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="624" y="300" class="cell-value primary" text-anchor="middle">1.18</text>
+<rect x="680" y="281" width="104" height="28" class="above" fill-opacity="0.29"/>
+<text x="732" y="300" class="cell-value primary" text-anchor="middle">1.74</text>
+<rect x="788" y="281" width="104" height="28" class="below" fill-opacity="0.08"/>
+<text x="840" y="300" class="cell-value primary" text-anchor="middle">0.99</text>
+<rect x="896" y="281" width="104" height="28" class="above" fill-opacity="0.24"/>
+<text x="948" y="300" class="cell-value primary" text-anchor="middle">1.52</text>
+<line x1="140" y1="311" x2="1000" y2="311" class="frame" stroke-width="1.3"/>
+<text x="127" y="333" class="run-label primary" text-anchor="end">VM1-1</text>
+<rect x="140" y="313" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="192" y="332" class="cell-value primary" text-anchor="middle">1.04</text>
+<rect x="248" y="313" width="104" height="28" class="below" fill-opacity="0.09"/>
+<text x="300" y="332" class="cell-value primary" text-anchor="middle">0.98</text>
+<rect x="356" y="313" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="408" y="332" class="cell-value primary" text-anchor="middle">1.22</text>
+<rect x="464" y="313" width="104" height="28" class="above" fill-opacity="0.26"/>
+<text x="516" y="332" class="cell-value primary" text-anchor="middle">1.60</text>
+<rect x="572" y="313" width="104" height="28" class="above" fill-opacity="0.19"/>
+<text x="624" y="332" class="cell-value primary" text-anchor="middle">1.33</text>
+<rect x="680" y="313" width="104" height="28" class="above" fill-opacity="0.23"/>
+<text x="732" y="332" class="cell-value primary" text-anchor="middle">1.47</text>
+<rect x="788" y="313" width="104" height="28" class="below" fill-opacity="0.14"/>
+<text x="840" y="332" class="cell-value primary" text-anchor="middle">0.86</text>
+<rect x="896" y="313" width="104" height="28" class="above" fill-opacity="0.33"/>
+<text x="948" y="332" class="cell-value primary" text-anchor="middle">1.93</text>
+<text x="127" y="365" class="run-label primary" text-anchor="end">VM1-2</text>
+<rect x="140" y="345" width="104" height="28" class="below" fill-opacity="0.17"/>
+<text x="192" y="364" class="cell-value primary" text-anchor="middle">0.79</text>
+<rect x="248" y="345" width="104" height="28" class="below" fill-opacity="0.27"/>
+<text x="300" y="364" class="cell-value primary" text-anchor="middle">0.60</text>
+<rect x="356" y="345" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="408" y="364" class="cell-value primary" text-anchor="middle">0.16</text>
+<rect x="464" y="345" width="104" height="28" class="below" fill-opacity="0.18"/>
+<text x="516" y="364" class="cell-value primary" text-anchor="middle">0.77</text>
+<rect x="572" y="345" width="104" height="28" class="below" fill-opacity="0.20"/>
+<text x="624" y="364" class="cell-value primary" text-anchor="middle">0.73</text>
+<rect x="680" y="345" width="104" height="28" class="below" fill-opacity="0.28"/>
+<text x="732" y="364" class="cell-value primary" text-anchor="middle">0.59</text>
+<rect x="788" y="345" width="104" height="28" class="below" fill-opacity="0.33"/>
+<text x="840" y="364" class="cell-value primary" text-anchor="middle">0.52</text>
+<rect x="896" y="345" width="104" height="28" class="below" fill-opacity="0.23"/>
+<text x="948" y="364" class="cell-value primary" text-anchor="middle">0.67</text>
+<text x="127" y="397" class="run-label primary" text-anchor="end">VM1-3</text>
+<rect x="140" y="377" width="104" height="28" class="above" fill-opacity="0.08"/>
+<text x="192" y="396" class="cell-value primary" text-anchor="middle">1.01</text>
+<rect x="248" y="377" width="104" height="28" class="below" fill-opacity="0.17"/>
+<text x="300" y="396" class="cell-value primary" text-anchor="middle">0.79</text>
+<rect x="356" y="377" width="104" height="28" class="below" fill-opacity="0.13"/>
+<text x="408" y="396" class="cell-value primary" text-anchor="middle">0.87</text>
+<rect x="464" y="377" width="104" height="28" class="above" fill-opacity="0.18"/>
+<text x="516" y="396" class="cell-value primary" text-anchor="middle">1.31</text>
+<rect x="572" y="377" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="624" y="396" class="cell-value primary" text-anchor="middle">1.18</text>
+<rect x="680" y="377" width="104" height="28" class="above" fill-opacity="0.18"/>
+<text x="732" y="396" class="cell-value primary" text-anchor="middle">1.31</text>
+<rect x="788" y="377" width="104" height="28" class="below" fill-opacity="0.14"/>
+<text x="840" y="396" class="cell-value primary" text-anchor="middle">0.86</text>
+<rect x="896" y="377" width="104" height="28" class="below" fill-opacity="0.10"/>
+<text x="948" y="396" class="cell-value primary" text-anchor="middle">0.96</text>
+<text x="127" y="429" class="run-label primary" text-anchor="end">VM1-4</text>
+<rect x="140" y="409" width="104" height="28" class="below" fill-opacity="0.21"/>
+<text x="192" y="428" class="cell-value primary" text-anchor="middle">0.71</text>
+<rect x="248" y="409" width="104" height="28" class="below" fill-opacity="0.24"/>
+<text x="300" y="428" class="cell-value primary" text-anchor="middle">0.66</text>
+<rect x="356" y="409" width="104" height="28" class="below" fill-opacity="0.34"/>
+<text x="408" y="428" class="cell-value primary" text-anchor="middle">0.50</text>
+<rect x="464" y="409" width="104" height="28" class="below" fill-opacity="0.36"/>
+<text x="516" y="428" class="cell-value primary" text-anchor="middle">0.48</text>
+<rect x="572" y="409" width="104" height="28" class="below" fill-opacity="0.26"/>
+<text x="624" y="428" class="cell-value primary" text-anchor="middle">0.62</text>
+<rect x="680" y="409" width="104" height="28" class="below" fill-opacity="0.33"/>
+<text x="732" y="428" class="cell-value primary" text-anchor="middle">0.51</text>
+<rect x="788" y="409" width="104" height="28" class="below" fill-opacity="0.29"/>
+<text x="840" y="428" class="cell-value primary" text-anchor="middle">0.57</text>
+<rect x="896" y="409" width="104" height="28" class="below" fill-opacity="0.42"/>
+<text x="948" y="428" class="cell-value primary" text-anchor="middle">0.41</text>
+<text x="127" y="461" class="run-label primary" text-anchor="end">VM1-5</text>
+<rect x="140" y="441" width="104" height="28" class="below" fill-opacity="0.09"/>
+<text x="192" y="460" class="cell-value primary" text-anchor="middle">0.97</text>
+<rect x="248" y="441" width="104" height="28" class="below" fill-opacity="0.14"/>
+<text x="300" y="460" class="cell-value primary" text-anchor="middle">0.85</text>
+<rect x="356" y="441" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="408" y="460" class="cell-value primary" text-anchor="middle">1.13</text>
+<rect x="464" y="441" width="104" height="28" class="above" fill-opacity="0.26"/>
+<text x="516" y="460" class="cell-value primary" text-anchor="middle">1.62</text>
+<rect x="572" y="441" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="624" y="460" class="cell-value primary" text-anchor="middle">1.26</text>
+<rect x="680" y="441" width="104" height="28" class="above" fill-opacity="0.20"/>
+<text x="732" y="460" class="cell-value primary" text-anchor="middle">1.37</text>
+<rect x="788" y="441" width="104" height="28" class="below" fill-opacity="0.10"/>
+<text x="840" y="460" class="cell-value primary" text-anchor="middle">0.95</text>
+<rect x="896" y="441" width="104" height="28" class="above" fill-opacity="0.33"/>
+<text x="948" y="460" class="cell-value primary" text-anchor="middle">1.93</text>
+<line x1="140" y1="471" x2="1000" y2="471" class="frame" stroke-width="1.3"/>
+<text x="127" y="493" class="run-label primary" text-anchor="end">VM2-1</text>
+<rect x="140" y="473" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="192" y="492" class="cell-value primary" text-anchor="middle">1.23</text>
+<rect x="248" y="473" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="300" y="492" class="cell-value primary" text-anchor="middle">1.14</text>
+<rect x="356" y="473" width="104" height="28" class="above" fill-opacity="0.21"/>
+<text x="408" y="492" class="cell-value primary" text-anchor="middle">1.40</text>
+<rect x="464" y="473" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="516" y="492" class="cell-value primary" text-anchor="middle">1.26</text>
+<rect x="572" y="473" width="104" height="28" class="above" fill-opacity="0.23"/>
+<text x="624" y="492" class="cell-value primary" text-anchor="middle">1.50</text>
+<rect x="680" y="473" width="104" height="28" class="above" fill-opacity="0.31"/>
+<text x="732" y="492" class="cell-value primary" text-anchor="middle">1.84</text>
+<rect x="788" y="473" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="840" y="492" class="cell-value primary" text-anchor="middle">1.16</text>
+<rect x="896" y="473" width="104" height="28" class="above" fill-opacity="0.35"/>
+<text x="948" y="492" class="cell-value primary" text-anchor="middle">2.02</text>
+<text x="127" y="525" class="run-label primary" text-anchor="end">VM2-2</text>
+<rect x="140" y="505" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="192" y="524" class="cell-value primary" text-anchor="middle">0.07</text>
+<rect x="248" y="505" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="300" y="524" class="cell-value primary" text-anchor="middle">0.09</text>
+<rect x="356" y="505" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="408" y="524" class="cell-value primary" text-anchor="middle">0.06</text>
+<rect x="464" y="505" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="516" y="524" class="cell-value primary" text-anchor="middle">0.04</text>
+<rect x="572" y="505" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="624" y="524" class="cell-value primary" text-anchor="middle">0.06</text>
+<rect x="680" y="505" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="732" y="524" class="cell-value primary" text-anchor="middle">0.07</text>
+<rect x="788" y="505" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="840" y="524" class="cell-value primary" text-anchor="middle">0.09</text>
+<rect x="896" y="505" width="104" height="28" class="below" fill-opacity="0.62"/>
+<text x="948" y="524" class="cell-value primary" text-anchor="middle">0.05</text>
+<text x="127" y="557" class="run-label primary" text-anchor="end">VM2-3</text>
+<rect x="140" y="537" width="104" height="28" class="below" fill-opacity="0.10"/>
+<text x="192" y="556" class="cell-value primary" text-anchor="middle">0.94</text>
+<rect x="248" y="537" width="104" height="28" class="below" fill-opacity="0.15"/>
+<text x="300" y="556" class="cell-value primary" text-anchor="middle">0.84</text>
+<rect x="356" y="537" width="104" height="28" class="below" fill-opacity="0.10"/>
+<text x="408" y="556" class="cell-value primary" text-anchor="middle">0.96</text>
+<rect x="464" y="537" width="104" height="28" class="above" fill-opacity="0.22"/>
+<text x="516" y="556" class="cell-value primary" text-anchor="middle">1.44</text>
+<rect x="572" y="537" width="104" height="28" class="above" fill-opacity="0.11"/>
+<text x="624" y="556" class="cell-value primary" text-anchor="middle">1.07</text>
+<rect x="680" y="537" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="732" y="556" class="cell-value primary" text-anchor="middle">1.26</text>
+<rect x="788" y="537" width="104" height="28" class="below" fill-opacity="0.14"/>
+<text x="840" y="556" class="cell-value primary" text-anchor="middle">0.85</text>
+<rect x="896" y="537" width="104" height="28" class="above" fill-opacity="0.15"/>
+<text x="948" y="556" class="cell-value primary" text-anchor="middle">1.20</text>
+<text x="127" y="589" class="run-label primary" text-anchor="end">VM2-4</text>
+<rect x="140" y="569" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="192" y="588" class="cell-value primary" text-anchor="middle">1.18</text>
+<rect x="248" y="569" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="300" y="588" class="cell-value primary" text-anchor="middle">1.10</text>
+<rect x="356" y="569" width="104" height="28" class="above" fill-opacity="0.20"/>
+<text x="408" y="588" class="cell-value primary" text-anchor="middle">1.36</text>
+<rect x="464" y="569" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="516" y="588" class="cell-value primary" text-anchor="middle">1.17</text>
+<rect x="572" y="569" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="624" y="588" class="cell-value primary" text-anchor="middle">1.27</text>
+<rect x="680" y="569" width="104" height="28" class="above" fill-opacity="0.30"/>
+<text x="732" y="588" class="cell-value primary" text-anchor="middle">1.80</text>
+<rect x="788" y="569" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="840" y="588" class="cell-value primary" text-anchor="middle">1.19</text>
+<rect x="896" y="569" width="104" height="28" class="above" fill-opacity="0.28"/>
+<text x="948" y="588" class="cell-value primary" text-anchor="middle">1.70</text>
+<text x="127" y="621" class="run-label primary" text-anchor="end">VM2-5</text>
+<rect x="140" y="601" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="192" y="620" class="cell-value primary" text-anchor="middle">1.14</text>
+<rect x="248" y="601" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="300" y="620" class="cell-value primary" text-anchor="middle">1.12</text>
+<rect x="356" y="601" width="104" height="28" class="above" fill-opacity="0.19"/>
+<text x="408" y="620" class="cell-value primary" text-anchor="middle">1.34</text>
+<rect x="464" y="601" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="516" y="620" class="cell-value primary" text-anchor="middle">1.18</text>
+<rect x="572" y="601" width="104" height="28" class="above" fill-opacity="0.18"/>
+<text x="624" y="620" class="cell-value primary" text-anchor="middle">1.31</text>
+<rect x="680" y="601" width="104" height="28" class="above" fill-opacity="0.32"/>
+<text x="732" y="620" class="cell-value primary" text-anchor="middle">1.88</text>
+<rect x="788" y="601" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="840" y="620" class="cell-value primary" text-anchor="middle">1.13</text>
+<rect x="896" y="601" width="104" height="28" class="above" fill-opacity="0.24"/>
+<text x="948" y="620" class="cell-value primary" text-anchor="middle">1.53</text>
+<line x1="140" y1="631" x2="1000" y2="631" class="frame" stroke-width="1.3"/>
+<text x="127" y="653" class="run-label primary" text-anchor="end">VM3-1</text>
+<rect x="140" y="633" width="104" height="28" class="above" fill-opacity="0.08"/>
+<text x="192" y="652" class="cell-value primary" text-anchor="middle">1.01</text>
+<rect x="248" y="633" width="104" height="28" class="below" fill-opacity="0.15"/>
+<text x="300" y="652" class="cell-value primary" text-anchor="middle">0.84</text>
+<rect x="356" y="633" width="104" height="28" class="below" fill-opacity="0.09"/>
+<text x="408" y="652" class="cell-value primary" text-anchor="middle">0.98</text>
+<rect x="464" y="633" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="516" y="652" class="cell-value primary" text-anchor="middle">1.15</text>
+<rect x="572" y="633" width="104" height="28" class="above" fill-opacity="0.11"/>
+<text x="624" y="652" class="cell-value primary" text-anchor="middle">1.07</text>
+<rect x="680" y="633" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="732" y="652" class="cell-value primary" text-anchor="middle">1.18</text>
+<rect x="788" y="633" width="104" height="28" class="below" fill-opacity="0.18"/>
+<text x="840" y="652" class="cell-value primary" text-anchor="middle">0.76</text>
+<rect x="896" y="633" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="948" y="652" class="cell-value primary" text-anchor="middle">1.26</text>
+<text x="127" y="685" class="run-label primary" text-anchor="end">VM3-2</text>
+<rect x="140" y="665" width="104" height="28" class="below" fill-opacity="0.15"/>
+<text x="192" y="684" class="cell-value primary" text-anchor="middle">0.84</text>
+<rect x="248" y="665" width="104" height="28" class="below" fill-opacity="0.12"/>
+<text x="300" y="684" class="cell-value primary" text-anchor="middle">0.90</text>
+<rect x="356" y="665" width="104" height="28" class="below" fill-opacity="0.16"/>
+<text x="408" y="684" class="cell-value primary" text-anchor="middle">0.82</text>
+<rect x="464" y="665" width="104" height="28" class="below" fill-opacity="0.09"/>
+<text x="516" y="684" class="cell-value primary" text-anchor="middle">0.97</text>
+<rect x="572" y="665" width="104" height="28" class="below" fill-opacity="0.11"/>
+<text x="624" y="684" class="cell-value primary" text-anchor="middle">0.93</text>
+<rect x="680" y="665" width="104" height="28" class="below" fill-opacity="0.10"/>
+<text x="732" y="684" class="cell-value primary" text-anchor="middle">0.95</text>
+<rect x="788" y="665" width="104" height="28" class="below" fill-opacity="0.11"/>
+<text x="840" y="684" class="cell-value primary" text-anchor="middle">0.92</text>
+<rect x="896" y="665" width="104" height="28" class="below" fill-opacity="0.11"/>
+<text x="948" y="684" class="cell-value primary" text-anchor="middle">0.92</text>
+<text x="127" y="717" class="run-label primary" text-anchor="end">VM3-3</text>
+<rect x="140" y="697" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="192" y="716" class="cell-value primary" text-anchor="middle">1.11</text>
+<rect x="248" y="697" width="104" height="28" class="below" fill-opacity="0.08"/>
+<text x="300" y="716" class="cell-value primary" text-anchor="middle">0.99</text>
+<rect x="356" y="697" width="104" height="28" class="below" fill-opacity="0.08"/>
+<text x="408" y="716" class="cell-value primary" text-anchor="middle">1.00</text>
+<rect x="464" y="697" width="104" height="28" class="below" fill-opacity="0.08"/>
+<text x="516" y="716" class="cell-value primary" text-anchor="middle">1.00</text>
+<rect x="572" y="697" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="624" y="716" class="cell-value primary" text-anchor="middle">1.24</text>
+<rect x="680" y="697" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="732" y="716" class="cell-value primary" text-anchor="middle">1.10</text>
+<rect x="788" y="697" width="104" height="28" class="below" fill-opacity="0.14"/>
+<text x="840" y="716" class="cell-value primary" text-anchor="middle">0.85</text>
+<rect x="896" y="697" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="948" y="716" class="cell-value primary" text-anchor="middle">1.27</text>
+<text x="127" y="749" class="run-label primary" text-anchor="end">VM3-4</text>
+<rect x="140" y="729" width="104" height="28" class="above" fill-opacity="0.19"/>
+<text x="192" y="748" class="cell-value primary" text-anchor="middle">1.33</text>
+<rect x="248" y="729" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="300" y="748" class="cell-value primary" text-anchor="middle">1.06</text>
+<rect x="356" y="729" width="104" height="28" class="above" fill-opacity="0.18"/>
+<text x="408" y="748" class="cell-value primary" text-anchor="middle">1.31</text>
+<rect x="464" y="729" width="104" height="28" class="above" fill-opacity="0.15"/>
+<text x="516" y="748" class="cell-value primary" text-anchor="middle">1.21</text>
+<rect x="572" y="729" width="104" height="28" class="above" fill-opacity="0.23"/>
+<text x="624" y="748" class="cell-value primary" text-anchor="middle">1.49</text>
+<rect x="680" y="729" width="104" height="28" class="above" fill-opacity="0.29"/>
+<text x="732" y="748" class="cell-value primary" text-anchor="middle">1.73</text>
+<rect x="788" y="729" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="840" y="748" class="cell-value primary" text-anchor="middle">1.12</text>
+<rect x="896" y="729" width="104" height="28" class="above" fill-opacity="0.33"/>
+<text x="948" y="748" class="cell-value primary" text-anchor="middle">1.94</text>
+<text x="127" y="781" class="run-label primary" text-anchor="end">VM3-5</text>
+<rect x="140" y="761" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="192" y="780" class="cell-value primary" text-anchor="middle">1.24</text>
+<rect x="248" y="761" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="300" y="780" class="cell-value primary" text-anchor="middle">1.13</text>
+<rect x="356" y="761" width="104" height="28" class="above" fill-opacity="0.21"/>
+<text x="408" y="780" class="cell-value primary" text-anchor="middle">1.42</text>
+<rect x="464" y="761" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="516" y="780" class="cell-value primary" text-anchor="middle">1.24</text>
+<rect x="572" y="761" width="104" height="28" class="above" fill-opacity="0.21"/>
+<text x="624" y="780" class="cell-value primary" text-anchor="middle">1.39</text>
+<rect x="680" y="761" width="104" height="28" class="above" fill-opacity="0.33"/>
+<text x="732" y="780" class="cell-value primary" text-anchor="middle">1.92</text>
+<rect x="788" y="761" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="840" y="780" class="cell-value primary" text-anchor="middle">1.10</text>
+<rect x="896" y="761" width="104" height="28" class="above" fill-opacity="0.30"/>
+<text x="948" y="780" class="cell-value primary" text-anchor="middle">1.76</text>
+<line x1="140" y1="791" x2="1000" y2="791" class="frame" stroke-width="1.3"/>
+<text x="127" y="813" class="run-label primary" text-anchor="end">VM4-1</text>
+<rect x="140" y="793" width="104" height="28" class="below" fill-opacity="0.32"/>
+<text x="192" y="812" class="cell-value primary" text-anchor="middle">0.54</text>
+<rect x="248" y="793" width="104" height="28" class="below" fill-opacity="0.19"/>
+<text x="300" y="812" class="cell-value primary" text-anchor="middle">0.75</text>
+<rect x="356" y="793" width="104" height="28" class="below" fill-opacity="0.14"/>
+<text x="408" y="812" class="cell-value primary" text-anchor="middle">0.85</text>
+<rect x="464" y="793" width="104" height="28" class="above" fill-opacity="0.21"/>
+<text x="516" y="812" class="cell-value primary" text-anchor="middle">1.41</text>
+<rect x="572" y="793" width="104" height="28" class="below" fill-opacity="0.21"/>
+<text x="624" y="812" class="cell-value primary" text-anchor="middle">0.71</text>
+<rect x="680" y="793" width="104" height="28" class="above" fill-opacity="0.08"/>
+<text x="732" y="812" class="cell-value primary" text-anchor="middle">1.00</text>
+<rect x="788" y="793" width="104" height="28" class="below" fill-opacity="0.10"/>
+<text x="840" y="812" class="cell-value primary" text-anchor="middle">0.95</text>
+<rect x="896" y="793" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="948" y="812" class="cell-value primary" text-anchor="middle">1.10</text>
+<text x="127" y="845" class="run-label primary" text-anchor="end">VM4-2</text>
+<rect x="140" y="825" width="104" height="28" class="below" fill-opacity="0.50"/>
+<text x="192" y="844" class="cell-value primary" text-anchor="middle">0.33</text>
+<rect x="248" y="825" width="104" height="28" class="below" fill-opacity="0.36"/>
+<text x="300" y="844" class="cell-value primary" text-anchor="middle">0.47</text>
+<rect x="356" y="825" width="104" height="28" class="below" fill-opacity="0.43"/>
+<text x="408" y="844" class="cell-value primary" text-anchor="middle">0.39</text>
+<rect x="464" y="825" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="516" y="844" class="cell-value primary" text-anchor="middle">1.12</text>
+<rect x="572" y="825" width="104" height="28" class="below" fill-opacity="0.34"/>
+<text x="624" y="844" class="cell-value primary" text-anchor="middle">0.50</text>
+<rect x="680" y="825" width="104" height="28" class="below" fill-opacity="0.32"/>
+<text x="732" y="844" class="cell-value primary" text-anchor="middle">0.53</text>
+<rect x="788" y="825" width="104" height="28" class="below" fill-opacity="0.17"/>
+<text x="840" y="844" class="cell-value primary" text-anchor="middle">0.78</text>
+<rect x="896" y="825" width="104" height="28" class="below" fill-opacity="0.09"/>
+<text x="948" y="844" class="cell-value primary" text-anchor="middle">0.98</text>
+<text x="127" y="877" class="run-label primary" text-anchor="end">VM4-3</text>
+<rect x="140" y="857" width="104" height="28" class="below" fill-opacity="0.27"/>
+<text x="192" y="876" class="cell-value primary" text-anchor="middle">0.61</text>
+<rect x="248" y="857" width="104" height="28" class="below" fill-opacity="0.21"/>
+<text x="300" y="876" class="cell-value primary" text-anchor="middle">0.70</text>
+<rect x="356" y="857" width="104" height="28" class="below" fill-opacity="0.21"/>
+<text x="408" y="876" class="cell-value primary" text-anchor="middle">0.70</text>
+<rect x="464" y="857" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="516" y="876" class="cell-value primary" text-anchor="middle">1.27</text>
+<rect x="572" y="857" width="104" height="28" class="below" fill-opacity="0.19"/>
+<text x="624" y="876" class="cell-value primary" text-anchor="middle">0.75</text>
+<rect x="680" y="857" width="104" height="28" class="above" fill-opacity="0.09"/>
+<text x="732" y="876" class="cell-value primary" text-anchor="middle">1.04</text>
+<rect x="788" y="857" width="104" height="28" class="below" fill-opacity="0.27"/>
+<text x="840" y="876" class="cell-value primary" text-anchor="middle">0.60</text>
+<rect x="896" y="857" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="948" y="876" class="cell-value primary" text-anchor="middle">1.15</text>
+<text x="127" y="909" class="run-label primary" text-anchor="end">VM4-4</text>
+<rect x="140" y="889" width="104" height="28" class="below" fill-opacity="0.32"/>
+<text x="192" y="908" class="cell-value primary" text-anchor="middle">0.54</text>
+<rect x="248" y="889" width="104" height="28" class="below" fill-opacity="0.28"/>
+<text x="300" y="908" class="cell-value primary" text-anchor="middle">0.58</text>
+<rect x="356" y="889" width="104" height="28" class="below" fill-opacity="0.21"/>
+<text x="408" y="908" class="cell-value primary" text-anchor="middle">0.71</text>
+<rect x="464" y="889" width="104" height="28" class="above" fill-opacity="0.18"/>
+<text x="516" y="908" class="cell-value primary" text-anchor="middle">1.31</text>
+<rect x="572" y="889" width="104" height="28" class="below" fill-opacity="0.19"/>
+<text x="624" y="908" class="cell-value primary" text-anchor="middle">0.75</text>
+<rect x="680" y="889" width="104" height="28" class="below" fill-opacity="0.18"/>
+<text x="732" y="908" class="cell-value primary" text-anchor="middle">0.78</text>
+<rect x="788" y="889" width="104" height="28" class="below" fill-opacity="0.13"/>
+<text x="840" y="908" class="cell-value primary" text-anchor="middle">0.87</text>
+<rect x="896" y="889" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="948" y="908" class="cell-value primary" text-anchor="middle">1.11</text>
+<text x="127" y="941" class="run-label primary" text-anchor="end">VM4-5</text>
+<rect x="140" y="921" width="104" height="28" class="below" fill-opacity="0.19"/>
+<text x="192" y="940" class="cell-value primary" text-anchor="middle">0.76</text>
+<rect x="248" y="921" width="104" height="28" class="below" fill-opacity="0.13"/>
+<text x="300" y="940" class="cell-value primary" text-anchor="middle">0.87</text>
+<rect x="356" y="921" width="104" height="28" class="below" fill-opacity="0.16"/>
+<text x="408" y="940" class="cell-value primary" text-anchor="middle">0.80</text>
+<rect x="464" y="921" width="104" height="28" class="above" fill-opacity="0.18"/>
+<text x="516" y="940" class="cell-value primary" text-anchor="middle">1.30</text>
+<rect x="572" y="921" width="104" height="28" class="below" fill-opacity="0.21"/>
+<text x="624" y="940" class="cell-value primary" text-anchor="middle">0.71</text>
+<rect x="680" y="921" width="104" height="28" class="below" fill-opacity="0.11"/>
+<text x="732" y="940" class="cell-value primary" text-anchor="middle">0.93</text>
+<rect x="788" y="921" width="104" height="28" class="below" fill-opacity="0.33"/>
+<text x="840" y="940" class="cell-value primary" text-anchor="middle">0.52</text>
+<rect x="896" y="921" width="104" height="28" class="below" fill-opacity="0.31"/>
+<text x="948" y="940" class="cell-value primary" text-anchor="middle">0.54</text>
+<line x1="140" y1="951" x2="1000" y2="951" class="frame" stroke-width="1.3"/>
+<text x="127" y="973" class="run-label primary" text-anchor="end">VM5-1</text>
+<rect x="140" y="953" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="192" y="972" class="cell-value primary" text-anchor="middle">1.13</text>
+<rect x="248" y="953" width="104" height="28" class="above" fill-opacity="0.11"/>
+<text x="300" y="972" class="cell-value primary" text-anchor="middle">1.10</text>
+<rect x="356" y="953" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="408" y="972" class="cell-value primary" text-anchor="middle">1.26</text>
+<rect x="464" y="953" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="516" y="972" class="cell-value primary" text-anchor="middle">1.24</text>
+<rect x="572" y="953" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="624" y="972" class="cell-value primary" text-anchor="middle">1.25</text>
+<rect x="680" y="953" width="104" height="28" class="above" fill-opacity="0.30"/>
+<text x="732" y="972" class="cell-value primary" text-anchor="middle">1.77</text>
+<rect x="788" y="953" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="840" y="972" class="cell-value primary" text-anchor="middle">1.05</text>
+<rect x="896" y="953" width="104" height="28" class="above" fill-opacity="0.25"/>
+<text x="948" y="972" class="cell-value primary" text-anchor="middle">1.57</text>
+<text x="127" y="1005" class="run-label primary" text-anchor="end">VM5-2</text>
+<rect x="140" y="985" width="104" height="28" class="above" fill-opacity="0.13"/>
+<text x="192" y="1004" class="cell-value primary" text-anchor="middle">1.14</text>
+<rect x="248" y="985" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="300" y="1004" class="cell-value primary" text-anchor="middle">1.05</text>
+<rect x="356" y="985" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="408" y="1004" class="cell-value primary" text-anchor="middle">1.16</text>
+<rect x="464" y="985" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="516" y="1004" class="cell-value primary" text-anchor="middle">1.11</text>
+<rect x="572" y="985" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="624" y="1004" class="cell-value primary" text-anchor="middle">1.18</text>
+<rect x="680" y="985" width="104" height="28" class="above" fill-opacity="0.17"/>
+<text x="732" y="1004" class="cell-value primary" text-anchor="middle">1.26</text>
+<rect x="788" y="985" width="104" height="28" class="below" fill-opacity="0.09"/>
+<text x="840" y="1004" class="cell-value primary" text-anchor="middle">0.97</text>
+<rect x="896" y="985" width="104" height="28" class="above" fill-opacity="0.20"/>
+<text x="948" y="1004" class="cell-value primary" text-anchor="middle">1.36</text>
+<text x="127" y="1037" class="run-label primary" text-anchor="end">VM5-3</text>
+<rect x="140" y="1017" width="104" height="28" class="above" fill-opacity="0.11"/>
+<text x="192" y="1036" class="cell-value primary" text-anchor="middle">1.08</text>
+<rect x="248" y="1017" width="104" height="28" class="above" fill-opacity="0.09"/>
+<text x="300" y="1036" class="cell-value primary" text-anchor="middle">1.04</text>
+<rect x="356" y="1017" width="104" height="28" class="above" fill-opacity="0.15"/>
+<text x="408" y="1036" class="cell-value primary" text-anchor="middle">1.20</text>
+<rect x="464" y="1017" width="104" height="28" class="above" fill-opacity="0.21"/>
+<text x="516" y="1036" class="cell-value primary" text-anchor="middle">1.39</text>
+<rect x="572" y="1017" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="624" y="1036" class="cell-value primary" text-anchor="middle">1.18</text>
+<rect x="680" y="1017" width="104" height="28" class="above" fill-opacity="0.21"/>
+<text x="732" y="1036" class="cell-value primary" text-anchor="middle">1.41</text>
+<rect x="788" y="1017" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="840" y="1036" class="cell-value primary" text-anchor="middle">1.04</text>
+<rect x="896" y="1017" width="104" height="28" class="above" fill-opacity="0.22"/>
+<text x="948" y="1036" class="cell-value primary" text-anchor="middle">1.46</text>
+<text x="127" y="1069" class="run-label primary" text-anchor="end">VM5-4</text>
+<rect x="140" y="1049" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="192" y="1068" class="cell-value primary" text-anchor="middle">1.10</text>
+<rect x="248" y="1049" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="300" y="1068" class="cell-value primary" text-anchor="middle">1.06</text>
+<rect x="356" y="1049" width="104" height="28" class="above" fill-opacity="0.15"/>
+<text x="408" y="1068" class="cell-value primary" text-anchor="middle">1.21</text>
+<rect x="464" y="1049" width="104" height="28" class="above" fill-opacity="0.18"/>
+<text x="516" y="1068" class="cell-value primary" text-anchor="middle">1.31</text>
+<rect x="572" y="1049" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="624" y="1068" class="cell-value primary" text-anchor="middle">1.23</text>
+<rect x="680" y="1049" width="104" height="28" class="above" fill-opacity="0.19"/>
+<text x="732" y="1068" class="cell-value primary" text-anchor="middle">1.33</text>
+<rect x="788" y="1049" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="840" y="1068" class="cell-value primary" text-anchor="middle">1.17</text>
+<rect x="896" y="1049" width="104" height="28" class="above" fill-opacity="0.26"/>
+<text x="948" y="1068" class="cell-value primary" text-anchor="middle">1.59</text>
+<text x="127" y="1101" class="run-label primary" text-anchor="end">VM5-5</text>
+<rect x="140" y="1081" width="104" height="28" class="above" fill-opacity="0.11"/>
+<text x="192" y="1100" class="cell-value primary" text-anchor="middle">1.09</text>
+<rect x="248" y="1081" width="104" height="28" class="above" fill-opacity="0.10"/>
+<text x="300" y="1100" class="cell-value primary" text-anchor="middle">1.05</text>
+<rect x="356" y="1081" width="104" height="28" class="above" fill-opacity="0.14"/>
+<text x="408" y="1100" class="cell-value primary" text-anchor="middle">1.16</text>
+<rect x="464" y="1081" width="104" height="28" class="above" fill-opacity="0.16"/>
+<text x="516" y="1100" class="cell-value primary" text-anchor="middle">1.23</text>
+<rect x="572" y="1081" width="104" height="28" class="above" fill-opacity="0.15"/>
+<text x="624" y="1100" class="cell-value primary" text-anchor="middle">1.21</text>
+<rect x="680" y="1081" width="104" height="28" class="above" fill-opacity="0.24"/>
+<text x="732" y="1100" class="cell-value primary" text-anchor="middle">1.52</text>
+<rect x="788" y="1081" width="104" height="28" class="above" fill-opacity="0.12"/>
+<text x="840" y="1100" class="cell-value primary" text-anchor="middle">1.11</text>
+<rect x="896" y="1081" width="104" height="28" class="above" fill-opacity="0.22"/>
+<text x="948" y="1100" class="cell-value primary" text-anchor="middle">1.44</text>
+<rect x="140" y="151" width="860" height="960" fill="none" class="frame"/>
+<text x="570" y="1163" class="axis-title primary" text-anchor="middle">Held-out workload</text>
+</svg>
