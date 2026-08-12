@@ -47,3 +47,12 @@ run as one root-level `.tgz` archive. List or delete archives with:
 scripts/list-gcp-trajectories.sh
 scripts/delete-gcp-trajectories.sh ARCHIVE.tgz [...]
 ```
+
+Download new or changed objects from the selected-results bucket to
+`jobs/gcp-harbor-selected/` with:
+
+```sh
+scripts/sync-gcp-harbor-selected.sh
+```
+
+The sync preserves local files that are not present in the bucket.
