@@ -48,11 +48,17 @@ scripts/harbor/gcp/list-trajectories.sh
 scripts/harbor/gcp/delete-trajectories.sh ARCHIVE.tgz [...]
 ```
 
-Download new or changed objects from the selected-results bucket to
-`jobs/gcp-harbor-selected/` with:
+Download and extract new or changed archives from the selected-results bucket
+to `jobs/gcp-harbor-selected/` with:
 
 ```sh
 scripts/harbor/gcp/sync-selected-results.sh
 ```
 
-The sync preserves local files that are not present in the bucket.
+Each archive is extracted into a directory named after the archive without its
+`.tgz` suffix. A `.gcs-generation` marker inside each directory prevents
+unchanged archives from being downloaded again. Local `.tgz` files are removed
+after extraction; GCS remains the canonical archive store.
+
+When a remote archive changes, its extracted directory is replaced atomically.
+Extracted directories without a corresponding remote archive are preserved.
