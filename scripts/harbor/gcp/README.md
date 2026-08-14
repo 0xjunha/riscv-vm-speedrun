@@ -28,10 +28,37 @@ scripts/harbor/gcp/run.sh \
   openai/gpt-5.6-sol openai/gpt-5.6-sol openai/gpt-5.6-sol
 ```
 
-Results are downloaded to `jobs/gcp/<timestamp>/`. Successful VMs are deleted
-only after their Harbor results pass a local integrity check. Failed VMs remain
-available for inspection and have a maximum lifetime set by
-`GCP_MAX_RUN_DURATION`.
+For a fire-and-forget run, use the same options with `submit.sh`:
+
+```sh
+scripts/harbor/gcp/submit.sh \
+  openai/gpt-5.6-sol openai/gpt-5.6-sol openai/gpt-5.6-sol
+```
+
+`submit.sh` packages the committed revision and returns an asynchronous Cloud
+Build ID. The managed controller handles VM launch, polling, result upload, and
+teardown after disconnect without consuming C3 worker quota. Async workers are
+limited to 23 hours so the 24-hour controller can collect their results.
+
+One-time setup:
+
+- Set `GCP_CLOUD_BUILD_REGION`, `GCP_HARBOR_CONTROLLER_SERVICE_ACCOUNT`, and
+  `GCP_CODEX_AUTH_SECRET`; configure the auth secret with
+  `--version-destroy-ttl=1d`.
+- Controller account: Compute Instance Admin (v1), Logs Writer, Secret Manager
+  Secret Accessor and Secret Version Manager, Storage Object Viewer on
+  `gs://${GCP_PROJECT}_cloudbuild`, Storage Object Creator on
+  `GCP_TRAJECTORY_BUCKET`, and IAP-secured Tunnel User when enabled.
+- Submitter: Cloud Build Editor, Service Account User, Secret Manager Secret
+  Version Manager, Service Usage Consumer, Storage Bucket Viewer, and Storage
+  Object Creator on the existing Cloud Build source bucket. Logging Viewer is
+  needed only for the printed log command.
+
+`submit.sh --dry-run ...` makes no GCP changes. Async archives include
+`controller-status.txt`. A VM is deleted only after successful validation and
+upload; otherwise it remains until `GCP_MAX_RUN_DURATION`.
+
+Synchronous results are downloaded to `jobs/gcp/<timestamp>/`.
 
 `CODEX_ALLOWED_HOSTS` permits Codex installation and API access while the
 separate verifier stays offline. Override it in `.env.gcp.harbor` as needed.
@@ -40,8 +67,9 @@ separate verifier stays offline. Override it in `.env.gcp.harbor` as needed.
 resolved agent timeout, excluding setup. Other launchers must use
 `scripts.harbor.codex_budget:BudgetCodex` and pass `budget_seconds`.
 
-Set `GCP_TRAJECTORY_BUCKET` to an existing bucket name to upload each validated
-run as one root-level `.tgz` archive. List or delete archives with:
+Set `GCP_TRAJECTORY_BUCKET` to an existing bucket name to upload validated
+synchronous runs and every collected asynchronous run as one root-level `.tgz`
+archive. List or delete archives with:
 
 ```sh
 scripts/harbor/gcp/list-trajectories.sh

@@ -11,6 +11,11 @@ timeout_multiplier=
 keep=false
 dry_run=false
 starting_vm=
+source_archive=
+source_revision=
+auth_file=
+run_namespace=
+upload_results=false
 
 # Load run options and the workflow-specific GCP configuration.
 usage() {
@@ -23,7 +28,12 @@ while [ "$#" -gt 0 ]; do
         --agent) [ "$#" -ge 2 ] || usage; agent=$2; shift 2 ;;
         --starting-vm) [ "$#" -ge 2 ] || usage; starting_vm=$2; shift 2 ;;
         --env-file) [ "$#" -ge 2 ] || usage; env_file=$2; shift 2 ;;
+        --auth-file) [ "$#" -ge 2 ] || usage; auth_file=$2; shift 2 ;;
+        --run-namespace) [ "$#" -ge 2 ] || usage; run_namespace=$2; shift 2 ;;
+        --source-archive) [ "$#" -ge 2 ] || usage; source_archive=$2; shift 2 ;;
+        --source-revision) [ "$#" -ge 2 ] || usage; source_revision=$2; shift 2 ;;
         --timeout-multiplier) [ "$#" -ge 2 ] || usage; timeout_multiplier=$2; shift 2 ;;
+        --upload-results) upload_results=true; shift ;;
         --keep) keep=true; shift ;;
         --dry-run) dry_run=true; shift ;;
         --help) usage 0 ;;
@@ -41,6 +51,7 @@ models=$*
 set -a
 . "$env_file"
 set +a
+[ -z "$auth_file" ] || CODEX_AUTH_JSON=$auth_file
 
 : "${GCP_PROJECT:?set GCP_PROJECT in $env_file}"
 : "${GCP_ZONE:=asia-northeast3-a}"
@@ -81,11 +92,32 @@ case "$GCP_TRAJECTORY_BUCKET" in
     '') ;;
     *[!a-z0-9._-]*) echo "GCP_TRAJECTORY_BUCKET must be a bucket name without gs://" >&2; exit 2 ;;
 esac
+[ "$upload_results" = false ] || [ -n "$GCP_TRAJECTORY_BUCKET" ] || {
+    echo "--upload-results requires GCP_TRAJECTORY_BUCKET" >&2
+    exit 2
+}
 case "$starting_vm" in vm0|vm1|vm2|vm3|vm4|vm5) ;; *) echo "starting VM must be vm0 through vm5" >&2; exit 2 ;; esac
 case "$timeout_multiplier" in
     '') ;;
     .|*.*.*|*[!0-9.]*) echo "invalid timeout multiplier" >&2; exit 2 ;;
 esac
+case "$run_namespace" in
+    *[!A-Za-z0-9-]*) echo "run namespace must contain only letters, digits, and hyphens" >&2; exit 2 ;;
+esac
+if [ -n "$source_archive" ] || [ -n "$source_revision" ]; then
+    [ -n "$source_archive" ] && [ -n "$source_revision" ] || {
+        echo "--source-archive and --source-revision must be used together" >&2
+        exit 2
+    }
+    [ -f "$source_archive" ] || { echo "missing source archive: $source_archive" >&2; exit 2; }
+    case "$source_revision" in
+        *[!0-9a-f]*) echo "source revision must be a lowercase Git SHA" >&2; exit 2 ;;
+    esac
+    [ "${#source_revision}" -eq 40 ] || {
+        echo "source revision must be a 40-character Git SHA" >&2
+        exit 2
+    }
+fi
 case "$GCP_MAX_RUN_DURATION" in
     *s) run_multiplier=1; run_value=${GCP_MAX_RUN_DURATION%s} ;;
     *m) run_multiplier=60; run_value=${GCP_MAX_RUN_DURATION%m} ;;
@@ -101,7 +133,9 @@ run_duration_seconds=$((run_value * run_multiplier))
     echo "missing Codex credentials: $CODEX_AUTH_JSON" >&2
     exit 2
 }
-for command in gcloud git python3 ssh-keygen tar; do
+required_commands="curl gcloud python3 ssh-keygen tar"
+[ -n "$source_archive" ] || required_commands="$required_commands git"
+for command in $required_commands; do
     command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 2; }
 done
 
@@ -112,15 +146,20 @@ if [ "$agent" = codex ]; then
         "$repository/$task/task.toml" "$agent_timeout_multiplier")
 fi
 
-# Package exactly the committed revision for reproducible remote execution.
+# Package exactly the submitted or locally committed revision for reproducible
+# remote execution.
 cd "$repository"
-[ -z "$(git status --porcelain)" ] || {
-    echo "worktree is dirty; commit or stash changes before running on GCP" >&2
-    exit 2
-}
-
-revision=$(git rev-parse HEAD)
+if [ -n "$source_archive" ]; then
+    revision=$source_revision
+else
+    [ -z "$(git status --porcelain)" ] || {
+        echo "worktree is dirty; commit or stash changes before running on GCP" >&2
+        exit 2
+    }
+    revision=$(git rev-parse HEAD)
+fi
 stamp=$(date -u +%Y%m%d-%H%M%S)
+[ -z "$run_namespace" ] || stamp=$stamp-$(printf '%s' "$run_namespace" | tr 'A-Z' 'a-z' | cut -c1-12)
 result_root=$repository/jobs/gcp/$stamp
 
 if [ "$dry_run" = true ]; then
@@ -138,10 +177,16 @@ temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/rv32im-harbor.XXXXXX")
 archive=$temporary_dir/source.tar.gz
 mkdir -p "$result_root"
 printf '%s\n' "$revision" >"$result_root/source-revision.txt"
-git archive --format=tar.gz --output="$archive" HEAD
+if [ -n "$source_archive" ]; then
+    cp "$source_archive" "$archive"
+else
+    git archive --format=tar.gz --output="$archive" HEAD
+fi
 
 # Keep SSH and SCP behavior consistent for direct and IAP connections.
 if [ ! -f "$HOME/.ssh/google_compute_engine" ]; then
+    mkdir -p "$HOME/.ssh"
+    chmod 0700 "$HOME/.ssh"
     ssh-keygen -q -t rsa -b 2048 -N '' -f "$HOME/.ssh/google_compute_engine"
 fi
 
@@ -158,6 +203,18 @@ copy() {
     set -- gcloud compute scp --project="$GCP_PROJECT" --zone="$GCP_ZONE" --quiet "$@"
     [ "$GCP_USE_IAP" = 0 ] || set -- "$@" --tunnel-through-iap
     "$@"
+}
+
+upload() {
+    source=$1
+    object=$2
+    token=$(gcloud auth print-access-token) || return 1
+    curl -fsS -X POST \
+        -H "Authorization: Bearer $token" \
+        -H 'Content-Type: application/gzip' \
+        --data-binary "@$source" \
+        "https://storage.googleapis.com/upload/storage/v1/b/$GCP_TRAJECTORY_BUCKET/o?uploadType=media&ifGenerationMatch=0&name=$object" \
+        >/dev/null
 }
 
 log() {
@@ -177,7 +234,9 @@ run_one() {
     [ -n "$model" ] || effort=default
     tag=$(printf '%02d-%s-%s' "$index" "$starting_vm" "$(slug "${model:-$agent}")")
     run_id=$(printf '%s-%02d-%s-%s-%s-%s' "$stamp" "$index" "$starting_vm" "$(slug "$agent")" "$model_slug" "$(slug "$effort")")
-    instance=$(printf '%s-%s-%02d' "$GCP_INSTANCE_PREFIX" "$stamp" "$index" | cut -c1-63 | sed 's/-$//')
+    instance_suffix=$(printf '%s-%02d' "$stamp" "$index")
+    instance_prefix=$(printf '%s' "$GCP_INSTANCE_PREFIX" | cut -c1-$((62 - ${#instance_suffix})))
+    instance=$instance_prefix-$instance_suffix
     destination=$result_root/$tag
     runner=$temporary_dir/$tag-run.sh
     mkdir -p "$destination"
@@ -324,7 +383,8 @@ run_one() {
         sleep 30
     done
 
-    # Download the Harbor job and reject incomplete or errored trials.
+    # Download the Harbor job, record its terminal status, and durably upload
+    # asynchronous results before deciding whether the VM can be deleted.
     log "$tag" "collecting results"
     remote "$instance" "sudo tar -czf /tmp/harbor-results.tgz -C /opt/harbor-run jobs harbor.log exit-code run.sh host-provenance.txt && sudo chmod 0644 /tmp/harbor-results.tgz" >/dev/null || {
         fail "could not archive results"
@@ -337,7 +397,9 @@ run_one() {
     tar -xzf "$destination/results.tgz" -C "$destination"
     rm -f "$destination/results.tgz"
 
-    python3 - "$destination/jobs" <<'PY' || { fail "Harbor reported an errored trial"; return 1; }
+    trial_status=0
+    validation_status=passed
+    if ! python3 - "$destination/jobs" <<'PY'
 import json
 import pathlib
 import sys
@@ -349,28 +411,59 @@ for path in results:
     if (json.loads(path.read_text()).get("stats") or {}).get("n_errored_trials", 0):
         raise SystemExit(1)
 PY
-    [ "$exit_code" -eq 0 ] || { fail "Harbor exited with $exit_code"; return 1; }
+    then
+        log "$tag" "FAILED: Harbor reported an incomplete or errored trial"
+        validation_status=failed
+        trial_status=1
+    fi
+    if [ "$exit_code" -ne 0 ]; then
+        log "$tag" "FAILED: Harbor exited with $exit_code"
+        trial_status=1
+    fi
+    if [ "$trial_status" -eq 0 ]; then
+        terminal_status=success
+    else
+        terminal_status=failed
+    fi
+    {
+        printf 'status=%s\n' "$terminal_status"
+        printf 'validation=%s\n' "$validation_status"
+        printf 'harbor_exit_code=%s\n' "$exit_code"
+    } >"$destination/controller-status.txt"
 
     upload_status=0
-    if [ -n "$GCP_TRAJECTORY_BUCKET" ] && [ "$agent" != nop ] && [ "$agent" != oracle ]; then
+    should_upload=false
+    if [ -n "$GCP_TRAJECTORY_BUCKET" ]; then
+        if [ "$upload_results" = true ]; then
+            should_upload=true
+        elif [ "$trial_status" -eq 0 ] && [ "$agent" != nop ] && [ "$agent" != oracle ]; then
+            should_upload=true
+        fi
+    fi
+    if [ "$should_upload" = true ]; then
         trajectory_archive=$temporary_dir/$run_id.tgz
         log "$tag" "uploading $run_id.tgz"
         if tar -czf "$trajectory_archive" -C "$destination" . && \
-            gcloud storage cp "$trajectory_archive" "gs://$GCP_TRAJECTORY_BUCKET/$run_id.tgz"; then
-            log "$tag" "uploaded trajectory"
+            upload "$trajectory_archive" "$run_id.tgz"; then
+            log "$tag" "uploaded results"
         else
-            log "$tag" "FAILED: could not upload trajectory"
+            log "$tag" "FAILED: could not upload results"
             upload_status=1
         fi
     fi
 
     if [ "$keep" = true ]; then
         log "$tag" "done; kept $instance"
+    elif [ "$upload_status" -ne 0 ]; then
+        log "$tag" "kept $instance for result recovery after upload failure"
+    elif [ "$trial_status" -ne 0 ]; then
+        log "$tag" "kept failed $instance for inspection"
     else
         gcloud compute instances delete "$instance" --project="$GCP_PROJECT" --zone="$GCP_ZONE" --quiet >/dev/null
         log "$tag" "done; deleted $instance"
     fi
-    return "$upload_status"
+    [ "$upload_status" -eq 0 ] || return 1
+    return "$trial_status"
 }
 
 # Run one VM per model in parallel and aggregate failures.

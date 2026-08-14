@@ -1,0 +1,11 @@
+steps:
+  - name: gcr.io/google.com/cloudsdktool/google-cloud-cli:578.0.0-slim
+    entrypoint: /workspace/scripts/harbor/gcp/cloud-controller.sh
+    env:
+      - GCP_PROJECT=$PROJECT_ID
+      - HARBOR_RUN_NAMESPACE=$BUILD_ID
+      - HARBOR_CODEX_AUTH_SECRET=${_CODEX_AUTH_SECRET}
+      - HARBOR_CODEX_AUTH_SECRET_VERSION=${_CODEX_AUTH_SECRET_VERSION}
+timeout: 86400s
+options:
+  logging: CLOUD_LOGGING_ONLY
