@@ -67,8 +67,8 @@ text{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,
 <text x="757.5" y="199.2" class="value primary" text-anchor="start">VM1-5</text>
 <circle cx="846.6" cy="143.9" r="6" class="vm2-fill"/>
 <text x="854.6" y="161.9" class="value primary" text-anchor="start">VM2-1</text>
-<circle cx="803.1" cy="575.6" r="6" class="vm2-fill"/>
-<text x="811.1" y="565.6" class="value primary" text-anchor="start">VM2-2</text>
+<circle cx="803.1" cy="404.9" r="6" class="vm2-fill"/>
+<text x="811.1" y="394.9" class="value primary" text-anchor="start">VM2-2</text>
 <circle cx="782.9" cy="260.1" r="6" class="vm2-fill"/>
 <circle cx="906.0" cy="171.9" r="6" class="vm2-fill"/>
 <circle cx="808.5" cy="177.7" r="6" class="vm2-fill"/>
